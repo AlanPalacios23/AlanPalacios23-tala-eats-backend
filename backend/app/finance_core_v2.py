@@ -170,6 +170,31 @@ def balanced_lines(s: FinanceV2Snapshot) -> list[JournalLine]:
     return lines
 
 
+def indicative_vat_split(
+    s: FinanceV2Snapshot, *, vat_included: bool = True,
+    rate: Decimal = Decimal("0.16"),
+) -> dict[str, int | str | bool]:
+    """Only a tax preview, NOT a CFDI, payable or withholding.
+
+    A gross fee with VAT already included uses rate/(1+rate), not 16% of gross.
+    A tax specialist must approve whether this interpretation applies to each
+    participant, service and fiscal regime before issuing real invoices.
+    """
+    if not rate.is_finite() or rate < 0 or rate > Decimal("1"):
+        raise FinanceV2Error("Tasa IVA fuera de límites")
+    taxable_gross = s.service_fee + s.commission
+    tax_decimal = Decimal(taxable_gross) * (rate / (Decimal("1") + rate) if vat_included else rate)
+    tax_cents = int(tax_decimal.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    return {
+        "service_and_commission_cents": taxable_gross,
+        "indicative_vat_cents": tax_cents,
+        "tax_base_cents": taxable_gross - tax_cents if vat_included else taxable_gross,
+        "vat_included": vat_included,
+        "rate": str(rate),
+        "legal_review_required": True,
+    }
+
+
 def wallet_deltas(s: FinanceV2Snapshot) -> dict[tuple[str, int], tuple[int, int, int]]:
     """(signed balance change, unverified positive funds, cash exposure).
 
