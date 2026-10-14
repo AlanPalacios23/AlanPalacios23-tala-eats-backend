@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 from app.main import app
+from app.config import settings
 
 
 def login(client,email,password):
@@ -9,7 +10,7 @@ def login(client,email,password):
 
 def test_legacy_multirole_flow_remains_compatible():
     with TestClient(app) as c:
-        health=c.get('/api/v1/health');assert health.status_code==200;assert health.json()['version']=='1.6.2-fair-pricing';assert health.json()['features']==170
+        health=c.get('/api/v1/health');assert health.status_code==200;assert health.json()['version']==settings.app_version;assert health.json()['features']==170
         feature_data=c.get('/api/v1/platform/features').json();assert feature_data['feature_count']==112;assert len(feature_data['features'])==112
 
         customer=login(c,'cliente@talaeats.mx','Cliente123!')
