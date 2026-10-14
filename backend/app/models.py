@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 import secrets
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -1016,11 +1016,11 @@ class FinanceV2Wallet(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_type: Mapped[str] = mapped_column(String(20), nullable=False)
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    balance_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    balance_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     # This portion of positive credits is NOT payable until PSP/bank funding is verified.
-    unfunded_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    unfunded_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     # Physical cash under this participant's custody (not money in Tala Eats' bank).
-    cash_exposure_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cash_exposure_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="MXN")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -1033,9 +1033,9 @@ class FinanceV2Journal(Base):
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), nullable=False, index=True)
     event_type: Mapped[str] = mapped_column(String(35), nullable=False, default="delivered")
     payment_method: Mapped[str] = mapped_column(String(30), nullable=False)
-    total_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
     # Platform revenue here is accrued; it is NOT a bank balance.
-    platform_revenue_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    platform_revenue_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="MXN")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -1048,7 +1048,7 @@ class FinanceV2JournalLine(Base):
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
     account: Mapped[str] = mapped_column(String(90), nullable=False, index=True)
     direction: Mapped[str] = mapped_column(String(6), nullable=False)
-    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    amount_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
     owner_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     owner_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
@@ -1060,9 +1060,9 @@ class FinanceV2WalletMovement(Base):
     journal_id: Mapped[int] = mapped_column(ForeignKey("finance_v2_journals.id"), nullable=False, index=True)
     owner_type: Mapped[str] = mapped_column(String(20), nullable=False)
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
-    unfunded_delta_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    cash_exposure_delta_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    amount_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    unfunded_delta_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    cash_exposure_delta_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -1074,8 +1074,8 @@ class FinanceV2CashAllocation(Base):
     journal_id: Mapped[int] = mapped_column(ForeignKey("finance_v2_journals.id"), nullable=False)
     collector_type: Mapped[str] = mapped_column(String(20), nullable=False)
     collector_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    received_cash_cents: Mapped[int] = mapped_column(Integer, nullable=False)
-    owed_by_collector_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    received_cash_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    owed_by_collector_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
     # recorded != reconciled. Reconciliation with PSP/bank is future work.
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="recorded")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
