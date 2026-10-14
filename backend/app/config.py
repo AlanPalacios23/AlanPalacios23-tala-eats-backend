@@ -214,6 +214,16 @@ class Settings:
             errors.append("REDIS_URL es obligatorio para realtime/rate limiting")
         if not self.allowed_hosts or "*" in self.allowed_hosts:
             errors.append("ALLOWED_HOSTS debe contener dominios explícitos")
+        if self.trust_proxy_headers:
+            from ipaddress import ip_network
+            for cidr in self.trusted_proxy_cidrs:
+                try:
+                    net = ip_network(cidr, strict=False)
+                except ValueError:
+                    errors.append("TRUSTED_PROXY_CIDRS contiene una red inválida")
+                    continue
+                if net.prefixlen == 0:
+                    errors.append("TRUSTED_PROXY_CIDRS no puede confiar en Internet completo")
         if not self.cors_origins or "*" in self.cors_origins:
             errors.append("CORS_ORIGINS debe contener orígenes explícitos")
         if not self.public_base_url.startswith("https://"):

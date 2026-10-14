@@ -60,3 +60,9 @@ También ejecutar los workflows GitHub Actions para PostgreSQL/Redis, Docker off
 ## Worker Redis — propiedad exclusiva del ciclo
 - `_refresh_cycle_lock` ahora devuelve verdadero solamente si Redis confirma que **el mismo token aún posee el lease** y ha renovado su TTL. Si el candado caduca, cambia de dueño, desaparece Redis o falla su renovación, `run_once` detiene **las tareas restantes** del ciclo, evitando disparar nuevos trabajos después de perder exclusividad.
 - Esto no convierte en atómica una tarea externa que ya comenzó; siguen siendo necesarios idempotencia, outbox y locks transaccionales en cada operación crítica, especialmente pago/reconciliación. Los jobs completos se prueban en staging con dos workers concurrentes.
+
+## Salud operativa sin falsos positivos
+- `GET /api/v1/ready` sigue comprobando **PostgreSQL y Redis** sin cambiar el contrato HTTP 200/503 utilizado por los probes de Caddy/Docker. Devuelve además `worker_heartbeat_detected` y `finance_v2_shadow_enabled` para diagnóstico.
+- `GET /api/v1/health` muestra la capacidad `finance_v2.mode = disabled|shadow_only`, `bank_reconciliation_verified=false` y `automatic_settlements_enabled=false`. `core_checkout` es `degraded` cuando DB o Redis fallan, en lugar de reportar `ready` estático.
+- **No interpretar** `ready=true` como prueba de worker saludable, transacciones bancarias, cobros automáticos ni reconciliación completa. Escalar incidentes cuando el worker heartbeat desaparezca, aunque el API siga respondiendo.
+- `Settings.validate_production` ahora rechaza CIDRs inválidos o subredes de confianza universales (0.0.0.0/0 o ::/0) antes del arranque; jamás incluir secretos productivos en pruebas.
