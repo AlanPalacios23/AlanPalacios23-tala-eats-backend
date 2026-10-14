@@ -1,0 +1,89 @@
+name: TALA EATS Backend | QA aislado
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'scripts/security_preflight.py'
+      - '.github/workflows/backend-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'scripts/security_preflight.py'
+      - '.github/workflows/backend-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# NO production credentials, no deploy, no external DB, no Stripe LIVE.
+env:
+  ENVIRONMENT: development
+  DEBUG: 'false'
+  DATABASE_URL: 'sqlite://'
+  REDIS_URL: ''
+  JWT_SECRET: 'ci-disposable-test-secret-over-40-bytes-not-for-production'
+  SEED_DEMO_DATA: 'true'
+  STRIPE_ENABLED: 'false'
+  STRIPE_CONNECT_ENABLED: 'false'
+  STRIPE_CONNECT_SELF_SERVICE_ENABLED: 'false'
+  WITHDRAWALS_PREVIEW_ENABLED: 'false'
+  WITHDRAWALS_EXECUTION_ENABLED: 'false'
+  WITHDRAWALS_LIVE_ENABLED: 'false'
+  MERCADOPAGO_ACCESS_TOKEN: ''
+  STRIPE_SECRET_KEY: ''
+  STRIPE_WEBHOOK_SECRET: ''
+  STRIPE_CONNECT_WEBHOOK_SECRET: ''
+  REQUIRE_SMTP: 'false'
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  source-gate:
+    name: Sintaxis + secretos (solo código)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout privado
+        uses: actions/checkout@v4
+      - name: Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Pruebas del escáner local
+        run: python scripts/security_preflight.py --self-test
+      - name: Evitar secretos y datos locales en Git
+        run: python scripts/security_preflight.py --root .
+      - name: Compilación sintáctica Python
+        run: python -m compileall -q backend/app backend/migrations backend/tests
+
+  pytest:
+    name: pytest FastAPI + SQLite aislado
+    needs: source-gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout privado
+        uses: actions/checkout@v4
+      - name: Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+      - name: Dependencias de aplicación y pruebas
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: Pruebas aisladas (Stripe y retiros LIVE desactivados)
+        run: python -m pytest -q --disable-warnings --maxfail=1
+      - name: Smoke Connect sin llamadas monetarias
+        run: python tests/connect_security_smoke_v164h1.py
