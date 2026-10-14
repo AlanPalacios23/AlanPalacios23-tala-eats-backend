@@ -1,0 +1,52 @@
+name: TALA EATS Backend | Container Build Gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/Dockerfile'
+      - 'backend/requirements.txt'
+      - 'backend/entrypoint.sh'
+      - '.github/workflows/backend-container-build.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/Dockerfile'
+      - 'backend/requirements.txt'
+      - 'backend/entrypoint.sh'
+      - '.github/workflows/backend-container-build.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: talaeats-container-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    name: Docker production image — build / non-root / offline smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout privado
+        uses: actions/checkout@v4
+      - name: Compilar imagen local sin publicarla
+        run: docker build --pull --tag talaeats-backend-ci:${{ github.sha }} backend
+      - name: Confirmar usuario no-root
+        shell: bash
+        run: |
+          set -euo pipefail
+          user="$(docker image inspect --format '{{.Config.User}}' talaeats-backend-ci:${{ github.sha }})"
+          test "$user" = 'talaeats'
+          echo "DOCKER_NON_ROOT_PASS"
+      - name: Smoke de imagen sin levantar API ni tocar datos
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network none \
+            -e ENVIRONMENT=development \
+            -e STRIPE_ENABLED=false -e WITHDRAWALS_EXECUTION_ENABLED=false \
+            talaeats-backend-ci:${{ github.sha }} \
+            python -c "import app.main; from app.config import settings; print('DOCKER_IMPORT_PASS',settings.app_version)"
