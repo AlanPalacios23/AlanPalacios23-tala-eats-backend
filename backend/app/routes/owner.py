@@ -75,7 +75,7 @@ def _assign_best_available_driver(db: Session, order: models.Order):
         )
         if active:
             continue
-        if settings.finance_v2_shadow_enabled and not driver_cash_eligible(db, locked.user_id, order):
+        if settings.finance_v2_shadow_enabled and settings.finance_v2_cash_limit_enabled and not driver_cash_eligible(db, locked.user_id, order):
             continue
         order.driver_id = locked.user_id
         order.status = "assigned"

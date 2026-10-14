@@ -147,7 +147,7 @@ def _assign_oldest_ready_to_driver(db: Session, user: models.User) -> models.Ord
         )
         if not current or current.status != "ready" or current.driver_id is not None:
             continue
-        if settings.finance_v2_shadow_enabled and not driver_cash_eligible(db, user.id, current):
+        if settings.finance_v2_shadow_enabled and settings.finance_v2_cash_limit_enabled and not driver_cash_eligible(db, user.id, current):
             continue
         current.driver_id = user.id
         current.status = "assigned"
@@ -315,7 +315,7 @@ def available(
         .order_by(models.Order.updated_at.asc())
         .limit(limit)
     ).all()
-    if not settings.finance_v2_shadow_enabled:
+    if not (settings.finance_v2_shadow_enabled and settings.finance_v2_cash_limit_enabled):
         return candidates
     return [order for order in candidates if driver_cash_eligible(db, user.id, order)]
 
@@ -356,7 +356,7 @@ def accept(
         raise HTTPException(404, "Pedido no encontrado")
     if order.status != "ready" or order.driver_id is not None:
         raise HTTPException(409, "Pedido no disponible")
-    if settings.finance_v2_shadow_enabled and not driver_cash_eligible(db, user.id, order):
+    if settings.finance_v2_shadow_enabled and settings.finance_v2_cash_limit_enabled and not driver_cash_eligible(db, user.id, order):
         raise HTTPException(409, "Límite de efectivo alcanzado; acepta pedidos digitales")
     order.driver_id = user.id
     order.status = "assigned"

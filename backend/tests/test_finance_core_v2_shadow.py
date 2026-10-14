@@ -10,7 +10,8 @@ from app import models
 from app.db import Base
 from app.finance_core_v2 import (
     FinanceV2Error, balanced_lines, book_delivered_order, cents,
-    driver_cash_eligible, indicative_vat_split, snapshot_from_order, wallet_preview,
+    audit_shadow_integrity, driver_cash_eligible, indicative_vat_split,
+    netting_preview, snapshot_from_order, wallet_preview,
 )
 
 
@@ -208,3 +209,64 @@ def test_vat_preview_16_percent_is_not_double_charged():
     assert inclusive["tax_base_cents"] == 3793
     assert excluded["indicative_vat_cents"] == 704
     assert inclusive["legal_review_required"]
+
+
+def test_shadow_audit_balances_cash_and_digital(session):
+    for order in [order_sample(1), order_sample(2, method="stripe")]:
+        session.add(order)
+        session.flush()
+        book_delivered_order(session, order)
+    session.commit()
+    audit = audit_shadow_integrity(session)
+    assert audit["ok"] is True
+    assert audit["checked_journals"] == 2
+    assert audit["bank_reconciliation_verified"] is False
+
+
+def test_shadow_audit_detects_tampering(session):
+    order = order_sample()
+    session.add(order)
+    session.flush()
+    book_delivered_order(session, order)
+    session.commit()
+    wallet = session.scalar(select(models.FinanceV2Wallet).where(
+        models.FinanceV2Wallet.owner_type == "driver"))
+    wallet.balance_cents += 1
+    session.commit()
+    audit = audit_shadow_integrity(session)
+    assert not audit["ok"]
+    assert any("projection_mismatch" in x for x in audit["violations"])
+
+
+def test_shadow_audit_incomplete_scan_is_never_pass(session):
+    for order in [order_sample(1), order_sample(2, method="stripe")]:
+        session.add(order)
+        session.flush()
+        book_delivered_order(session, order)
+    session.commit()
+    audit = audit_shadow_integrity(session, max_records=1)
+    assert audit["ok"] is False
+    assert "limit_exceeded:full_scan_required" in audit["violations"]
+
+
+def test_shadow_netting_cannot_fake_a_real_recovery(session):
+    for order in [order_sample(1), order_sample(2, method="stripe")]:
+        session.add(order)
+        session.flush()
+        book_delivered_order(session, order)
+    session.commit()
+    result = netting_preview(session, "driver", 4)
+    assert result["cash_receivable_cents"] == 21700
+    assert result["executed_netting_cents"] == result["bank_verified_cents"] == 0
+    hypothetical = netting_preview(session, "driver", 4,
+                                    hypothetical_untransferred_cents=3200)
+    assert hypothetical["hypothetical_netting_cents"] == 3200
+    assert hypothetical["cash_still_unrecovered_cents"] == 18500
+    assert wallet_preview(session, "driver", 4)["cash_exposure_cents"] == 21700
+
+
+@pytest.mark.parametrize("amount", [-1, True, 0.25, 10**30])
+def test_shadow_netting_rejects_bad_external_amount(session, amount):
+    with pytest.raises(FinanceV2Error):
+        netting_preview(session, "driver", 4,
+                        hypothetical_untransferred_cents=amount)

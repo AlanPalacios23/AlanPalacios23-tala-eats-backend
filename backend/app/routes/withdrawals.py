@@ -138,6 +138,15 @@ def _recipient(db: Session, user: models.User, role: str, recipient_id: int, *, 
 
 def _legacy_holds(db: Session, role: str, recipient_id: int) -> None:
     # Legacy weekly/manual/provider payouts may overlap with Stripe settlements.
+    # A cash collector already holds physical money. Never permit on-demand
+    # Stripe payout as long as unreconciled collector exposure is outstanding.
+    if settings.finance_v2_shadow_enabled:
+        wallet = db.scalar(select(models.FinanceV2Wallet).where(
+            models.FinanceV2Wallet.owner_type == role,
+            models.FinanceV2Wallet.owner_id == recipient_id,
+        ))
+        if wallet is not None and wallet.cash_exposure_cents > 0:
+            raise HTTPException(409, "Efectivo pendiente de conciliación; retiro retenido")
     if db.scalar(select(models.Payout.id).where(models.Payout.payee_type == role, models.Payout.payee_id == recipient_id).limit(1)):
         raise HTTPException(409, "Liquidaciones anteriores requieren conciliación manual")
     if role == "driver" and db.scalar(select(models.CashSettlement.id).where(

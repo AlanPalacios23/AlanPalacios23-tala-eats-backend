@@ -44,3 +44,9 @@ Luego `python -m pytest -q` y `alembic heads`. Correr sobre SQLite descartable y
 
 ## Estado de entrega
 **Esta primera implementación constituye el núcleo contable y vistas sombra, no un sistema automático de cobro/payout productivo.** La siguiente fase implementa conciliación verificada, netting real y proveedor de fondos, con UI y aprobación explícita antes de cualquier movimiento de dinero.
+
+## Nueva ronda — conciliación defensiva
+- `GET /api/v1/finance-v2/admin/audit`: suma partida doble y reconciliación interna de proyecciones por cuenta; escaneo incompleto siempre devuelve `ok=false`. No es prueba de saldo bancario.
+- `GET /api/v1/finance-v2/admin/netting/{owner_type}/{owner_id}/preview`: netting **hipotético**, nunca realiza débito ni crea abono; crédito sin verificar = 0 por defecto. El parámetro del operador NO cuenta como evidencia bancaria.
+- `FINANCE_V2_CASH_LIMIT_ENABLED=false`: separar el control de nuevas ofertas cash del libro sombra; habilitar lectura no bloquea riders.
+- Cuando Finance V2 sombra está ON, el retiro Stripe Connect queda retenido si hay efectivo no conciliado, incluso si existen otras ganancias digitales. Falta implementar compensación real, confirmación bancaria, conciliación PSP y reversos.

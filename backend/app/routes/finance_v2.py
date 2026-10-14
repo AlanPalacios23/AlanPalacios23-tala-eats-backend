@@ -11,7 +11,8 @@ from ..config import settings
 from ..db import get_db
 from ..deps import require_role
 from ..finance_core_v2 import (
-    FinanceV2Error, balanced_lines, snapshot_from_order, wallet_deltas, wallet_preview,
+    FinanceV2Error, audit_shadow_integrity, balanced_lines, netting_preview,
+    snapshot_from_order, wallet_deltas, wallet_preview,
 )
 
 router = APIRouter(prefix="/api/v1/finance-v2", tags=["finance-v2-shadow"])
@@ -137,3 +138,27 @@ def weekly_cut_preview(
         "payable_for_bank_transfer_cents": 0,
         "shadow_only": True,
     }
+
+
+@router.get("/admin/audit")
+def admin_integrity_audit(
+    _: models.User = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    ensure_enabled()
+    return audit_shadow_integrity(db)
+
+
+@router.get("/admin/netting/{owner_type}/{owner_id}/preview")
+def admin_netting_preview(
+    owner_type: str, owner_id: int,
+    hypothetical_untransferred_cents: int = 0,
+    _: models.User = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    ensure_enabled()
+    try:
+        return netting_preview(db, owner_type, owner_id,
+                               hypothetical_untransferred_cents=hypothetical_untransferred_cents)
+    except FinanceV2Error as exc:
+        raise HTTPException(400, str(exc)) from exc

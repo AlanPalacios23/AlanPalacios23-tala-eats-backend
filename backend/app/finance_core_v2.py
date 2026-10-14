@@ -307,7 +307,7 @@ def wallet_preview(db: Session, role: str, owner_id: int) -> dict[str, int | str
         "balance_cents": balance, "unverified_receivables_cents": held,
         "cash_exposure_cents": exposure,
         "available_for_payout_cents": 0, "automatic_debt_hold_suggested":
-            role == "driver" and balance < -CASH_DEBT_LIMIT_CENTS,
+            role == "driver" and exposure >= CASH_DEBT_LIMIT_CENTS,
         "shadow_only": True,
     }
 
@@ -329,3 +329,95 @@ def driver_cash_eligible(db: Session, driver_id: int, order: models.Order) -> bo
     ).with_for_update())
     current = int(wallet.cash_exposure_cents) if wallet else 0
     return current + due <= CASH_DEBT_LIMIT_CENTS
+
+
+def netting_preview(db: Session, role: str, owner_id: int, *,
+                    hypothetical_untransferred_cents: int = 0) -> dict:
+    """What-if ONLY. Caller input is NOT bank proof and NEVER triggers a debit."""
+    if (not isinstance(hypothetical_untransferred_cents, int)
+            or isinstance(hypothetical_untransferred_cents, bool)
+            or not 0 <= hypothetical_untransferred_cents <= MAX_CENTS):
+        raise FinanceV2Error("Importe hipotético inválido")
+    view = wallet_preview(db, role, owner_id)
+    debt = int(view["cash_exposure_cents"])
+    proposed = min(debt, hypothetical_untransferred_cents)
+    return {
+        "owner_type": role, "owner_id": owner_id,
+        "cash_receivable_cents": debt,
+        "hypothetical_untransferred_cents": hypothetical_untransferred_cents,
+        "hypothetical_netting_cents": proposed,
+        "cash_still_unrecovered_cents": debt - proposed,
+        "executed_netting_cents": 0, "bank_verified_cents": 0,
+        "shadow_only": True, "requires_bank_and_psp_proof": True,
+    }
+
+
+def audit_shadow_integrity(db: Session, *, max_records: int = 2000) -> dict:
+    """Audit double-entry sums and wallet projections. Truncation is a FAIL."""
+    if not isinstance(max_records, int) or not 1 <= max_records <= 10000:
+        raise FinanceV2Error("Límite de auditoría inválido")
+    q = max_records + 1
+    journals = db.scalars(select(models.FinanceV2Journal).order_by(
+        models.FinanceV2Journal.id).limit(q)).all()
+    movements = db.scalars(select(models.FinanceV2WalletMovement).order_by(
+        models.FinanceV2WalletMovement.id).limit(q)).all()
+    wallets = db.scalars(select(models.FinanceV2Wallet).order_by(
+        models.FinanceV2Wallet.id).limit(q)).all()
+    cash_rows = db.scalars(select(models.FinanceV2CashAllocation).order_by(
+        models.FinanceV2CashAllocation.id).limit(q)).all()
+    overflow = any(len(group) > max_records for group in
+                   (journals, movements, wallets, cash_rows))
+    journals, movements, wallets, cash_rows = (
+        [a[:max_records] for a in (journals, movements, wallets, cash_rows)])
+    errors: list[str] = []
+    by_id = {j.id: j for j in journals}
+    for journal in journals:
+        lines = db.scalars(select(models.FinanceV2JournalLine).where(
+            models.FinanceV2JournalLine.journal_id == journal.id)).all()
+        if not lines:
+            errors.append(f"journal:{journal.id}:missing_lines")
+        debit = sum(x.amount_cents for x in lines if x.direction == "debit")
+        credit = sum(x.amount_cents for x in lines if x.direction == "credit")
+        if (debit != credit or any(x.amount_cents <= 0 or
+                                  x.direction not in {"debit", "credit"}
+                                  for x in lines)):
+            errors.append(f"journal:{journal.id}:unbalanced")
+    summary = {}
+    for m in movements:
+        if m.journal_id not in by_id and not overflow:
+            errors.append(f"movement:{m.id}:orphan")
+        key = (m.owner_type, m.owner_id)
+        total = summary.setdefault(key, [0, 0, 0])
+        total[0] += m.amount_cents
+        total[1] += m.unfunded_delta_cents
+        total[2] += m.cash_exposure_delta_cents
+    wallet_keys = set()
+    for w in wallets:
+        key = (w.owner_type, w.owner_id)
+        wallet_keys.add(key)
+        real = [w.balance_cents, w.unfunded_cents, w.cash_exposure_cents]
+        if not overflow and real != summary.get(key, [0, 0, 0]):
+            errors.append(f"wallet:{w.owner_type}:{w.owner_id}:projection_mismatch")
+        if w.cash_exposure_cents < 0 or w.unfunded_cents < 0:
+            errors.append(f"wallet:{w.owner_type}:{w.owner_id}:negative_hold")
+    if not overflow:
+        for role, owner_id in summary.keys() - wallet_keys:
+            errors.append(f"wallet:{role}:{owner_id}:missing")
+    for row in cash_rows:
+        journal = by_id.get(row.journal_id)
+        if journal is None and not overflow:
+            errors.append(f"cash:{row.id}:orphan")
+        elif journal is not None and (journal.order_id != row.order_id or
+                                     journal.payment_method != "cash" or
+                                     row.received_cash_cents != journal.total_cents):
+            errors.append(f"cash:{row.id}:invalid")
+    if overflow:
+        errors.append("limit_exceeded:full_scan_required")
+    return {
+        "ok": not errors, "violations": errors[:100],
+        "checked_journals": len(journals),
+        "checked_movements": len(movements),
+        "checked_wallets": len(wallets),
+        "checked_cash_allocations": len(cash_rows),
+        "shadow_only": True, "bank_reconciliation_verified": False,
+    }
