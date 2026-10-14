@@ -76,3 +76,9 @@ También ejecutar los workflows GitHub Actions para PostgreSQL/Redis, Docker off
 ## Corrección de la regresión del middleware
 - Se admite tanto `Response.body` (respuesta directa) como `Response.body_iterator` (respuesta ASGI streaming); evita el AttributeError para JSONResponse.
 - La prueba de login legacy ahora comprueba que nunca se reutilice un token de autenticación desde Redis: una contraseña errónea responde 401, no 409 por idempotencia genérica.
+
+## Seguridad de Google Sign-In y TOTP
+- Google SSO ahora valida `sub` no vacío y el estado activo de la cuenta **antes** de cambiar la identidad enlazada o guardar cualquier sesión.
+- Si la cuenta tiene 2FA, exige `otp` TOTP válido también al entrar con Google; no se permite omitir el segundo factor seleccionando un login diferente.
+- Una cuenta enlazada a un `google_sub` distinto rechaza el re-enlace con HTTP 409. Google SSO normal para clientes que no tienen 2FA sigue admitiendo el contrato de `credential` existente.
+- Antes del deploy de esta corrección, coordinar que el frontend de cuentas con 2FA permita capturar el OTP en Google Sign-In; no relajar la verificación en producción.

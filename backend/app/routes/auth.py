@@ -232,8 +232,19 @@ def google_login(payload: schemas.GoogleAuthRequest, response: Response, request
     email = str(info.get("email", "")).lower().strip()
     if not email or not info.get("email_verified"):
         raise HTTPException(status_code=401, detail="Google no confirmó un correo válido")
-    sub = str(info.get("sub", ""))
+    sub = str(info.get("sub") or "").strip()
+    if not sub:
+        raise HTTPException(401, "Google no confirmó un identificador válido")
     user = db.scalar(select(models.User).where(models.User.google_sub == sub)) or db.scalar(select(models.User).where(models.User.email == email))
+    # Authentication is a security boundary: reject before mutating any
+    # account, linking a Google identity or issuing device/session tokens.
+    if user:
+        if not user.is_active:
+            raise HTTPException(403, "La cuenta está desactivada")
+        if user.google_sub and user.google_sub != sub:
+            raise HTTPException(409, "La cuenta ya está vinculada a otra identidad de Google")
+        if user.two_factor_enabled and not verify_totp(user.totp_secret, payload.otp):
+            raise HTTPException(401, "Código de verificación 2FA requerido o inválido")
     created = False
     if not user:
         user = models.User(name=str(info.get("name") or email.split("@")[0]), email=email, password_hash=None, role="customer", auth_provider="google", google_sub=sub, avatar_url=info.get("picture"))
@@ -246,7 +257,6 @@ def google_login(payload: schemas.GoogleAuthRequest, response: Response, request
     if created:
         db.add(models.Notification(user_id=user.id, kind="account", title="Bienvenido a Tala Eats", message="Tu cuenta de Google y Tala Wallet quedaron activadas."))
     db.commit(); db.refresh(user)
-    if not user.is_active: raise HTTPException(status_code=403, detail="La cuenta está desactivada")
     return _set_session(response, user, request, db)
 
 
