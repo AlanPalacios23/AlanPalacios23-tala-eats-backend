@@ -67,13 +67,15 @@ def main():
         client.close()
 
     # Read-only endpoints against the fresh database, no orders or external calls.
-    client_http = TestClient(app, raise_server_exceptions=True)
-    for url in ("/api/v1/orders/mine", "/api/v1/owner/orders", "/api/v1/driver/dashboard"):
-        resp = client_http.get(url)
-        assert resp.status_code in (401, 403), (url, resp.status_code, resp.text[:300])
-    ready = client_http.get("/api/v1/ready")
-    assert ready.status_code == 200 and ready.json()["ready"] is True, ready.text[:400]
-    assert ready.json()["database"] is True and ready.json()["redis"] is True
+    # One lifespan/context owns the event loop of the shared async Redis
+    # client. A separate TestClient for each request triggers loop-closed errors.
+    with TestClient(app, raise_server_exceptions=True) as client_http:
+        for url in ("/api/v1/orders/mine", "/api/v1/owner/orders", "/api/v1/driver/dashboard"):
+            resp = client_http.get(url)
+            assert resp.status_code in (401, 403), (url, resp.status_code, resp.text[:300])
+        ready = client_http.get("/api/v1/ready")
+        assert ready.status_code == 200 and ready.json()["ready"] is True, ready.text[:400]
+        assert ready.json()["database"] is True and ready.json()["redis"] is True
     print("POSTGRES_REDIS_QA_PASS migration", heads[0], "immutable triggers, unique order references, auth, redis TTL, readiness")
 
 if __name__ == "__main__":
