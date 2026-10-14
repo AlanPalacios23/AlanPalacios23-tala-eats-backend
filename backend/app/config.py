@@ -71,6 +71,8 @@ class Settings:
     # Opt-in override: preserve existing production policy unless explicitly enabled.
     # Even when permitted, cash never incurs a customer service fee.
     cash_checkout_enabled = _bool("CASH_CHECKOUT_ENABLED", False)
+    # Independent Finance V2, shadow-only: never authorizes payouts or money movement.
+    finance_v2_shadow_enabled = _bool("FINANCE_V2_SHADOW_ENABLED", False)
     # Versioned commercial rules, opt-out for safe rollback with legacy behavior.
     commercial_pricing_v152_enabled = _bool("COMMERCIAL_PRICING_V152_ENABLED", True)
     # Opt-in until staged QA passes; preserves v1.6.1 pricing if omitted.
