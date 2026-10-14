@@ -10,6 +10,7 @@ from ..geo import haversine_km
 from ..config import settings
 from .orders import VALID_STATUSES, order_options
 from ..delivery_lifecycle import finalize_delivery
+from ..finance_core_v2 import driver_cash_eligible
 from ..cache import bump_catalog_version
 
 router=APIRouter(prefix="/api/v1/owner",tags=["restaurant-owner"])
@@ -73,6 +74,8 @@ def _assign_best_available_driver(db: Session, order: models.Order):
             .limit(1)
         )
         if active:
+            continue
+        if settings.finance_v2_shadow_enabled and not driver_cash_eligible(db, locked.user_id, order):
             continue
         order.driver_id = locked.user_id
         order.status = "assigned"
