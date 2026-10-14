@@ -277,3 +277,22 @@ def wallet_preview(db: Session, role: str, owner_id: int) -> dict[str, int | str
             role == "driver" and balance < -CASH_DEBT_LIMIT_CENTS,
         "shadow_only": True,
     }
+
+
+def driver_cash_eligible(db: Session, driver_id: int, order: models.Order) -> bool:
+    """Conservative $500 MXN exposure gate for NEW cash offers only.
+
+    Called behind the OFF-by-default shadow flag. Balances from Stripe pending
+    credits do not erase physical custody debt. No existing delivery is blocked.
+    """
+    if str(order.payment_method or "") != "cash":
+        return True
+    if driver_id <= 0 or order.order_type != "delivery":
+        return False
+    due = max(0, cents(order.total) - cents(order.driver_earning) - cents(order.tip))
+    wallet = db.scalar(select(models.FinanceV2Wallet).where(
+        models.FinanceV2Wallet.owner_type == "driver",
+        models.FinanceV2Wallet.owner_id == driver_id,
+    ).with_for_update())
+    current = int(wallet.cash_exposure_cents) if wallet else 0
+    return current + due <= CASH_DEBT_LIMIT_CENTS
