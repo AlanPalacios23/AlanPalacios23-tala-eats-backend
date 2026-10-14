@@ -6,8 +6,21 @@ if [ "$#" -gt 0 ]; then
   exec "$@"
 fi
 
-echo "[Tala Eats] Aplicando migraciones..."
-alembic upgrade head
+# Never mutate production schema merely because an API container restarted.
+# Run migrations as a separate approved release step after backup verification.
+if [ "${ENVIRONMENT:-development}" = "production" ]; then
+  if [ "${AUTO_MIGRATE_ON_START:-false}" = "true" ]; then
+    echo "[Tala Eats] AVISO: migración automática productiva autorizada explícitamente"
+    alembic upgrade head
+  else
+    echo "[Tala Eats] Migraciones automáticas deshabilitadas en producción"
+  fi
+elif [ "${AUTO_MIGRATE_ON_START:-true}" = "true" ]; then
+  echo "[Tala Eats] Aplicando migraciones locales/de QA..."
+  alembic upgrade head
+else
+  echo "[Tala Eats] Migración automática deshabilitada"
+fi
 python -m app.bootstrap_admin
 
 echo "[Tala Eats] Iniciando API production hardened..."
@@ -16,7 +29,7 @@ exec uvicorn app.main:app \
   --port 8000 \
   --workers "${WEB_CONCURRENCY:-4}" \
   --proxy-headers \
-  --forwarded-allow-ips="*" \
+  --forwarded-allow-ips="${UVICORN_FORWARDED_ALLOW_IPS:-127.0.0.1}" \
   --timeout-keep-alive "${UVICORN_KEEP_ALIVE:-5}" \
   --timeout-graceful-shutdown "${UVICORN_GRACEFUL_SHUTDOWN:-25}" \
   --timeout-worker-healthcheck "${UVICORN_WORKER_HEALTHCHECK:-10}" \

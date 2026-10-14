@@ -61,6 +61,8 @@ jobs:
         run: python scripts/security_preflight.py --root .
       - name: Compilación sintáctica Python
         run: python -m compileall -q backend/app backend/migrations backend/tests
+      - name: Sintaxis POSIX del entrypoint
+        run: sh -n backend/entrypoint.sh
 
   pytest:
     name: pytest FastAPI + SQLite aislado
