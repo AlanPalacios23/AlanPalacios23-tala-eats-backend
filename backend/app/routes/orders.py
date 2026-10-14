@@ -270,7 +270,24 @@ def create_order(payload:schemas.OrderCreate,user:models.User=Depends(require_ro
         recipient_name=payload.recipient_name.strip(),recipient_phone=payload.recipient_phone.strip(),gift_message=payload.gift_message.strip(),corporate_account_id=payload.corporate_account_id,
         inventory_reserved_json=json.dumps({str(k): str(v) for k, v in ingredient_usage.items()}, sort_keys=True),
     )
-    db.add(order); db.flush()
+    db.add(order)
+    try:
+        db.flush()
+    except IntegrityError:
+        # The PostgreSQL UNIQUE(user_id, client_reference) can reject this
+        # insert BEFORE the later commit handler runs. Concurrent identical
+        # retries must return the committed original after transaction rollback.
+        db.rollback()
+        if payload.client_reference:
+            existing = db.scalar(
+                select(models.Order)
+                .where(models.Order.user_id == user.id, models.Order.client_reference == payload.client_reference)
+                .options(*order_options())
+            )
+            if existing:
+                _assert_same_order_reference(existing, payload)
+                return existing
+        raise
     enqueue_event(
         db,
         event_key=f"order:{order.id}:created",
