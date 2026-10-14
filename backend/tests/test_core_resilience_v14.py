@@ -145,7 +145,7 @@ def test_device_inventory_and_selective_revocation():
         assert current['id'] != target['id']
 
 
-def test_global_idempotency_rejects_same_key_with_different_payload(monkeypatch):
+def test_auth_login_does_not_replay_stale_token_or_share_idempotency_cache(monkeypatch):
     from app import middleware
     from app.config import settings
 
@@ -182,10 +182,13 @@ def test_global_idempotency_rejects_same_key_with_different_payload(monkeypatch)
         assert one.status_code == 200, one.text
         replay = c.post('/api/v1/auth/login', headers=headers, json={'email': 'cliente@talaeats.mx', 'password': 'Cliente123!'})
         assert replay.status_code == 200, replay.text
-        assert replay.headers.get('X-Idempotency-Replayed') == 'true'
+        # A new login is always authenticated; token/cookie results are never
+        # replayed from Redis under a user-controlled Idempotency-Key.
+        assert replay.headers.get('X-Idempotency-Replayed') is None
         mismatch = c.post('/api/v1/auth/login', headers=headers, json={'email': 'cliente@talaeats.mx', 'password': 'wrong-password'})
-        assert mismatch.status_code == 409, mismatch.text
-        assert 'solicitud diferente' in mismatch.json()['detail']
+        assert mismatch.status_code == 401, mismatch.text
+        assert not any(key.startswith('idem:response:') for key in fake.store)
+        assert not any(key.startswith('idem:signature:') for key in fake.store)
 
 
 def test_signed_device_attestation_binds_user_and_installation():

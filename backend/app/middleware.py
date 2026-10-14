@@ -418,9 +418,14 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
 
         try:
             response = await call_next(request)
-            body = b""
-            async for chunk in response.body_iterator:
-                body += chunk
+            # BaseHTTPMiddleware uses a streaming wrapper, whereas direct
+            # test invocation may return a normal JSONResponse with .body.
+            body = getattr(response, "body", None)
+            if body is None:
+                parts = []
+                async for chunk in response.body_iterator:
+                    parts.append(chunk if isinstance(chunk, bytes) else chunk.encode("utf-8"))
+                body = b"".join(parts)
             rebuilt = Response(
                 content=body, status_code=response.status_code,
                 headers={k: v for k, v in response.headers.items() if k.lower() != "content-length"},

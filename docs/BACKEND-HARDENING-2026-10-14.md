@@ -72,3 +72,7 @@ También ejecutar los workflows GitHub Actions para PostgreSQL/Redis, Docker off
 - Uvicorn ya **no acepta** `--forwarded-allow-ips="*"`: usa `UVICORN_FORWARDED_ALLOW_IPS=127.0.0.1` por defecto. Configurar IPs exactas del proxy Caddy/Cloudflare (último salto de red) antes de desplegar, **junto con** `TRUSTED_PROXY_CIDRS` de la aplicación. Ambos controles deben coincidir con la topología real y ninguna lista debe admitir Internet completo.
 - `app.bootstrap_admin` conserva su comportamiento previo por compatibilidad: revisar antes del siguiente release qué campos y roles se crean por arranque, MFA y bootstrap idempotente. Si faltan migraciones productivas, el arranque debe fallar de forma visible en lugar de intentar cambiarlas silenciosamente.
 - Verificar que la app reciba IP correcta de usuarios reales detrás de Caddy y que una conexión directa con cabeceras falsificadas no pueda saltarse el rate limit.
+
+## Corrección de la regresión del middleware
+- Se admite tanto `Response.body` (respuesta directa) como `Response.body_iterator` (respuesta ASGI streaming); evita el AttributeError para JSONResponse.
+- La prueba de login legacy ahora comprueba que nunca se reutilice un token de autenticación desde Redis: una contraseña errónea responde 401, no 409 por idempotencia genérica.
