@@ -1,0 +1,56 @@
+name: TALA EATS Backend | Security Audit
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '19 13 * * 1'
+  push:
+    branches: [main]
+    paths:
+      - 'backend/requirements.txt'
+      - 'backend/app/**'
+      - '.github/workflows/backend-security-audit.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/requirements.txt'
+      - 'backend/app/**'
+      - '.github/workflows/backend-security-audit.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: talaeats-security-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: PyPI OSV + Bandit static checks (read-only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+    steps:
+      - name: Checkout privado
+        uses: actions/checkout@v4
+      - name: Python aislado
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Instalar escáneres, no las credenciales de producción
+        run: python -m pip install pip-audit==2.9.0 bandit==1.8.6
+      - name: Analizar vulnerabilidades declaradas y transitivas
+        run: pip-audit --disable-pip --progress-spinner off --format json --output dependency-audit.json --requirement backend/requirements.txt
+      - name: Bandit — hallazgos de severidad y confianza altas
+        run: bandit -r backend/app -lll -iii -f json -o bandit-audit.json
+      - name: Evidencia de auditoría
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: talaeats-backend-security-audit-${{ github.run_number }}
+          path: |
+            dependency-audit.json
+            bandit-audit.json
+          if-no-files-found: ignore
+          retention-days: 14
