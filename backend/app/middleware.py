@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+from ipaddress import ip_address, ip_network
 import secrets
 import time
 import uuid
@@ -171,17 +172,38 @@ runtime_metrics = RuntimeMetrics()
 
 
 def _client_ip(request: Request) -> str:
+    """Do not trust user-supplied client-IP headers from a direct connection.
+
+    A reverse proxy MUST be inside the explicitly approved CIDR ranges and
+    must overwrite (not forward unchecked) upstream X-Forwarded-For/CF headers.
+    This identity is used by authentication rate limiting and abuse detection.
+    """
+    peer = request.client.host if request.client else "unknown"
+    try:
+        remote = ip_address(peer)
+    except ValueError:
+        return peer[:80]
     if settings.trust_proxy_headers:
-        cf_ip = request.headers.get("cf-connecting-ip", "").strip()
-        if cf_ip:
-            return cf_ip[:80]
-        forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-        if forwarded:
-            return forwarded[:80]
-        real_ip = request.headers.get("x-real-ip", "").strip()
-        if real_ip:
-            return real_ip[:80]
-    return (request.client.host if request.client else "unknown")[:80]
+        trusted = False
+        for subnet in settings.trusted_proxy_cidrs:
+            try:
+                if remote in ip_network(subnet, strict=False):
+                    trusted = True
+                    break
+            except ValueError:
+                logger.warning("Invalid TRUSTED_PROXY_CIDRS network ignored")
+        if trusted:
+            values = (
+                request.headers.get("cf-connecting-ip", "").strip(),
+                request.headers.get("x-forwarded-for", "").split(",")[0].strip(),
+                request.headers.get("x-real-ip", "").strip(),
+            )
+            for candidate in values:
+                try:
+                    return str(ip_address(candidate))
+                except ValueError:
+                    continue
+    return str(remote)
 
 
 def _rate_policy(request: Request) -> tuple[str, int]:
@@ -221,7 +243,13 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        request_id = (request.headers.get("x-request-id") or str(uuid.uuid4()))[:128]
+        # Reject untrusted control characters and invalid request IDs before
+        # placing them into response headers and structured access logs.
+        supplied_id = (request.headers.get("x-request-id") or "").strip()
+        request_id = (
+            supplied_id if re.fullmatch(r"[A-Za-z0-9._:-]{1,96}", supplied_id)
+            else str(uuid.uuid4())
+        )
         request.state.request_id = request_id
         token_request_id = request_id_var.set(request_id)
         token_ip = request_ip_var.set(_client_ip(request))

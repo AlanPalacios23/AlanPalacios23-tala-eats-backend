@@ -54,6 +54,9 @@ class Settings:
     public_base_url = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
     trust_proxy_headers = _bool("TRUST_PROXY_HEADERS", environment == "production")
+    # Explicitly identify the LAST trusted hop; Docker/Caddy proxy networks must
+    # be configured during deployment, not inferred from spoofable headers.
+    trusted_proxy_cidrs = _csv("TRUSTED_PROXY_CIDRS", "127.0.0.0/8,::1/128")
 
     google_client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 

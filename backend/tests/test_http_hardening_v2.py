@@ -173,3 +173,60 @@ def test_negative_content_length_is_rejected():
     request.scope["headers"] = [(b"content-length", b"-1")]
     result = asyncio.run(RequestSizeLimitMiddleware(app=lambda *args: None).dispatch(request, handler))
     assert result.status_code == 400
+
+
+def test_forwarded_ip_rejected_for_untrusted_direct_client(monkeypatch):
+    from app.middleware import _client_ip
+    monkeypatch.setattr(settings, "trust_proxy_headers", True)
+    monkeypatch.setattr(settings, "trusted_proxy_cidrs", ["127.0.0.0/8"])
+    request = make_request("/api/v1/auth/login")
+    request.scope["client"] = ("198.51.100.60", 4512)
+    request.scope["headers"].extend([
+        (b"cf-connecting-ip", b"203.0.113.7"),
+        (b"x-forwarded-for", b"203.0.113.99"),
+    ])
+    assert _client_ip(request) == "198.51.100.60"
+
+
+def test_forwarded_ip_from_explicit_trusted_proxy(monkeypatch):
+    from app.middleware import _client_ip
+    monkeypatch.setattr(settings, "trust_proxy_headers", True)
+    monkeypatch.setattr(settings, "trusted_proxy_cidrs", ["10.8.0.0/16"])
+    request = make_request("/api/v1/auth/login")
+    request.scope["client"] = ("10.8.0.3", 4512)
+    request.scope["headers"].extend([
+        (b"cf-connecting-ip", b"203.0.113.7"),
+        (b"x-forwarded-for", b"203.0.113.99"),
+    ])
+    assert _client_ip(request) == "203.0.113.7"
+
+
+def test_trusted_proxy_never_accepts_invalid_spoofed_ip(monkeypatch):
+    from app.middleware import _client_ip
+    monkeypatch.setattr(settings, "trust_proxy_headers", True)
+    monkeypatch.setattr(settings, "trusted_proxy_cidrs", ["127.0.0.0/8", "invalid-CIDR"])
+    request = make_request("/api/v1/auth/login")
+    request.scope["headers"].extend([
+        (b"cf-connecting-ip", b"some-random-attack-identity"),
+        (b"x-forwarded-for", b"not_an_ip"),
+    ])
+    assert _client_ip(request) == "127.0.0.1"
+
+
+def test_request_id_only_accepts_safe_header_characters():
+    from app.middleware import RequestContextMiddleware
+    response_data = {}
+    async def handler(request):
+        response_data["id"] = request.state.request_id
+        return JSONResponse({"ok": True})
+    async def run(header):
+        request = make_request("/api/v1/health")
+        request.scope["headers"].append((b"x-request-id", header))
+        return await RequestContextMiddleware(app=lambda *args: None).dispatch(
+            request, handler)
+    bad = asyncio.run(run(b"bad\r\ninjected"))
+    assert bad.status_code == 200
+    assert bad.headers["x-request-id"] != "bad\r\ninjected"
+    assert len(bad.headers["x-request-id"]) == 36
+    good = asyncio.run(run(b"trace_2026-10-14"))
+    assert good.headers["x-request-id"] == "trace_2026-10-14"

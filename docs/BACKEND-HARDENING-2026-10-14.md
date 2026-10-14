@@ -50,3 +50,9 @@ También ejecutar los workflows GitHub Actions para PostgreSQL/Redis, Docker off
 2. Validación de integridad, comparación del SHA e imagen productiva, respaldo PostgreSQL y medios verificado **fuera del servidor productivo**.
 3. Staging: Android Usuarios/Restaurante/Repartidor, API E2E, Stripe TEST/MP sandbox, pagos cash sin dinero real, rollback.
 4. Confirmación expresa del propietario para cualquier despliegue Kali, migración o cambio en Stripe LIVE; preservar configuración y secretos fuera de GitHub.
+
+## Identificación de clientes y proxy inverso
+- `TRUST_PROXY_HEADERS=true` **solo** confía en IPs de proxy cuyo IP *de conexión* pertenezca a `TRUSTED_PROXY_CIDRS` (lista de redes CIDR). Por defecto se confía únicamente en loopback; no usar `0.0.0.0/0` ni redes arbitrariamente amplias.
+- En el despliegue Docker/Caddy/Cloudflare, identificar la dirección del **último salto entre el proxy y Uvicorn**, configurar su CIDR concreto y hacer que ese proxy **reemplace** las cabeceras CF-Connecting-IP/X-Forwarded-For enviadas por clientes. Probar el límite de login desde dos IP distintas y conexión directa.
+- Si el proxy real no está en la lista, la aplicación tomará la IP del proxy, por seguridad; esto puede agrupar usuarios bajo la misma cuota hasta configurar el CIDR correcto. Verificar antes de desplegar.
+- Los valores incorrectos de `X-Request-ID` son sustituidos por UUID; los IDs válidos se preservan sin caracteres de control.
