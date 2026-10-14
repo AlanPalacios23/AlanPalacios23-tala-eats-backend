@@ -41,8 +41,9 @@ jobs:
       - name: Instalar escáneres, no las credenciales de producción
         run: python -m pip install pip-audit==2.9.0 bandit==1.8.6
       - name: Analizar vulnerabilidades declaradas y transitivas
-        run: pip-audit --disable-pip --progress-spinner off --format json --output dependency-audit.json --requirement backend/requirements.txt
+        run: pip-audit --progress-spinner off --format json --output dependency-audit.json --requirement backend/requirements.txt
       - name: Bandit — hallazgos de severidad y confianza altas
+        if: always()
         run: bandit -r backend/app -lll -iii -f json -o bandit-audit.json
       - name: Evidencia de auditoría
         if: always()
