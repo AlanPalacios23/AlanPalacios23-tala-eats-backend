@@ -1,0 +1,26 @@
+name: TALA EATS | Public Readiness Watch (read-only)
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [release/p0-checklist-last-four]
+    paths:
+      - 'scripts/check_public_readiness.py'
+      - '.github/workflows/public-readiness-watch.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  monitor:
+    name: Only GET /ready, never payments or database writes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Self-test validation contract
+        run: python3 scripts/check_public_readiness.py --self-test
+      - name: Public production readiness (read-only)
+        run: python3 scripts/check_public_readiness.py
