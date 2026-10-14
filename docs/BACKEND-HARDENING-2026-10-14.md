@@ -56,3 +56,7 @@ También ejecutar los workflows GitHub Actions para PostgreSQL/Redis, Docker off
 - En el despliegue Docker/Caddy/Cloudflare, identificar la dirección del **último salto entre el proxy y Uvicorn**, configurar su CIDR concreto y hacer que ese proxy **reemplace** las cabeceras CF-Connecting-IP/X-Forwarded-For enviadas por clientes. Probar el límite de login desde dos IP distintas y conexión directa.
 - Si el proxy real no está en la lista, la aplicación tomará la IP del proxy, por seguridad; esto puede agrupar usuarios bajo la misma cuota hasta configurar el CIDR correcto. Verificar antes de desplegar.
 - Los valores incorrectos de `X-Request-ID` son sustituidos por UUID; los IDs válidos se preservan sin caracteres de control.
+
+## Worker Redis — propiedad exclusiva del ciclo
+- `_refresh_cycle_lock` ahora devuelve verdadero solamente si Redis confirma que **el mismo token aún posee el lease** y ha renovado su TTL. Si el candado caduca, cambia de dueño, desaparece Redis o falla su renovación, `run_once` detiene **las tareas restantes** del ciclo, evitando disparar nuevos trabajos después de perder exclusividad.
+- Esto no convierte en atómica una tarea externa que ya comenzó; siguen siendo necesarios idempotencia, outbox y locks transaccionales en cada operación crítica, especialmente pago/reconciliación. Los jobs completos se prueban en staging con dos workers concurrentes.
