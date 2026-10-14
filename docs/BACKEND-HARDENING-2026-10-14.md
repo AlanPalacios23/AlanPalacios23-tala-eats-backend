@@ -82,3 +82,7 @@ También ejecutar los workflows GitHub Actions para PostgreSQL/Redis, Docker off
 - Si la cuenta tiene 2FA, exige `otp` TOTP válido también al entrar con Google; no se permite omitir el segundo factor seleccionando un login diferente.
 - Una cuenta enlazada a un `google_sub` distinto rechaza el re-enlace con HTTP 409. Google SSO normal para clientes que no tienen 2FA sigue admitiendo el contrato de `credential` existente.
 - Antes del deploy de esta corrección, coordinar que el frontend de cuentas con 2FA permita capturar el OTP en Google Sign-In; no relajar la verificación en producción.
+
+## Límites de memoria y arranque coherente
+- La caché genérica de idempotencia almacena únicamente respuestas JSON con `Content-Length` válido y máximo de 2 MiB. SSE, archivos, respuestas chunked y cuerpos sin tamaño conocido **no se consumen ni acumulan en RAM** desde este middleware. Tales rutas requieren idempotencia del dominio/proveedor.
+- El script de arranque normaliza `ENVIRONMENT` igual que Python (espacios y mayúsculas), evitando que `PRODUCTION` o ` production ` activen Alembic en un reinicio. Esto no sustituye la migración controlada fuera del contenedor.

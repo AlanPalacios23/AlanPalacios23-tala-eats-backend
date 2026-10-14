@@ -73,3 +73,10 @@ def test_production_migration_opt_in_must_be_explicit(tmp_path):
 def test_development_migration_can_be_explicitly_disabled(tmp_path):
     _, logs = _startup(tmp_path, environment="development", auto_migrate="false")
     assert "alembic" not in logs
+
+
+@pytest.mark.parametrize("raw_env", ["PRODUCTION", "Production", " production ", " PRODUCTION "])
+def test_production_environment_normalization_never_auto_migrates(tmp_path, raw_env):
+    _, logs = _startup(tmp_path, environment=raw_env)
+    assert "alembic" not in logs
+    assert "--forwarded-allow-ips=127.0.0.1" in logs

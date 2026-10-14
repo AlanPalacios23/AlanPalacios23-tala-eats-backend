@@ -8,7 +8,10 @@ fi
 
 # Never mutate production schema merely because an API container restarted.
 # Run migrations as a separate approved release step after backup verification.
-if [ "${ENVIRONMENT:-development}" = "production" ]; then
+# Python Settings normalizes case and whitespace; the shell startup must agree.
+# Otherwise ENVIRONMENT=PRODUCTION could silently auto-migrate production.
+environment_normalized=$(printf '%s' "${ENVIRONMENT:-development}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+if [ "$environment_normalized" = "production" ]; then
   if [ "${AUTO_MIGRATE_ON_START:-false}" = "true" ]; then
     echo "[Tala Eats] AVISO: migración automática productiva autorizada explícitamente"
     alembic upgrade head

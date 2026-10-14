@@ -230,3 +230,44 @@ def test_request_id_only_accepts_safe_header_characters():
     assert len(bad.headers["x-request-id"]) == 36
     good = asyncio.run(run(b"trace_2026-10-14"))
     assert good.headers["x-request-id"] == "trace_2026-10-14"
+
+
+def test_streaming_response_is_never_consumed_or_cached(monkeypatch):
+    from starlette.responses import StreamingResponse
+    monkeypatch.setattr(settings, "redis_url", "redis://qa-only")
+    fake = FakeRedis()
+    async def get_redis(): return fake
+    monkeypatch.setattr(middleware, "_get_rate_redis", get_redis)
+    consumed = []
+    async def stream():
+        consumed.append(True)
+        yield "event: update\\ndata: very-large-stream\\n\\n"
+    async def endpoint(request):
+        return StreamingResponse(stream(), media_type="text/event-stream")
+    async def run():
+        response = await middleware_instance().dispatch(make_request("/api/v1/orders/stream"), endpoint)
+        assert response.status_code == 200
+        assert not consumed
+        assert fake.cache_writes == 0
+        assert fake.eval_calls == 1
+    asyncio.run(run())
+
+
+def test_chunked_json_without_content_length_is_not_replayed(monkeypatch):
+    from starlette.responses import StreamingResponse
+    monkeypatch.setattr(settings, "redis_url", "redis://qa-only")
+    fake = FakeRedis()
+    async def get_redis(): return fake
+    monkeypatch.setattr(middleware, "_get_rate_redis", get_redis)
+    consumed = []
+    async def stream():
+        consumed.append(True)
+        yield b'{"success":true}'
+    async def endpoint(request):
+        return StreamingResponse(stream(), media_type="application/json")
+    async def run():
+        response = await middleware_instance().dispatch(make_request("/api/v1/orders/stream-json"), endpoint)
+        assert response.status_code == 200
+        assert not consumed
+        assert fake.cache_writes == 0
+    asyncio.run(run())

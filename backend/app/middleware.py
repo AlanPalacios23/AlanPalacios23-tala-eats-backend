@@ -418,6 +418,16 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
 
         try:
             response = await call_next(request)
+            # Generic replay only supports bounded JSON responses. Never
+            # buffer unbounded streaming/file/SSE responses in API memory.
+            # An endpoint without a Content-Length must use domain/provider
+            # idempotency rather than this generic response cache.
+            response_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+            response_length = response.headers.get("content-length", "")
+            if (response_type != "application/json"
+                    or not response_length.isdecimal()
+                    or int(response_length) > 2 * 1024 * 1024):
+                return response
             # BaseHTTPMiddleware uses a streaming wrapper, whereas direct
             # test invocation may return a normal JSONResponse with .body.
             body = getattr(response, "body", None)
