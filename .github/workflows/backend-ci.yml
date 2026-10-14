@@ -86,4 +86,4 @@ jobs:
       - name: Pruebas aisladas (Stripe y retiros LIVE desactivados)
         run: python -m pytest -q --disable-warnings --maxfail=1
       - name: Smoke Connect sin llamadas monetarias
-        run: python tests/connect_security_smoke_v164h1.py
+        run: PYTHONPATH=. python tests/connect_security_smoke_v164h1.py
