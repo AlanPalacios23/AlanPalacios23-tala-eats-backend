@@ -270,3 +270,43 @@ def test_shadow_netting_rejects_bad_external_amount(session, amount):
     with pytest.raises(FinanceV2Error):
         netting_preview(session, "driver", 4,
                         hypothetical_untransferred_cents=amount)
+
+
+def test_stripe_withdrawal_hold_applies_to_unrecovered_cash(session, monkeypatch):
+    from fastapi import HTTPException
+    from app.config import settings
+    from app.routes.withdrawals import _legacy_holds
+
+    cash = order_sample(41)
+    session.add(cash)
+    session.flush()
+    book_delivered_order(session, cash)
+    session.commit()
+
+    monkeypatch.setattr(settings, "finance_v2_shadow_enabled", True)
+    with pytest.raises(HTTPException) as exc:
+        _legacy_holds(session, "driver", 4)
+    assert exc.value.status_code == 409
+    assert "efectivo" in str(exc.value.detail).lower()
+
+    # The existing production flow is unaffected with the feature disabled.
+    monkeypatch.setattr(settings, "finance_v2_shadow_enabled", False)
+    _legacy_holds(session, "driver", 4)
+
+
+def test_stripe_withdrawal_hold_covers_restaurant_cash_pickup(session, monkeypatch):
+    from fastapi import HTTPException
+    from app.config import settings
+    from app.routes.withdrawals import _legacy_holds
+
+    cash = order_sample(42, order_type="pickup")
+    session.add(cash)
+    session.flush()
+    book_delivered_order(session, cash)
+    session.commit()
+
+    monkeypatch.setattr(settings, "finance_v2_shadow_enabled", True)
+    with pytest.raises(HTTPException) as exc:
+        _legacy_holds(session, "restaurant", 2)
+    assert exc.value.status_code == 409
+    assert wallet_preview(session, "restaurant", 2)["cash_exposure_cents"] == 4400
