@@ -34,11 +34,19 @@ def cents(value: object) -> int:
         amount = Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError) as exc:
         raise FinanceV2Error("Importe no numérico") from exc
-    if not amount.is_finite() or amount != amount.quantize(CENT, rounding=ROUND_HALF_UP):
-        raise FinanceV2Error("Importe no finito o con fracciones de centavo")
-    count = int(amount * 100)
-    if abs(count) > MAX_CENTS:
+    if not amount.is_finite():
+        raise FinanceV2Error("Importe no finito")
+    # Evaluate magnitude before quantize: Decimal('1e100').quantize('0.01')
+    # raises InvalidOperation with the default context precision.
+    if abs(amount) > Decimal(MAX_CENTS) / 100:
         raise FinanceV2Error("Importe fuera de límite")
+    try:
+        rounded = amount.quantize(CENT, rounding=ROUND_HALF_UP)
+    except InvalidOperation as exc:
+        raise FinanceV2Error("Importe monetario inválido") from exc
+    if amount != rounded:
+        raise FinanceV2Error("Importe con fracciones de centavo")
+    count = int(rounded * 100)
     return count
 
 
