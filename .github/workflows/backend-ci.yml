@@ -83,7 +83,9 @@ jobs:
             backend/requirements-dev.txt
       - name: Dependencias de aplicación y pruebas
         run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
-      - name: Pruebas aisladas (Stripe y retiros LIVE desactivados)
-        run: python -m pytest -q --disable-warnings --maxfail=1
       - name: Smoke Connect sin llamadas monetarias
         run: PYTHONPATH=. python tests/connect_security_smoke_v164h1.py
+      - name: Comprobar cabeza única de migraciones Alembic
+        run: python -c "from alembic.config import Config; from alembic.script import ScriptDirectory; h = ScriptDirectory.from_config(Config('alembic.ini')).get_heads(); assert len(h) == 1, h; print('ALEMBIC_SINGLE_HEAD_PASS', h[0])"
+      - name: Pruebas aisladas (Stripe y retiros LIVE desactivados)
+        run: python -m pytest -q --disable-warnings
