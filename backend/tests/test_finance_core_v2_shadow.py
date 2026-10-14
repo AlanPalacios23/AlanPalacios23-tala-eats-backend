@@ -10,7 +10,7 @@ from app import models
 from app.db import Base
 from app.finance_core_v2 import (
     FinanceV2Error, balanced_lines, book_delivered_order, cents,
-    driver_cash_eligible, snapshot_from_order, wallet_preview,
+    driver_cash_eligible, indicative_vat_split, snapshot_from_order, wallet_preview,
 )
 
 
@@ -196,3 +196,15 @@ def test_wallet_preview_never_exposes_other_roles_or_payable_bank_funds(session)
         wallet_preview(session, "customer", 12)
     assert wallet_preview(session, "restaurant", 999)["available_for_payout_cents"] == 0
     assert wallet_preview(session, "restaurant", 999)["shadow_only"] is True
+
+
+def test_vat_preview_16_percent_is_not_double_charged():
+    s = snapshot_from_order(order_sample())
+    inclusive = indicative_vat_split(s)
+    excluded = indicative_vat_split(s, vat_included=False)
+    # $14 service + $30 merchant commission = $44 gross.
+    assert inclusive["service_and_commission_cents"] == 4400
+    assert inclusive["indicative_vat_cents"] == 607
+    assert inclusive["tax_base_cents"] == 3793
+    assert excluded["indicative_vat_cents"] == 704
+    assert inclusive["legal_review_required"]
