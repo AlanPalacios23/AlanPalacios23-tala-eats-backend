@@ -3,7 +3,7 @@ name: TALA EATS Backend | PostgreSQL Redis Gate
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, release/p0-checklist-last-four]
     paths:
       - 'backend/**'
       - '.github/workflows/backend-postgres-redis.yml'
@@ -103,5 +103,11 @@ jobs:
         run: python -m qa.postgres_redis_smoke
       - name: Competencia real de dos conexiones sobre una referencia de pedido
         run: python -m qa.postgres_concurrency
+      - name: Flujo E2E de los cuatro roles API (sin cobros)
+        run: python -m qa.four_role_api_e2e
+      - name: Persistencia de alertas y recuperación (sin SMTP real)
+        run: python -m qa.alerting_drill
+      - name: Recuperación íntegra de backup PostgreSQL 16 y medios sintéticos
+        run: python -m qa.backup_restore_drill
       - name: Verificar Alembic current
         run: python -m alembic current
