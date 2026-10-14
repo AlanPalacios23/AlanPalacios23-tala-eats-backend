@@ -76,7 +76,9 @@ def main():
         for status in ("confirmed", "preparing", "ready"):
             state = request(c, "PATCH", f"/api/v1/owner/orders/{oid}/status", merchant, 200,
                             json={"status": status}).json()
-            assert state["status"] == status
+            # The restaurant's 'ready' transition can atomically auto-assign
+            # the closest driver, legitimately returning 'assigned'.
+            assert state["status"] in (("ready", "assigned") if status == "ready" else (status,))
 
         # Owner may assign the driver automatically when marking ready.
         with SessionLocal() as db:
