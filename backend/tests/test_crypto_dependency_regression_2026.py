@@ -9,6 +9,7 @@ import pytest
 from cryptography.fernet import Fernet, InvalidToken
 
 from app.security import create_access_token, decode_access_token, create_device_attestation, verify_device_attestation
+from app.config import settings
 
 
 def test_real_access_token_still_decodes_with_pinned_algorithm():
@@ -23,7 +24,7 @@ def test_expired_and_wrong_signature_never_authenticate():
     expired = jwt.encode(
         {"sub": "71", "iat": datetime.now(timezone.utc) - timedelta(days=2),
          "exp": datetime.now(timezone.utc) - timedelta(days=1)},
-        "ci-disposable-test-secret-over-40-bytes-not-for-production", algorithm="HS256")
+        settings.jwt_secret, algorithm="HS256")
     with pytest.raises(jwt.ExpiredSignatureError):
         decode_access_token(expired)
     token = jwt.encode(
