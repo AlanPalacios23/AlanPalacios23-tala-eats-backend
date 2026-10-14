@@ -52,7 +52,7 @@ jobs:
       - name: Checkout privado
         uses: actions/checkout@v4
       - name: Python 3.13
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.13'
       - name: Pruebas del escáner local
@@ -74,7 +74,7 @@ jobs:
       - name: Checkout privado
         uses: actions/checkout@v4
       - name: Python 3.13
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.13'
           cache: pip
