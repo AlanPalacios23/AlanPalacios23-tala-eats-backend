@@ -86,3 +86,8 @@ También ejecutar los workflows GitHub Actions para PostgreSQL/Redis, Docker off
 ## Límites de memoria y arranque coherente
 - La caché genérica de idempotencia almacena únicamente respuestas JSON con `Content-Length` válido y máximo de 2 MiB. SSE, archivos, respuestas chunked y cuerpos sin tamaño conocido **no se consumen ni acumulan en RAM** desde este middleware. Tales rutas requieren idempotencia del dominio/proveedor.
 - El script de arranque normaliza `ENVIRONMENT` igual que Python (espacios y mayúsculas), evitando que `PRODUCTION` o ` production ` activen Alembic en un reinicio. Esto no sustituye la migración controlada fuera del contenedor.
+
+## Bootstrap de administradores: sin elevación automática
+- Hallazgo P0: el código anterior ejecutaba `python -m app.bootstrap_admin` en cada arranque y, si `BOOTSTRAP_ADMIN_EMAIL` apuntaba a una cuenta existente de cualquier rol, **la promovía a admin**. No hay evidencia de que esto se haya explotado ni desplegado, pero era inseguro.
+- El nuevo `bootstrap_admin` está desactivado por defecto, solo crea una cuenta NUEVA con contraseña fuerte (mínimo 20 caracteres) y nunca eleva, reactiva ni modifica una cuenta existente. Re-ejecutar en un admin activo ya existente es idempotente, sin cambiar contraseña.
+- Producción: nunca ejecutar automáticamente bootstrap desde entrypoint, incluso si por error quedó `BOOTSTRAP_ADMIN_ENABLED=true`. Ejecutar excepcionalmente un comando `python -m app.bootstrap_admin` en mantenimiento supervisado, con `BOOTSTRAP_ADMIN_ENABLED=true` y credenciales **protegidas fuera del repositorio**, seguido de configuración TOTP. Retirar las variables al terminar y auditar altas con control dual.

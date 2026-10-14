@@ -21,7 +21,7 @@ def _fake_command(binary: Path, log_file: Path) -> None:
     binary.chmod(0o755)
 
 
-def _startup(tmp_path, *, environment: str, auto_migrate: str | None = None):
+def _startup(tmp_path, *, environment: str, auto_migrate: str | None = None, bootstrap: str | None = None):
     tools = tmp_path / "bin"
     tools.mkdir()
     output = tmp_path / "boot.log"
@@ -35,6 +35,9 @@ def _startup(tmp_path, *, environment: str, auto_migrate: str | None = None):
     })
     env.pop("AUTO_MIGRATE_ON_START", None)
     env.pop("UVICORN_FORWARDED_ALLOW_IPS", None)
+    env.pop("BOOTSTRAP_ADMIN_ENABLED", None)
+    if bootstrap is not None:
+        env["BOOTSTRAP_ADMIN_ENABLED"] = bootstrap
     if auto_migrate is not None:
         env["AUTO_MIGRATE_ON_START"] = auto_migrate
     result = subprocess.run(
@@ -52,7 +55,7 @@ def test_entrypoint_posix_shell_syntax():
 def test_production_start_does_not_auto_migrate_or_trust_all_proxies(tmp_path):
     result, logs = _startup(tmp_path, environment="production")
     assert "alembic" not in logs
-    assert "python -m app.bootstrap_admin" in logs
+    assert "python -m app.bootstrap_admin" not in logs
     assert "uvicorn app.main:app" in logs
     assert "--forwarded-allow-ips=127.0.0.1" in logs
     assert "--forwarded-allow-ips=*" not in logs
@@ -80,3 +83,13 @@ def test_production_environment_normalization_never_auto_migrates(tmp_path, raw_
     _, logs = _startup(tmp_path, environment=raw_env)
     assert "alembic" not in logs
     assert "--forwarded-allow-ips=127.0.0.1" in logs
+
+
+def test_explicit_dev_bootstrap_only_when_enabled(tmp_path):
+    _, logs = _startup(tmp_path, environment="development", bootstrap="true")
+    assert "python -m app.bootstrap_admin" in logs
+
+
+def test_bootstrap_flag_never_runs_automatically_in_production(tmp_path):
+    _, logs = _startup(tmp_path, environment="PRODUCTION", bootstrap="true")
+    assert "python -m app.bootstrap_admin" not in logs

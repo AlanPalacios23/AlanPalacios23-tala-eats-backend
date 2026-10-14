@@ -24,7 +24,13 @@ elif [ "${AUTO_MIGRATE_ON_START:-true}" = "true" ]; then
 else
   echo "[Tala Eats] Migración automática deshabilitada"
 fi
-python -m app.bootstrap_admin
+# Bootstrap is a privileged one-time operation, NEVER part of production
+# API startup or a container restart. In development it is explicitly opt-in.
+if [ "$environment_normalized" != "production" ] && [ "${BOOTSTRAP_ADMIN_ENABLED:-false}" = "true" ]; then
+  python -m app.bootstrap_admin
+else
+  echo "[Tala Eats] Admin bootstrap no se ejecuta en arranque normal"
+fi
 
 echo "[Tala Eats] Iniciando API production hardened..."
 exec uvicorn app.main:app \
