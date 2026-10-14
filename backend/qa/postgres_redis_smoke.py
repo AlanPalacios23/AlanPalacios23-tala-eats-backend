@@ -76,7 +76,46 @@ def main():
         ready = client_http.get("/api/v1/ready")
         assert ready.status_code == 200 and ready.json()["ready"] is True, ready.text[:400]
         assert ready.json()["database"] is True and ready.json()["redis"] is True
-    print("POSTGRES_REDIS_QA_PASS migration", heads[0], "immutable triggers, unique order references, auth, redis TTL, readiness")
+
+        # Synthetic QA-only customer and order. External payment flags are off.
+        # Tests the real PostgreSQL uniqueness constraint + Redis response replay.
+        from app.db import SessionLocal
+        from app.seed import seed_database
+        from app import models
+        from sqlalchemy import select, func
+        with SessionLocal() as db:
+            seed_database(db)
+            restaurant = db.scalar(select(models.Restaurant).where(models.Restaurant.name == "Tacos El Centro"))
+            assert restaurant is not None, "Synthetic QA seed failed"
+            item = db.scalar(select(models.MenuItem).where(models.MenuItem.restaurant_id == restaurant.id).order_by(models.MenuItem.id))
+            assert item is not None
+            restaurant_id, item_id, stock_before = restaurant.id, item.id, item.stock
+
+        login = client_http.post("/api/v1/auth/login", headers={"X-TalaEats-Client": "customer-mobile"},
+            json={"email": "cliente@talaeats.mx", "password": "Cliente123!"})
+        assert login.status_code == 200, ("QA login", login.status_code, login.text[:200])
+        access_token = login.json().get("access_token", "")
+        assert access_token and access_token != "cookie"
+        reference = "qa-" + uuid.uuid4().hex
+        header = {"Authorization": "Bearer " + access_token, "Idempotency-Key": reference}
+        payload = {"restaurant_id": restaurant_id, "address": "Prueba efimera Tala Centro",
+                   "order_type": "delivery", "distance_km": 1.0, "payment_method": "cash",
+                   "client_reference": reference, "items": [{"menu_item_id": item_id, "quantity": 1}]}
+        first = client_http.post("/api/v1/orders", headers=header, json=payload)
+        assert first.status_code == 201, ("First QA order", first.status_code, first.text[:500])
+        again = client_http.post("/api/v1/orders", headers=header, json=payload)
+        assert again.status_code == 201, ("Replay", again.status_code, again.text[:500])
+        assert first.json()["id"] == again.json()["id"]
+        assert again.headers.get("x-idempotency-replayed") == "true", "Redis replay cache did not engage"
+        changed = {**payload, "items": [{"menu_item_id": item_id, "quantity": 2}]}
+        conflict = client_http.post("/api/v1/orders", headers=header, json=changed)
+        assert conflict.status_code == 409, ("Key collision must fail closed", conflict.status_code, conflict.text[:350])
+        with SessionLocal() as db:
+            count = db.scalar(select(func.count(models.Order.id)).where(models.Order.client_reference == reference))
+            stock_after = db.get(models.MenuItem, item_id).stock
+        assert count == 1 and stock_after == stock_before - 1, (count, stock_before, stock_after)
+    print("POSTGRES_REDIS_QA_PASS migration", heads[0],
+          "immutable triggers, unique order references, cash order once, replay, collision 409, auth, readiness")
 
 if __name__ == "__main__":
     main()
