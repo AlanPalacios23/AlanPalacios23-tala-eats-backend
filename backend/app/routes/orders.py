@@ -203,6 +203,15 @@ def create_order(payload:schemas.OrderCreate,user:models.User=Depends(require_ro
     if payload.payment_method == "stripe" and not (settings.stripe_enabled and settings.stripe_secret_key and settings.stripe_webhook_secret):
         raise HTTPException(503,"Stripe no está configurado en este servidor")
     if payload.client_reference:
+        # Serialize concurrent checkouts for this customer on the primary DB.
+        # PostgreSQL's READ COMMITTED then sees the just-committed reference
+        # from another worker. Lock BEFORE querying the reference; handling
+        # IntegrityError only at db.commit() is too late (db.flush() inserts).
+        db.scalar(
+            select(models.User.id)
+            .where(models.User.id == user.id)
+            .with_for_update()
+        )
         existing=db.scalar(select(models.Order).where(models.Order.user_id==user.id,models.Order.client_reference==payload.client_reference).options(*order_options()))
         if existing:
             _assert_same_order_reference(db, existing, payload)
