@@ -151,13 +151,39 @@ def enqueue_for_new_notification(mapper, connection, target):
     ))
 
 
+def fcm_delivery_policy(kind: str, order_id: str = "") -> dict[str, str]:
+    """Never route security, payment or order events to marketing channels.
+
+    Only an explicit promotional kind can select the promotions channel.
+    Other categories remain visible when the user opts out of marketing.
+    """
+    promotional = kind in PROMOTIONAL_KINDS
+    order_event = bool(order_id) or kind in {
+        "order", "restaurant_order", "driver_order", "delivery", "driver_offer",
+    }
+    urgent = not promotional and (order_event or kind in {
+        "payment", "security", "account", "authentication", "refund", "withdrawal",
+    })
+    ttl_seconds = 21600 if order_event else 86400
+    return {
+        "channel": "promotions" if promotional else "orders",
+        "priority": "high" if urgent else "normal",
+        "ttl": f"{ttl_seconds}s",
+        "kind": "promotion" if promotional else "order" if order_event else "inbox",
+        "apns_priority": "10" if urgent else "5",
+        "sound": "default" if urgent else "",
+        "thread": "promotion" if promotional else "order" if order_event else "inbox",
+        "expiration_seconds": str(ttl_seconds),
+    }
+
+
 class SendResult(NamedTuple):
     ok: bool
     permanent: bool = False
     reason: str = ""
 
 
-def _send_fcm(token: str, *, title: str, body: str, notification_id: int, order_id: str = "") -> SendResult:
+def _send_fcm(token: str, *, title: str, body: str, notification_id: int, order_id: str = "", notification_kind: str = "inbox") -> SendResult:
     """Send via FCM HTTP v1, using server credentials, never client SDK keys."""
     import requests
     from google.auth.transport.requests import Request as GoogleRequest
@@ -165,15 +191,16 @@ def _send_fcm(token: str, *, title: str, body: str, notification_id: int, order_
     creds = service_account.Credentials.from_service_account_file(
         settings.fcm_credentials_file, scopes=["https://www.googleapis.com/auth/firebase.messaging"])
     creds.refresh(GoogleRequest())
-    data = {"notification_id": str(notification_id), "kind": "order" if order_id else "inbox", "order_id": order_id}
+    policy = fcm_delivery_policy(notification_kind, order_id)
+    data = {"notification_id": str(notification_id), "kind": policy["kind"], "order_id": order_id}
     payload = {"message": {"token": token,
         "notification": {"title": title[:150], "body": body[:480]},
         "data": data,
-        "android": {"priority": "high" if order_id else "normal", "ttl": "21600s" if order_id else "86400s",
-                    "notification": {"channel_id": "orders" if order_id else "promotions"}},
-        "apns": {"headers": {"apns-priority": "10" if order_id else "5",
-                            "apns-expiration": str(int(_now().timestamp()) + (21600 if order_id else 86400))},
-                 "payload": {"aps": {"sound": "default" if order_id else "", "thread-id": "order" if order_id else "promotion"}}},
+        "android": {"priority": policy["priority"], "ttl": policy["ttl"],
+                    "notification": {"channel_id": policy["channel"]}},
+        "apns": {"headers": {"apns-priority": policy["apns_priority"],
+                            "apns-expiration": str(int(_now().timestamp()) + int(policy["expiration_seconds"]))},
+                 "payload": {"aps": {"sound": policy["sound"], "thread-id": policy["thread"]}}},
     }}
     try:
         response = requests.post(
@@ -239,7 +266,7 @@ def deliver_native_push() -> tuple[int, int]:
                 token = _cipher().decrypt(device.encrypted_token.encode("ascii")).decode("utf-8")
                 found = ORDER_RE.search(notification.message)
                 order_id = found.group(1) if found else ""
-                result = _send_fcm(token, title=notification.title, body=notification.message, notification_id=notification.id, order_id=order_id)
+                result = _send_fcm(token, title=notification.title, body=notification.message, notification_id=notification.id, order_id=order_id, notification_kind=notification.kind)
             except Exception:
                 log.exception("FCM provider error for delivery id %s", job_id)
                 result = SendResult(False, reason="provider_exception")
