@@ -52,21 +52,21 @@ $env:PYTHONPATH = $backend
 Push-Location $repo
 try {
     & $qaPython scripts/security_preflight.py --self-test
-    if ($LASTEXITCODE -ne 0) { throw "Security preflight self-test FALLÓ" }
+    if ($LASTEXITCODE -ne 0) { throw "Security preflight self-test FALLO" }
     & $qaPython scripts/security_preflight.py --root .
-    if ($LASTEXITCODE -ne 0) { throw "Security preflight FALLÓ" }
+    if ($LASTEXITCODE -ne 0) { throw "Security preflight FALLO" }
     & $qaPython -m compileall -q backend/app backend/migrations backend/tests
-    if ($LASTEXITCODE -ne 0) { throw "Compilacion sintactica FALLÓ" }
+    if ($LASTEXITCODE -ne 0) { throw "Compilacion sintactica FALLO" }
 
     Push-Location $backend
     try {
         & $qaPython tests/connect_security_smoke_v164h1.py
-        if ($LASTEXITCODE -ne 0) { throw "Connect smoke FALLÓ" }
+        if ($LASTEXITCODE -ne 0) { throw "Connect smoke FALLO" }
         & $qaPython -c "from alembic.config import Config; from alembic.script import ScriptDirectory; heads=ScriptDirectory.from_config(Config('alembic.ini')).get_heads(); assert len(heads)==1, heads; print('ALEMBIC_SINGLE_HEAD_PASS',heads[0])"
-        if ($LASTEXITCODE -ne 0) { throw "Alembic head FALLÓ" }
+        if ($LASTEXITCODE -ne 0) { throw "Alembic head FALLO" }
         if (-not $SkipFullTests) {
             & $qaPython -m pytest -q --disable-warnings
-            if ($LASTEXITCODE -ne 0) { throw "Suite pytest FALLÓ" }
+            if ($LASTEXITCODE -ne 0) { throw "Suite pytest FALLO" }
         }
     }
     finally { Pop-Location }
