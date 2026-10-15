@@ -1,4 +1,6 @@
 import secrets
+import json
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -43,6 +45,30 @@ def _proof_path(filename: str) -> Path:
 
 def _onboarding_path(filename: str) -> Path:
     return settings.media_dir / "onboarding" / _safe_name(filename)
+
+
+def _owned_onboarding_filename(url: str, user_id: int) -> str | None:
+    """Match our exact private URL and a cryptographically random owner-scoped name."""
+    prefix = "/api/v1/uploads/onboarding-document/"
+    if not isinstance(url, str) or not url.startswith(prefix):
+        return None
+    filename = url[len(prefix):]
+    # A random file handle belongs only to the account that originally uploaded it.
+    if not re.fullmatch(rf"u{user_id}-[A-Za-z0-9_-]{{24,64}}\\.(?:pdf|jpg|png|webp)", filename):
+        return None
+    return filename
+
+
+def validate_onboarding_documents(user_id: int, documents: list[str]) -> None:
+    """Never permit attaching somebody else's onboarding identity document."""
+    if len(documents) > 12 or len(set(documents)) != len(documents):
+        raise HTTPException(400, "Lista de documentos inválida")
+    for url in documents:
+        filename = _owned_onboarding_filename(url, user_id)
+        if filename is None:
+            raise HTTPException(403, "Documento ajeno o referencia no permitida")
+        if not _onboarding_path(filename).is_file():
+            raise HTTPException(400, "Documento de alta inexistente")
 
 
 @router.post("/delivery-proof")
@@ -106,8 +132,22 @@ def get_onboarding_document(filename: str, user: models.User = Depends(get_curre
         raise HTTPException(404, "Documento no encontrado")
     url = f"/api/v1/uploads/onboarding-document/{filename}"
     if user.role != "admin":
-        rows = db.scalars(select(models.OnboardingApplication).where(models.OnboardingApplication.user_id == user.id)).all()
-        allowed = any(url in (row.documents_json or "") for row in rows)
+        # The owner prefix is checked even if a legacy onboarding row contains
+        # an unverified URL from another account.
+        if _owned_onboarding_filename(url, user.id) is None:
+            raise HTTPException(403, "Sin acceso a este documento")
+        rows = db.scalars(select(models.OnboardingApplication.documents_json).where(
+            models.OnboardingApplication.user_id == user.id,
+        )).all()
+        allowed = False
+        for (raw,) in rows:
+            try:
+                listed = json.loads(raw or "[]")
+            except (TypeError, ValueError):
+                continue
+            if isinstance(listed, list) and url in listed:
+                allowed = True
+                break
         if not allowed:
             raise HTTPException(403, "Sin acceso a este documento")
     media_type = MIME_BY_SUFFIX.get(path.suffix.lower(), "application/octet-stream")
