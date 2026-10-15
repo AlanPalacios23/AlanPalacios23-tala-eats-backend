@@ -103,6 +103,10 @@ jobs:
         run: python -m qa.postgres_redis_smoke
       - name: Verificar Alembic current
         run: python -m alembic current
+      - name: Fase 2 guardia historial migraciones PostgreSQL (sin red)
+        run: python -m qa.phase2_historical_upgrade_smoke --self-test
+      - name: Fase 2 transicion f20 a f21 en DB efimera separada (no Kali)
+        run: python -m qa.phase2_historical_upgrade_smoke
       - name: QA Fase 1 multi-worker PostgreSQL + Redis disponible (sintetico)
         run: python -m qa.phase1_concurrency_smoke --mode normal
       - name: QA Fase 1 retry post-COMMIT sin Redis (sintetico)
