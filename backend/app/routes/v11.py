@@ -25,7 +25,7 @@ from ..integrations import (
 )
 from ..middleware import runtime_metrics
 from ..monetization import post_refund_ledger
-from ..realtime import publish_order_event
+from ..realtime import driver_location_snapshot, publish_order_event
 from ..wallet import credit_wallet, money
 from .orders import order_options
 from .v9 import _dispatch_candidates
@@ -292,22 +292,57 @@ def maps_route(payload: schemas.RouteEstimateRequest, _: models.User = Depends(g
 # ---------------------------------------------------------------------------
 # Live Order Experience
 # ---------------------------------------------------------------------------
+def _customer_driver_location(order: models.Order, user: models.User) -> dict[str, Any] | None:
+    """Only the owning customer may view GPS of the CURRENT active delivery driver."""
+    if (order.user_id != user.id or user.role != "customer"
+            or order.order_type != "delivery"
+            or order.status not in {"assigned", "picked_up", "on_the_way"}
+            or order.driver_id is None):
+        return None
+    snapshot = driver_location_snapshot(order.driver_id)
+    if snapshot is not None:
+        return snapshot
+    # Database writes are coalesced and profile.updated_at also changes for
+    # non-GPS actions: never invent a GPS observation timestamp/freshness.
+    profile = getattr(getattr(order, "driver", None), "driver_profile", None)
+    if (profile is None or profile.current_lat is None or profile.current_lng is None):
+        return None
+    return {"lat": profile.current_lat, "lng": profile.current_lng,
+            "reported_at": None, "source": "database", "is_fresh": False}
+
+
 @router.get("/orders/{order_id}/live")
 def live_order(order_id: int, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     order = authorize_order(db, user, order_id)
     events = db.scalars(select(models.OrderEvent).where(models.OrderEvent.order_id == order.id).order_by(models.OrderEvent.created_at.asc())).all()
+    position = _customer_driver_location(order, user)
+    # Never route from an old DB coordinate or expose historic driver GPS.
     route = None
-    if order.driver and order.driver.driver_profile and order.driver.driver_profile.current_lat is not None and order.delivery_lat is not None:
-        p = order.driver.driver_profile
-        route = route_estimate(p.current_lat, p.current_lng, order.delivery_lat, order.delivery_lng)
+    if (position and position["is_fresh"] and order.delivery_lat is not None
+            and order.delivery_lng is not None):
+        route = route_estimate(position["lat"], position["lng"], order.delivery_lat, order.delivery_lng)
     stages = ["received","confirmed","preparing","ready","assigned","picked_up","on_the_way","delivered"]
     try: current_index = stages.index(order.status)
     except ValueError: current_index = -1
+    public_order = (schemas.OrderPublic if order.user_id == user.id else schemas.OrderOperationalPublic).model_validate(order).model_dump(mode="json")
+    # The older OrderPublic may embed the driver's DB position; redact it
+    # outside an active, authorized delivery even if the mobile UI ignores us.
+    driver_info = public_order.get("driver_info")
+    if isinstance(driver_info, dict):
+        # Preserve the mobile client's legacy map contract for authorized,
+        # active deliveries, but replace possibly delayed DB GPS with Redis.
+        if position is not None:
+            driver_info["current_lat"] = position["lat"]
+            driver_info["current_lng"] = position["lng"]
+        else:
+            driver_info.pop("current_lat", None)
+            driver_info.pop("current_lng", None)
     return {
-        "order": (schemas.OrderPublic if order.user_id == user.id else schemas.OrderOperationalPublic).model_validate(order).model_dump(mode="json"),
+        "order": public_order,
         "timeline": [{"status": e.status, "at": e.created_at, "metadata": e.metadata_json} for e in events],
         "stages": [{"key": s, "done": current_index >= idx, "active": s == order.status} for idx, s in enumerate(stages)],
         "route": route,
+        "driver_location": position,
         "next_action": "rate" if order.status == "delivered" else ("delivery_pin" if order.status == "on_the_way" else "track"),
     }
 

@@ -1,5 +1,7 @@
 import json
 import logging
+import math
+from datetime import datetime, timezone
 from threading import Lock
 from typing import Any
 
@@ -52,7 +54,7 @@ def cache_driver_location(driver_id: int, lat: float, lng: float) -> bool:
     if client is None:
         return True
     try:
-        payload = json.dumps({"lat": float(lat), "lng": float(lng)})
+        payload = json.dumps({"lat": float(lat), "lng": float(lng), "reported_at": datetime.now(timezone.utc).isoformat()})
         pipe = client.pipeline(transaction=False)
         pipe.set(f"talaeats:driver:{driver_id}:location", payload, ex=120)
         pipe.set(
@@ -66,6 +68,41 @@ def cache_driver_location(driver_id: int, lat: float, lng: float) -> bool:
     except Exception:
         log.exception("Redis driver location cache failed driver_id=%s", driver_id)
         return True
+
+
+def driver_location_snapshot(driver_id: int) -> dict[str, Any] | None:
+    """Optional server-timestamped position; never treat a DB profile as live GPS.
+
+    Redis TTL bounds cached coordinates. Samples missing a reliable timestamp
+    (older deployments) cannot be presented as fresh.
+    """
+    client = _sync()
+    if client is None:
+        return None
+    try:
+        raw = client.get(f"talaeats:driver:{driver_id}:location")
+        if not raw:
+            return None
+        data = json.loads(raw)
+        lat, lng = float(data["lat"]), float(data["lng"])
+        if not (math.isfinite(lat) and math.isfinite(lng) and -90 <= lat <= 90 and -180 <= lng <= 180):
+            return None
+        stamped = data.get("reported_at")
+        timestamp = datetime.fromisoformat(stamped.replace("Z", "+00:00")) if isinstance(stamped, str) else None
+        if timestamp is not None and timestamp.tzinfo is None:
+            timestamp = None
+        age = (datetime.now(timezone.utc) - timestamp).total_seconds() if timestamp else None
+        return {
+            "lat": lat, "lng": lng,
+            "reported_at": timestamp.isoformat() if timestamp else None,
+            "source": "redis",
+            "is_fresh": age is not None and -5 <= age <= 45,
+        }
+    except (ValueError, TypeError, KeyError, OverflowError):
+        return None
+    except Exception:
+        log.exception("Redis driver GPS snapshot failed")
+        return None
 
 
 def driver_locations(driver_ids: list[int]) -> dict[int, tuple[float, float]]:
