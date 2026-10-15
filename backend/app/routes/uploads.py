@@ -54,7 +54,7 @@ def _owned_onboarding_filename(url: str, user_id: int) -> str | None:
         return None
     filename = url[len(prefix):]
     # A random file handle belongs only to the account that originally uploaded it.
-    if not re.fullmatch(rf"u{user_id}-[A-Za-z0-9_-]{{24,64}}\\.(?:pdf|jpg|png|webp)", filename):
+    if not re.fullmatch(rf"u{user_id}-[A-Za-z0-9_-]{{24,64}}[.](?:pdf|jpg|png|webp)", filename):
         return None
     return filename
 
