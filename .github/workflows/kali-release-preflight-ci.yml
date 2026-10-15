@@ -8,6 +8,7 @@ on:
       - 'scripts/kali_compose_topology_readonly.py'
       - 'scripts/kali_release_candidate_plan_readonly.py'
       - 'scripts/kali_pin_rollback_images.py'
+      - 'scripts/kali_backup_encrypted.sh'
       - 'docs/KALI_GITHUB_RELEASE_ROLLBACK.md'
       - '.github/workflows/kali-release-preflight-ci.yml'
   push:
@@ -30,7 +31,10 @@ jobs:
       - name: Checkout privado
         uses: actions/checkout@v4
       - name: Sintaxis Bash
-        run: bash -n scripts/kali_release_inventory_readonly.sh
+        run: |
+          bash -n scripts/kali_release_inventory_readonly.sh
+          bash -n scripts/kali_backup_encrypted.sh
+          bash scripts/kali_backup_encrypted.sh --self-test
       - name: Rechazar secretos en fuentes
         run: python3 scripts/security_preflight.py --root .
       - name: Python compilación y sanitización de Compose
