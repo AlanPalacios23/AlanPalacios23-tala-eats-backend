@@ -105,6 +105,26 @@ El script verifica etiquetas Compose, contenedores y API saludables, versión e 
 
 **Limitación crítica:** los tags son locales; si falla el disco o alguien elimina la imagen, el tag puede desaparecer. Hacer después un respaldo cifrado fuera de Kali, verificar su restauración, ensayar en ambiente aislado y preparar el sistema de conmutación de código antes de autorizar LIVE.
 
+## Fase B3 — Respaldo PostgreSQL y fotos cifrado (aún NO restaurado)
+
+El operador confirmó en Kali `pg_dump`/`pg_restore` 16.15, `gpg`, `tar`, `sha256sum`, SSH activo, directorio privado `~/talaeats-backups` y WinSCP conectado a Windows. Un intento manual anterior abortó por claves diferentes/cortas **antes** de crear un respaldo. No asumir que existe uno válido.
+
+Script disponible: `scripts/kali_backup_encrypted.sh`, explícitamente limitado a PostgreSQL y media; **NO incluye** todavía env/credenciales ni configuración Compose y **NO da por aprobada la recuperación**.
+
+```bash
+cd ~/tala-backend-audit
+git pull --ff-only origin main
+bash scripts/kali_backup_encrypted.sh --preflight
+# Solo cuando el preflight confirme PASS:
+bash scripts/kali_backup_encrypted.sh --backup
+```
+
+Al ejecutar `--backup`, se solicita dos veces la misma clave de al menos 16 caracteres directamente en la terminal. No se muestra, almacena en GitHub ni debe compartirse por chat. La clave debe guardarse en un gestor de contraseñas fuera de Kali. Si el par no coincide, el script aborta **sin cerrar la shell principal**. `pg_dump -Fc` y `docker cp media` se cifran en streaming mediante AES256/GPG, dejando exclusivamente archivos `.gpg` sobre disco. El script comprueba descifrado, catálogo del dump, tabla de contenido de tar y SHA256. El resultado esperado es `KALI_BACKUP_ENCRYPTED_FORMAT_PASS`. No usa comandos que reinicien contenedores ni ejecuta ninguna operación monetaria.
+
+**Después del PASS:** transferir la carpeta completa cifrada a `C:\\TALA-EATS-BACKUPS` por WinSCP/SFTP y comprobar hashes en Windows. No eliminar original ni clave. La copia de fotos no es un snapshot transaccional de PostgreSQL (posibles cambios concurrentes). Verificar en laboratorio la restauración DB y media y coordinar ventanas/captura de media antes de afirmar un punto en tiempo recuperable. La versión actual tiene Stripe LIVE; evitar restauración de DB productiva sin conciliación externa de eventos y asientos.
+
+**Pendientes:** respaldo cifrado de configuración secreta en canal distinto; roles/globales PostgreSQL para reconstrucción completa; segunda copia fuera de Windows; restauración probada en staging; procedencia y retención de backups. No descargar volúmenes PostgreSQL a ciegas ni ejecutar `docker compose down -v`.
+
 ## Fase C (pendiente): habilitación manual de Kali
 - Seleccionar SHA de commit de `main` con CI PASS y release/candidata identificable.
 - Guardar imagen anterior y respaldos verificables, compilar candidata separada.
