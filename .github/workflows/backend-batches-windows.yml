@@ -178,6 +178,10 @@ jobs:
                 $data.mutates_money_or_configuration -ne $false) {
               throw 'GO LIVE DENIAL FAILED'
             }
+            # NO-GO exit code 2 is expected and has just been verified.
+            # PowerShell's GitHub Actions wrapper checks LASTEXITCODE at step exit.
+            # Reset it only AFTER all fail-closed assertions succeed.
+            $global:LASTEXITCODE = 0
             Write-Host 'PAYMENTS_NO_GO_WINDOWS_QA_PASS: transferencia y LIVE NO autorizados'
           } finally {
             Pop-Location
