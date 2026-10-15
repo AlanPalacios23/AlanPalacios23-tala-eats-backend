@@ -1,0 +1,185 @@
+name: TALA EATS Backend | QA lotes Windows (manual)
+
+# Dispatcher in main so "Run workflow" is visible. NEVER trigger on push/PR.
+# Only reviewed, pinned commits from our PRIVATE backend repository.
+on:
+  workflow_dispatch:
+    inputs:
+      lote:
+        description: "Lote a probar en el runner Windows del backend"
+        required: true
+        type: choice
+        default: gps-fcm
+        options:
+          - gps-fcm
+          - readiness
+          - finanzas
+          - todos
+      suite_completa:
+        description: "Ejecutar pytest completo (GPS y finanzas). No usado en readiness"
+        required: true
+        type: boolean
+        default: true
+      consultar_ready_publico:
+        description: "Hacer solo GET /ready publico en el lote readiness"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tala-backend-windows-batches
+  cancel-in-progress: false
+
+# Overwrite any local shell-level or inherited provider configuration.
+# No production credentials, cloud SSH, external databases or live payments.
+env:
+  ENVIRONMENT: development
+  DEBUG: "false"
+  DATABASE_URL: "sqlite://"
+  REDIS_URL: ""
+  JWT_SECRET: "qa-windows-synthetic-secret-longer-than-forty-characters"
+  SEED_DEMO_DATA: "true"
+  REQUIRE_SMTP: "false"
+  STRIPE_ENABLED: "false"
+  STRIPE_CONNECT_ENABLED: "false"
+  STRIPE_CONNECT_SELF_SERVICE_ENABLED: "false"
+  STRIPE_SECRET_KEY: ""
+  STRIPE_PUBLISHABLE_KEY: ""
+  STRIPE_WEBHOOK_SECRET: ""
+  STRIPE_CONNECT_WEBHOOK_SECRET: ""
+  MERCADOPAGO_ACCESS_TOKEN: ""
+  WITHDRAWALS_PREVIEW_ENABLED: "false"
+  WITHDRAWALS_EXECUTION_ENABLED: "false"
+  WITHDRAWALS_LIVE_ENABLED: "false"
+  FINANCE_V2_SHADOW_ENABLED: "false"
+  AUTO_MIGRATE_ON_START: "false"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  windows-backend:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'AlanPalacios23/AlanPalacios23-tala-eats-backend' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'AlanPalacios23' &&
+      github.triggering_actor == 'AlanPalacios23'
+    name: Windows aislado | ${{ matrix.lote }}
+    # Register a SEPARATE backend repo runner instance with this custom label.
+    # The existing mobile runner is repository-scoped and cannot service this job.
+    runs-on: [self-hosted, Windows, X64, tala-eats-backend]
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: powershell
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        lote: ${{ fromJSON(inputs.lote == 'todos' && '["gps-fcm","readiness","finanzas"]' || format('["{0}"]', inputs.lote)) }}
+    steps:
+      - name: Checkout de commit revisado (nunca una PR arbitraria)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          clean: true
+          path: lote
+          ref: ${{ matrix.lote == 'gps-fcm' && '81372ba51e65e5e63ced898ca87ad746296cc89d' || matrix.lote == 'readiness' && 'a3b816b909d6649ac6e4bf24985488f9dde037c2' || 'f3c8734e9b8564302eb4197fbd880b087fb88e74' }}
+
+      - name: Comprobar SHA, Python 3.13 y aislamiento
+        working-directory: lote
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = switch ('${{ matrix.lote }}') {
+            'gps-fcm' { '81372ba51e65e5e63ced898ca87ad746296cc89d' }
+            'readiness' { 'a3b816b909d6649ac6e4bf24985488f9dde037c2' }
+            'finanzas' { 'f3c8734e9b8564302eb4197fbd880b087fb88e74' }
+            default { throw 'Lote no autorizado' }
+          }
+          $actual = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -ne $expected) {
+            throw "El commit descargado NO coincide con el SHA revisado"
+          }
+          $version = python -c "import sys;print(str(sys.version_info.major)+'.'+str(sys.version_info.minor))"
+          if ($LASTEXITCODE -ne 0 -or "$version".Trim() -ne '3.13') {
+            throw 'Se requiere Python 3.13 en el runner Windows del backend'
+          }
+          if ($env:ENVIRONMENT -ne 'development' -or $env:DATABASE_URL -ne 'sqlite://' -or
+              $env:STRIPE_ENABLED -ne 'false' -or $env:WITHDRAWALS_EXECUTION_ENABLED -ne 'false' -or
+              $env:WITHDRAWALS_LIVE_ENABLED -ne 'false' -or $env:STRIPE_SECRET_KEY -ne '' -or
+              $env:MERCADOPAGO_ACCESS_TOKEN -ne '') {
+            throw 'La ejecucion NO esta suficientemente aislada de LIVE'
+          }
+          Write-Host "REVIEWED_SHA_PASS: $actual"
+          Write-Host 'Sin credenciales ni conectividad de backend externo.'
+
+      - name: Lote GPS + FCM (PR 40) | analisis y pytest
+        if: matrix.lote == 'gps-fcm'
+        working-directory: lote
+        run: |
+          if ('${{ inputs.suite_completa }}' -eq 'true') {
+            & .\scripts\qa-backend-windows.ps1 -InstallDependencies
+          } else {
+            & .\scripts\qa-backend-windows.ps1 -InstallDependencies -SkipFullTests
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'GPS_FCM_WINDOWS_QA_FAIL' }
+          Write-Host 'GPS_FCM_WINDOWS_QA_PASS (SQLite aislado; no E2E GPS fisico)'
+
+      - name: Lote monitor /ready (PR 41) | autocheck offline
+        if: matrix.lote == 'readiness'
+        working-directory: lote
+        run: |
+          if ('${{ inputs.consultar_ready_publico }}' -eq 'true') {
+            & .\scripts\qa-readiness-windows.ps1 -Probe
+          } else {
+            & .\scripts\qa-readiness-windows.ps1
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'READINESS_WINDOWS_QA_FAIL' }
+          Write-Host 'READINESS_WINDOWS_QA_PASS (monitor continuo NO activado)'
+
+      - name: Lote pagos NO-GO (PR 42) | pytest + denegacion LIVE
+        if: matrix.lote == 'finanzas'
+        working-directory: lote
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $venvPython = Join-Path (Get-Location).Path '.venv-backend-qa\Scripts\python.exe'
+          if (-not (Test-Path $venvPython)) {
+            & python -m venv .venv-backend-qa
+            if ($LASTEXITCODE -ne 0) { throw 'No se pudo crear venv aislado' }
+          }
+          & $venvPython -m pip install --disable-pip-version-check -r backend\requirements-dev.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Instalacion QA falla' }
+          $env:PYTHONPATH = (Resolve-Path .\backend).Path
+          & $venvPython scripts\security_preflight.py --root .
+          if ($LASTEXITCODE -ne 0) { throw 'Escaner de fuentes falla' }
+          Push-Location backend
+          try {
+            & $venvPython -m pytest -q tests\test_payment_go_live_gate.py --disable-warnings
+            if ($LASTEXITCODE -ne 0) { throw 'PAYMENTS_NO_GO_UNIT_TESTS_FAIL' }
+            if ('${{ inputs.suite_completa }}' -eq 'true') {
+              & $venvPython -m pytest -q --disable-warnings
+              if ($LASTEXITCODE -ne 0) { throw 'PAYMENTS_FULL_QA_FAIL' }
+            }
+            $report = & $venvPython -m app.payment_go_live_gate | Out-String
+            $resultCode = $LASTEXITCODE
+            if ($resultCode -ne 2) {
+              throw 'Gate financiero debio salir con codigo NO-GO 2'
+            }
+            $data = $report | ConvertFrom-Json
+            if ($data.authorizes_real_money_activation -ne $false -or
+                $data.mutates_money_or_configuration -ne $false) {
+              throw 'GO LIVE DENIAL FAILED'
+            }
+            Write-Host 'PAYMENTS_NO_GO_WINDOWS_QA_PASS: transferencia y LIVE NO autorizados'
+          } finally {
+            Pop-Location
+          }
+
+      - name: Resumen sin aprobacion productiva
+        if: success()
+        run: |
+          Write-Host 'PASS del lote solicitado en Windows. NO equivale a pasar PostgreSQL/Redis,'
+          Write-Host 'Android E2E, Stripe TEST, auditoria Kali, FCM real ni aprobacion LIVE.'
+          Write-Host 'Todos los merge/deploy siguen siendo operaciones separadas.'
