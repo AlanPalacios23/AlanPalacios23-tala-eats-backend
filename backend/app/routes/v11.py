@@ -292,30 +292,42 @@ def maps_route(payload: schemas.RouteEstimateRequest, _: models.User = Depends(g
 # ---------------------------------------------------------------------------
 # Live Order Experience
 # ---------------------------------------------------------------------------
-def _customer_driver_location(order: models.Order, user: models.User) -> dict[str, Any] | None:
-    """Only the owning customer may view GPS of the CURRENT active delivery driver."""
+def _customer_driver_location(
+    order: models.Order, user: models.User, *,
+    assigned_at: datetime | None = None,
+) -> dict[str, Any] | None:
+    """Private GPS must be a verified ping AFTER the current assignment.
+
+    A cached ping from the previous delivery or before reassignment may reveal
+    a driver's off-duty location. DB profile timestamps are not proof of when
+    GPS was sampled; fail closed if Redis or assignment evidence is missing.
+    """
     if (order.user_id != user.id or user.role != "customer"
             or order.order_type != "delivery"
             or order.status not in {"assigned", "picked_up", "on_the_way"}
-            or order.driver_id is None):
+            or order.driver_id is None or assigned_at is None):
         return None
     snapshot = driver_location_snapshot(order.driver_id)
-    if snapshot is not None:
-        return snapshot
-    # Database writes are coalesced and profile.updated_at also changes for
-    # non-GPS actions: never invent a GPS observation timestamp/freshness.
-    profile = getattr(getattr(order, "driver", None), "driver_profile", None)
-    if (profile is None or profile.current_lat is None or profile.current_lng is None):
+    if not snapshot or not isinstance(snapshot.get("reported_at"), str):
         return None
-    return {"lat": profile.current_lat, "lng": profile.current_lng,
-            "reported_at": None, "source": "database", "is_fresh": False}
+    try:
+        reported = aware(datetime.fromisoformat(snapshot["reported_at"].replace("Z", "+00:00")))
+        assignment = aware(assigned_at)
+    except (ValueError, TypeError):
+        return None
+    if reported is None or assignment is None or reported < assignment:
+        return None
+    return snapshot
 
 
 @router.get("/orders/{order_id}/live")
 def live_order(order_id: int, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     order = authorize_order(db, user, order_id)
     events = db.scalars(select(models.OrderEvent).where(models.OrderEvent.order_id == order.id).order_by(models.OrderEvent.created_at.asc())).all()
-    position = _customer_driver_location(order, user)
+    latest_assignment = next(
+        (aware(event.created_at) for event in reversed(events) if event.status == "assigned"), None
+    )
+    position = _customer_driver_location(order, user, assigned_at=latest_assignment)
     # Never route from an old DB coordinate or expose historic driver GPS.
     route = None
     if (position and position["is_fresh"] and order.delivery_lat is not None
@@ -329,8 +341,8 @@ def live_order(order_id: int, user: models.User = Depends(get_current_user), db:
     # outside an active, authorized delivery even if the mobile UI ignores us.
     driver_info = public_order.get("driver_info")
     if isinstance(driver_info, dict):
-        # Preserve the mobile client's legacy map contract for authorized,
-        # active deliveries, but replace possibly delayed DB GPS with Redis.
+        # Preserve the active-order map contract, but never use a ping from
+        # before the current assignment or an unverified DB fallback.
         if position is not None:
             driver_info["current_lat"] = position["lat"]
             driver_info["current_lng"] = position["lng"]

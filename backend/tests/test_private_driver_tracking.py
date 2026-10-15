@@ -30,8 +30,9 @@ def test_live_position_only_for_owner_of_current_active_delivery(monkeypatch, cu
     monkeypatch.setattr(v11, "driver_location_snapshot", lambda driver_id: calls.append(driver_id) or
                         {"lat": 20.5, "lng": -103.5, "source": "redis",
                          "reported_at": datetime.now(timezone.utc).isoformat(), "is_fresh": True})
+    assigned_at = datetime.now(timezone.utc) - timedelta(seconds=15)
     for state in ("assigned", "picked_up", "on_the_way"):
-        sample = v11._customer_driver_location(order(state), customer)
+        sample = v11._customer_driver_location(order(state), customer, assigned_at=assigned_at)
         assert sample["source"] == "redis"
         assert sample["is_fresh"] is True
     assert calls == [20, 20, 20]
@@ -49,16 +50,33 @@ def test_live_position_only_for_owner_of_current_active_delivery(monkeypatch, cu
         (order(), SimpleNamespace(id=7, role="driver")),
     ]
     for candidate, principal in denied:
-        assert v11._customer_driver_location(candidate, principal) is None
+        assert v11._customer_driver_location(candidate, principal, assigned_at=assigned_at) is None
     assert calls == [20, 20, 20]
 
 
-def test_redis_absent_returns_db_coordinate_marked_not_fresh(monkeypatch, customer):
+def test_redis_absent_never_exposes_unverified_database_gps(monkeypatch, customer):
     monkeypatch.setattr(v11, "driver_location_snapshot", lambda _: None)
-    sample = v11._customer_driver_location(order(), customer)
-    assert sample == {"lat": 20.65, "lng": -103.7, "reported_at": None,
-                      "source": "database", "is_fresh": False}
-    assert v11._customer_driver_location(order(lat=None), customer) is None
+    assigned_at = datetime.now(timezone.utc) - timedelta(seconds=15)
+    assert v11._customer_driver_location(order(), customer, assigned_at=assigned_at) is None
+    assert v11._customer_driver_location(order(lat=None), customer, assigned_at=assigned_at) is None
+
+
+def test_reassignment_rejects_ping_from_previous_delivery(monkeypatch, customer):
+    now = datetime.now(timezone.utc)
+    sample = {"lat": 20.5, "lng": -103.5, "source": "redis",
+              "reported_at": (now - timedelta(seconds=30)).isoformat(), "is_fresh": True}
+    monkeypatch.setattr(v11, "driver_location_snapshot", lambda _: sample)
+    assert v11._customer_driver_location(order(), customer, assigned_at=None) is None
+    assert v11._customer_driver_location(
+        order(), customer, assigned_at=now - timedelta(seconds=10)
+    ) is None
+    assert v11._customer_driver_location(
+        order(), customer, assigned_at=now - timedelta(seconds=60)
+    ) == sample
+    sample["reported_at"] = None
+    assert v11._customer_driver_location(
+        order(), customer, assigned_at=now - timedelta(seconds=60)
+    ) is None
 
 
 class FakeRedis:
