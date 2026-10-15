@@ -524,6 +524,10 @@ def respond_driver_offer(offer_id:int,payload:schemas.DriverOfferResponse,user:m
 # ---------------------------------------------------------------------------
 @router.post("/admin/payouts/dispatch")
 def dispatch_payouts(payload:schemas.PayoutDispatchRequest,admin:models.User=Depends(require_role("admin")),db:Session=Depends(get_db)):
+    # This legacy provider dispatch can set status=paid based only on a
+    # provider adapter reply. Use reconciled Stripe Connect flows instead.
+    if settings.is_production:
+        raise HTTPException(409, "Payout V11 legacy bloqueado: requiere conciliacion bancaria")
     results=[]
     for payout_id in payload.payout_ids:
         row=db.get(models.Payout,payout_id)
@@ -542,6 +546,10 @@ def dispatch_payouts(payload:schemas.PayoutDispatchRequest,admin:models.User=Dep
 
 @router.post("/payouts/webhook")
 async def payout_webhook(request:Request,db:Session=Depends(get_db)):
+    # Legacy signed events are not evidence of a reconciled bank settlement.
+    # This does NOT disable the separate Stripe Connect verified webhook.
+    if settings.is_production:
+        raise HTTPException(409, "Webhook de payout V11 legacy deshabilitado en produccion")
     raw=await request.body();signature=request.headers.get("x-talaeats-signature") or request.headers.get("x-signature")
     if not verify_payout_webhook(raw,signature):raise HTTPException(401,"Firma de payout inválida")
     try:body=json.loads(raw or b"{}")
