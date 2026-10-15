@@ -54,6 +54,9 @@ class Settings:
     public_base_url = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
     trust_proxy_headers = _bool("TRUST_PROXY_HEADERS", environment == "production")
+    # Explicitly identify the LAST trusted hop; Docker/Caddy proxy networks must
+    # be configured during deployment, not inferred from spoofable headers.
+    trusted_proxy_cidrs = _csv("TRUSTED_PROXY_CIDRS", "127.0.0.0/8,::1/128")
 
     google_client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 
@@ -71,6 +74,9 @@ class Settings:
     # Opt-in override: preserve existing production policy unless explicitly enabled.
     # Even when permitted, cash never incurs a customer service fee.
     cash_checkout_enabled = _bool("CASH_CHECKOUT_ENABLED", False)
+    # Independent Finance V2, shadow-only: never authorizes payouts or money movement.
+    finance_v2_shadow_enabled = _bool("FINANCE_V2_SHADOW_ENABLED", False)
+    finance_v2_cash_limit_enabled = _bool("FINANCE_V2_CASH_LIMIT_ENABLED", False)
     # Versioned commercial rules, opt-out for safe rollback with legacy behavior.
     commercial_pricing_v152_enabled = _bool("COMMERCIAL_PRICING_V152_ENABLED", True)
     # Opt-in until staged QA passes; preserves v1.6.1 pricing if omitted.
@@ -208,6 +214,16 @@ class Settings:
             errors.append("REDIS_URL es obligatorio para realtime/rate limiting")
         if not self.allowed_hosts or "*" in self.allowed_hosts:
             errors.append("ALLOWED_HOSTS debe contener dominios explícitos")
+        if self.trust_proxy_headers:
+            from ipaddress import ip_network
+            for cidr in self.trusted_proxy_cidrs:
+                try:
+                    net = ip_network(cidr, strict=False)
+                except ValueError:
+                    errors.append("TRUSTED_PROXY_CIDRS contiene una red inválida")
+                    continue
+                if net.prefixlen == 0:
+                    errors.append("TRUSTED_PROXY_CIDRS no puede confiar en Internet completo")
         if not self.cors_origins or "*" in self.cors_origins:
             errors.append("CORS_ORIGINS debe contener orígenes explícitos")
         if not self.public_base_url.startswith("https://"):

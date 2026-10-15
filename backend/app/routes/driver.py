@@ -10,6 +10,7 @@ from ..config import settings
 from ..db import get_db
 from ..deps import require_role
 from ..delivery_lifecycle import finalize_delivery
+from ..finance_core_v2 import driver_cash_eligible
 from ..geo import haversine_km
 from ..realtime import cache_driver_location, driver_locations, publish_order_event
 from .orders import order_options
@@ -145,6 +146,8 @@ def _assign_oldest_ready_to_driver(db: Session, user: models.User) -> models.Ord
             .with_for_update(skip_locked=True)
         )
         if not current or current.status != "ready" or current.driver_id is not None:
+            continue
+        if settings.finance_v2_shadow_enabled and settings.finance_v2_cash_limit_enabled and not driver_cash_eligible(db, user.id, current):
             continue
         current.driver_id = user.id
         current.status = "assigned"
@@ -301,7 +304,7 @@ def available(
 ):
     if not _profile(db, user).is_online or _active_order(db, user.id):
         return []
-    return db.scalars(
+    candidates = db.scalars(
         select(models.Order)
         .where(
             models.Order.status == "ready",
@@ -312,6 +315,9 @@ def available(
         .order_by(models.Order.updated_at.asc())
         .limit(limit)
     ).all()
+    if not (settings.finance_v2_shadow_enabled and settings.finance_v2_cash_limit_enabled):
+        return candidates
+    return [order for order in candidates if driver_cash_eligible(db, user.id, order)]
 
 
 @router.get("/mine", response_model=list[schemas.OrderOperationalPublic])
@@ -350,6 +356,8 @@ def accept(
         raise HTTPException(404, "Pedido no encontrado")
     if order.status != "ready" or order.driver_id is not None:
         raise HTTPException(409, "Pedido no disponible")
+    if settings.finance_v2_shadow_enabled and settings.finance_v2_cash_limit_enabled and not driver_cash_eligible(db, user.id, order):
+        raise HTTPException(409, "Límite de efectivo alcanzado; acepta pedidos digitales")
     order.driver_id = user.id
     order.status = "assigned"
     db.add(

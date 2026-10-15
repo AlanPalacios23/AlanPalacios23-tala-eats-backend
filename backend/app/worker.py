@@ -68,14 +68,19 @@ def _acquire_cycle_lock() -> str | None:
         return None
 
 
-def _refresh_cycle_lock(token: str | None) -> None:
+def _refresh_cycle_lock(token: str | None) -> bool:
+    """Renew the worker lease; stop all later jobs if another worker owns it.
+
+    Redis may expire a lease while a provider is slow. Blindly continuing
+    afterwards can duplicate order dispatch/financial reconciliation jobs.
+    """
     if not token or token == "local-development":
-        return
+        return True
     client = _redis_client()
     if client is None:
-        return
+        return False
     try:
-        client.eval(
+        renewed = client.eval(
             "if redis.call('get', KEYS[1]) == ARGV[1] then "
             "return redis.call('expire', KEYS[1], ARGV[2]) else return 0 end",
             1,
@@ -83,8 +88,10 @@ def _refresh_cycle_lock(token: str | None) -> None:
             token,
             settings.worker_lock_ttl_seconds,
         )
+        return bool(renewed)
     except Exception:
         log.exception("worker lock refresh failed")
+        return False
 
 
 def _release_cycle_lock(token: str | None) -> None:
@@ -768,16 +775,24 @@ def run_once(lock_token: str | None = None) -> None:
     with SessionLocal() as db:
         outbox_published, outbox_retried, outbox_dead = process_outbox(db)
     expired = expire_unpaid_orders()
-    _refresh_cycle_lock(lock_token)
+    if not _refresh_cycle_lock(lock_token):
+        log.warning("worker lock lost; stop remaining maintenance tasks")
+        return
     removed = cleanup_orphan_proofs()
     scheduled = notify_scheduled_orders()
-    _refresh_cycle_lock(lock_token)
+    if not _refresh_cycle_lock(lock_token):
+        log.warning("worker lock lost; stop remaining maintenance tasks")
+        return
     assigned, reassigned, incentives = automate_v9_operations()
     offer_created, offer_expired = automate_v11_driver_offers()
-    _refresh_cycle_lock(lock_token)
+    if not _refresh_cycle_lock(lock_token):
+        log.warning("worker lock lost; stop remaining maintenance tasks")
+        return
     substitutions_expired = expire_v11_substitutions()
     marketing = run_v9_marketing_automations()
-    _refresh_cycle_lock(lock_token)
+    if not _refresh_cycle_lock(lock_token):
+        log.warning("worker lock lost; stop remaining maintenance tasks")
+        return
     push_sent, push_failed = deliver_v11_push_notifications()
     native_push_sent, native_push_failed = deliver_native_push()
     with SessionLocal() as db:

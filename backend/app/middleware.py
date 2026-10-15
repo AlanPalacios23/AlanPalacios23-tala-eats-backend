@@ -2,6 +2,8 @@ import asyncio
 import json
 import logging
 import re
+from ipaddress import ip_address, ip_network
+import secrets
 import time
 import uuid
 from collections import deque
@@ -170,17 +172,38 @@ runtime_metrics = RuntimeMetrics()
 
 
 def _client_ip(request: Request) -> str:
+    """Do not trust user-supplied client-IP headers from a direct connection.
+
+    A reverse proxy MUST be inside the explicitly approved CIDR ranges and
+    must overwrite (not forward unchecked) upstream X-Forwarded-For/CF headers.
+    This identity is used by authentication rate limiting and abuse detection.
+    """
+    peer = request.client.host if request.client else "unknown"
+    try:
+        remote = ip_address(peer)
+    except ValueError:
+        return peer[:80]
     if settings.trust_proxy_headers:
-        cf_ip = request.headers.get("cf-connecting-ip", "").strip()
-        if cf_ip:
-            return cf_ip[:80]
-        forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-        if forwarded:
-            return forwarded[:80]
-        real_ip = request.headers.get("x-real-ip", "").strip()
-        if real_ip:
-            return real_ip[:80]
-    return (request.client.host if request.client else "unknown")[:80]
+        trusted = False
+        for subnet in settings.trusted_proxy_cidrs:
+            try:
+                if remote in ip_network(subnet, strict=False):
+                    trusted = True
+                    break
+            except ValueError:
+                logger.warning("Invalid TRUSTED_PROXY_CIDRS network ignored")
+        if trusted:
+            values = (
+                request.headers.get("cf-connecting-ip", "").strip(),
+                request.headers.get("x-forwarded-for", "").split(",")[0].strip(),
+                request.headers.get("x-real-ip", "").strip(),
+            )
+            for candidate in values:
+                try:
+                    return str(ip_address(candidate))
+                except ValueError:
+                    continue
+    return str(remote)
 
 
 def _rate_policy(request: Request) -> tuple[str, int]:
@@ -207,6 +230,8 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
                     size = int(raw)
                 except ValueError:
                     return JSONResponse({"detail": "Content-Length inválido"}, status_code=400)
+                if size < 0:
+                    return JSONResponse({"detail": "Content-Length inválido"}, status_code=400)
                 max_bytes = settings.max_request_body_mb * 1024 * 1024
                 if size > max_bytes:
                     return JSONResponse(
@@ -218,7 +243,13 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        request_id = (request.headers.get("x-request-id") or str(uuid.uuid4()))[:128]
+        # Reject untrusted control characters and invalid request IDs before
+        # placing them into response headers and structured access logs.
+        supplied_id = (request.headers.get("x-request-id") or "").strip()
+        request_id = (
+            supplied_id if re.fullmatch(r"[A-Za-z0-9._:-]{1,96}", supplied_id)
+            else str(uuid.uuid4())
+        )
         request.state.request_id = request_id
         token_request_id = request_id_var.set(request_id)
         token_ip = request_ip_var.set(_client_ip(request))
@@ -330,10 +361,15 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         authorization = request.headers.get("authorization", "")
         cookie_token = request.cookies.get(settings.session_cookie_name, "")
-        # Login/register can set a cookie on the first response; binding identity to
-        # that newly-created cookie would make the retry look like a different caller.
-        auth_bootstrap = request.url.path.startswith(("/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/google", "/api/v1/auth/password/forgot"))
-        auth = authorization or ("" if auth_bootstrap else cookie_token)
+        # Authentication responses may contain bearer tokens, device attestations,
+        # session cookies, reset or one-time codes. Never cache or replay them via
+        # a user-chosen Idempotency-Key (especially behind a shared NAT/IP).
+        # Likewise, let provider-signed webhook handlers own their deduplication.
+        if (request.url.path.startswith("/api/v1/auth/")
+                or request.url.path.endswith("/webhook")
+                or "/webhook/" in request.url.path):
+            return await call_next(request)
+        auth = authorization or cookie_token
         import hashlib
         identity = hashlib.sha256(auth.encode()).hexdigest()[:16] if auth else _client_ip(request)
         semantic = hashlib.sha256(f"{identity}|{request.method}|{request.url.path}|{idem}".encode()).hexdigest()
@@ -342,11 +378,15 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         signature_key = f"idem:signature:{semantic}"
         try:
             raw_len = int(request.headers.get("content-length") or 0)
-            if raw_len <= 2 * 1024 * 1024:
-                body = await request.body()
-                signature_material = request.url.query.encode() + b"\0" + body
-            else:
-                signature_material = f"{request.url.query}|len={raw_len}|ct={request.headers.get('content-type','')}".encode()
+            # A size-only signature is unsafe: distinct requests with the same
+            # Content-Length could receive an unrelated cached response.
+            # For large uploads, rely on endpoint/domain unique constraints.
+            if raw_len < 0 or raw_len > 2 * 1024 * 1024:
+                return await call_next(request)
+            body = await request.body()
+            if len(body) > 2 * 1024 * 1024:
+                return await call_next(request)
+            signature_material = request.url.query.encode() + b"\0" + body
             request_signature = hashlib.sha256(signature_material).hexdigest()
             client = await _get_rate_redis()
             previous_signature = await client.get(signature_key)
@@ -362,7 +402,8 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             if cached:
                 payload = json.loads(cached)
                 return Response(content=payload["body"].encode("utf-8"), status_code=int(payload["status"]), media_type=payload.get("content_type") or "application/json", headers={"X-Idempotency-Replayed": "true"})
-            claimed = await client.set(lock_key, "1", nx=True, ex=30)
+            lock_token = secrets.token_hex(16)
+            claimed = await client.set(lock_key, lock_token, nx=True, ex=120)
             if not claimed:
                 for _ in range(10):
                     await asyncio.sleep(0.1)
@@ -377,11 +418,39 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
 
         try:
             response = await call_next(request)
-            body = b""
-            async for chunk in response.body_iterator:
-                body += chunk
-            rebuilt = Response(content=body, status_code=response.status_code, headers={k: v for k, v in response.headers.items() if k.lower() != "content-length"}, media_type=response.media_type)
-            if response.status_code < 500 and len(body) <= 2 * 1024 * 1024:
+            # Generic replay only supports bounded JSON responses. Never
+            # buffer unbounded streaming/file/SSE responses in API memory.
+            # An endpoint without a Content-Length must use domain/provider
+            # idempotency rather than this generic response cache.
+            response_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+            response_length = response.headers.get("content-length", "")
+            if (response_type != "application/json"
+                    or not response_length.isdecimal()
+                    or int(response_length) > 2 * 1024 * 1024):
+                return response
+            # BaseHTTPMiddleware uses a streaming wrapper, whereas direct
+            # test invocation may return a normal JSONResponse with .body.
+            body = getattr(response, "body", None)
+            if body is None:
+                parts = []
+                async for chunk in response.body_iterator:
+                    parts.append(chunk if isinstance(chunk, bytes) else chunk.encode("utf-8"))
+                body = b"".join(parts)
+            rebuilt = Response(
+                content=body, status_code=response.status_code,
+                headers={k: v for k, v in response.headers.items() if k.lower() != "content-length"},
+                media_type=response.media_type,
+            )
+            cache_control = response.headers.get("cache-control", "").lower()
+            # Never persist session cookies, private responses or streamed data
+            # in a shared cache, even when a future route adds such a header.
+            cache_safe = (
+                "set-cookie" not in response.headers
+                and "no-store" not in cache_control
+                and "private" not in cache_control
+                and not (response.media_type or "").startswith("text/event-stream")
+            )
+            if cache_safe and response.status_code < 500 and len(body) <= 2 * 1024 * 1024:
                 try:
                     await client.set(cache_key, json.dumps({"status": response.status_code, "content_type": response.media_type or response.headers.get("content-type", "application/json"), "body": body.decode("utf-8")}), ex=86400)
                 except Exception:
@@ -389,9 +458,15 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             return rebuilt
         finally:
             try:
-                await client.delete(lock_key)
+                # A slow request may exceed its TTL; do not delete another
+                # request's newer lock after Redis assigns a new owner token.
+                await client.eval(
+                    "if redis.call('get', KEYS[1]) == ARGV[1] "
+                    "then return redis.call('del', KEYS[1]) else return 0 end",
+                    1, lock_key, lock_token,
+                )
             except Exception:
-                pass
+                logger.exception("Could not release owned idempotency lock")
 
 
 class OriginGuardMiddleware(BaseHTTPMiddleware):

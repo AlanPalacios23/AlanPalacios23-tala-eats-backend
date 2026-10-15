@@ -26,6 +26,12 @@ def now():
     return datetime.now(timezone.utc)
 
 
+def _block_unverified_legacy_finance() -> None:
+    """Do not pretend that manual status changes are bank-confirmed settlements."""
+    if settings.is_production:
+        raise HTTPException(409, "Liquidación legacy sin verificación bancaria deshabilitada en producción")
+
+
 def audit(db: Session, user_id: int | None, action: str, entity_type: str = "", entity_id: str = "", detail: str = ""):
     db.add(models.AuditEvent(user_id=user_id, action=action, entity_type=entity_type, entity_id=entity_id, detail=detail[:5000]))
 
@@ -326,6 +332,9 @@ def payouts(_:models.User=Depends(require_role("admin")),db:Session=Depends(get_
 
 @router.post("/admin/payouts/run")
 def generate_payouts(admin:models.User=Depends(require_role("admin")),db:Session=Depends(get_db),days:int=7):
+    _block_unverified_legacy_finance()
+    if settings.finance_v2_shadow_enabled:
+        raise HTTPException(409, "Cortes legacy deshabilitados durante Finance V2 shadow")
     end=now();start=end-timedelta(days=max(1,min(days,31)))
     restaurants={int(payee_id):Decimal(amount or 0) for payee_id,amount in db.execute(
         select(models.Order.restaurant_id, func.coalesce(func.sum(models.Order.restaurant_payout), 0))
@@ -352,6 +361,9 @@ def generate_payouts(admin:models.User=Depends(require_role("admin")),db:Session
 
 @router.post("/admin/payouts/{payout_id}/mark-paid",response_model=schemas.PayoutPublic)
 def mark_payout_paid(payout_id:int,provider_ref:str,admin:models.User=Depends(require_role("admin")),db:Session=Depends(get_db)):
+    _block_unverified_legacy_finance()
+    if settings.finance_v2_shadow_enabled:
+        raise HTTPException(409, "No marcar como pagado sin conciliación bancaria verificada")
     row=db.get(models.Payout,payout_id)
     if not row:raise HTTPException(404,"Payout no encontrado")
     row.status="paid";row.provider_ref=provider_ref[:180];row.paid_at=now()
@@ -366,6 +378,9 @@ def cash_settlements(_:models.User=Depends(require_role("admin")),db:Session=Dep
 
 @router.post("/admin/cash-settlements/run")
 def generate_cash_settlements(admin:models.User=Depends(require_role("admin")),db:Session=Depends(get_db),days:int=1):
+    _block_unverified_legacy_finance()
+    if settings.finance_v2_shadow_enabled:
+        raise HTTPException(409, "No generar liquidaciones cash legacy superpuestas")
     end=now();start=end-timedelta(days=max(1,min(days,31)))
     grouped={}
     for driver_id,cash,earning in db.execute(
@@ -391,6 +406,9 @@ def generate_cash_settlements(admin:models.User=Depends(require_role("admin")),d
 
 @router.patch("/admin/cash-settlements/{settlement_id}",response_model=schemas.CashSettlementPublic)
 def settle_cash(settlement_id:int,notes:str="",admin:models.User=Depends(require_role("admin")),db:Session=Depends(get_db)):
+    _block_unverified_legacy_finance()
+    if settings.finance_v2_shadow_enabled:
+        raise HTTPException(409, "La deuda cash requiere fondos verificados, no una marca manual")
     row=db.get(models.CashSettlement,settlement_id)
     if not row:raise HTTPException(404,"Liquidación no encontrada")
     row.status="settled";row.notes=notes[:400];row.settled_at=now();audit(db,admin.id,"cash.settlement.complete","cash_settlement",str(row.id),row.notes)

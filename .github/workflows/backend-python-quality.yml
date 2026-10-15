@@ -1,0 +1,40 @@
+name: TALA EATS Backend | Calidad Python estática
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-python-quality.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-python-quality.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: talaeats-python-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-quality:
+    name: Compilar y revisar nombres/errores Python
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Instalar Ruff (herramienta QA sin runtime productivo)
+        run: python -m pip install --disable-pip-version-check 'ruff==0.15.0'
+      - name: Sintaxis de toda la API, migraciones y tests
+        run: python -m compileall -q backend/app backend/migrations backend/tests
+      - name: Errores críticos de sintaxis, nombres y flujo
+        run: ruff check backend/app backend/migrations backend/tests --select E9,F63,F7,F82
