@@ -7,6 +7,7 @@ A positive configuration probe is NOT proof of provider or bank readiness.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 
@@ -16,6 +17,28 @@ def _present(cfg: Any, field: str) -> bool:
 
 def _flag(cfg: Any, field: str) -> bool:
     return getattr(cfg, field, False) is True
+
+
+def _approved_bank_destinations_consistent(cfg: Any) -> bool:
+    """Read-only shape/ownership check; never contacts Stripe or the bank."""
+    accounts = list(getattr(cfg, "withdrawals_approved_accounts", None) or [])
+    destinations = list(getattr(cfg, "withdrawals_approved_bank_destinations", None) or [])
+    if not accounts or not destinations or len(accounts) != len(set(accounts)):
+        return False
+    valid_account = re.compile(r"^acct_[A-Za-z0-9]{8,80}$")
+    valid_bank = re.compile(r"^ba_[A-Za-z0-9]{8,100}$")
+    if any(not isinstance(account, str) or not valid_account.fullmatch(account)
+           for account in accounts):
+        return False
+    found = set()
+    for pair in destinations:
+        if not isinstance(pair, str) or pair.count(":") != 1:
+            return False
+        account, bank = pair.split(":", 1)
+        if account not in accounts or account in found or not valid_bank.fullmatch(bank):
+            return False
+        found.add(account)
+    return found == set(accounts)
 
 
 def assess_payment_go_live(cfg: Any) -> dict[str, Any]:
@@ -60,6 +83,9 @@ def assess_payment_go_live(cfg: Any) -> dict[str, Any]:
         mp_reasons.append("MP_SANDBOX_CREDENTIALS_NOT_LIVE")
     if not _present(cfg, "mercado_pago_access_token"):
         mp_reasons.append("MP_ACCESS_TOKEN_MISSING")
+    elif not re.fullmatch(r"APP_USR-[A-Za-z0-9_-]{12,}", mp_token):
+        # Prefix is only a basic diagnostic heuristic, not PSP verification.
+        mp_reasons.append("MP_LIVE_TOKEN_FORMAT_UNRECOGNIZED")
     if not _present(cfg, "mercado_pago_webhook_secret"):
         mp_reasons.append("MP_WEBHOOK_SECRET_MISSING")
     if not tls_public:
@@ -91,10 +117,14 @@ def assess_payment_go_live(cfg: Any) -> dict[str, Any]:
                 "withdrawals_live_enabled"):
         if not _flag(cfg, key):
             withdrawals_reasons.append(key.upper() + "_DISABLED")
-    if not getattr(cfg, "withdrawals_approved_accounts", None):
+    approved_accounts = getattr(cfg, "withdrawals_approved_accounts", None)
+    approved_destinations = getattr(cfg, "withdrawals_approved_bank_destinations", None)
+    if not approved_accounts:
         withdrawals_reasons.append("APPROVED_CONNECT_ACCOUNTS_MISSING")
-    if not getattr(cfg, "withdrawals_approved_bank_destinations", None):
+    if not approved_destinations:
         withdrawals_reasons.append("APPROVED_BANK_DESTINATIONS_MISSING")
+    if approved_accounts and approved_destinations and not _approved_bank_destinations_consistent(cfg):
+        withdrawals_reasons.append("APPROVED_BANK_DESTINATIONS_MISMATCH")
     withdrawals_reasons += [
         "LIVE_2FA_PAYOUT_BANK_DESTINATION_E2E_NOT_VERIFIED",
         "CASH_AND_LEGACY_PAYOUT_HOLDS_NOT_RECONCILED",
