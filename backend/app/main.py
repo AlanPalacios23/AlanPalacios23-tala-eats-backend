@@ -58,9 +58,10 @@ app.add_middleware(RequestSizeLimitMiddleware)
 app.add_middleware(RequestContextMiddleware)
 
 from .routes import stripe_payments
+from .routes import finance_v2
 from .routes import withdrawals
 from . import native_push
-for router in [auth.router, restaurants.router, orders.router, owner.router, driver.router, admin.router, platform.router, payments.router, stripe_payments.router, withdrawals.router, native_push.router, uploads.router, operations.router, v9.router, v10.router, v11.router, resilience.router]:
+for router in [auth.router, restaurants.router, orders.router, owner.router, driver.router, admin.router, platform.router, payments.router, stripe_payments.router, withdrawals.router, native_push.router, finance_v2.router, uploads.router, operations.router, v9.router, v10.router, v11.router, resilience.router]:
     app.include_router(router)
 
 try:
@@ -129,13 +130,21 @@ def health():
         "redis": "ok" if redis_ok else "error",
         "worker": "ok" if worker_heartbeat else ("not-configured" if not settings.redis_url else "starting"),
         "worker_heartbeat": worker_heartbeat,
+        "worker_heartbeat_detected": bool(worker_heartbeat),
+        # This is capability state, not evidence of cleared funds.
+        "finance_v2": {
+            "enabled": bool(settings.finance_v2_shadow_enabled),
+            "mode": "shadow_only" if settings.finance_v2_shadow_enabled else "disabled",
+            "bank_reconciliation_verified": False,
+            "automatic_settlements_enabled": False,
+        },
         "payments": "configured" if settings.mercado_pago_access_token or (settings.stripe_enabled and settings.stripe_secret_key and settings.stripe_webhook_secret) else "not-configured",
         "google": "configured" if settings.google_client_id else "optional-not-configured",
         "email": "configured" if settings.smtp_host else "optional-not-configured",
         "wallet": "configured",
         "websocket": "configured" if settings.redis_url else "local-only",
         "customer_ready": bool(db_ok and redis_ok),
-        "core_checkout": "ready",
+        "core_checkout": "ready" if db_ok and redis_ok else "degraded",
         "features": 170,
         "operations": "configured",
         "finance_ledger": "configured",
@@ -178,12 +187,16 @@ def health():
 
 @app.get("/api/v1/ready")
 def readiness():
-    db_ok, redis_ok, _ = _dependency_health()
+    # HTTP readiness is intentionally DB + Redis. A missing worker heartbeat
+    # is reported separately; it does not imply the HTTP server cannot respond.
+    db_ok, redis_ok, worker_heartbeat = _dependency_health()
     code = 200 if db_ok and redis_ok else 503
     return JSONResponse({
         "ready": bool(db_ok and redis_ok),
         "database": db_ok,
         "redis": redis_ok,
+        "worker_heartbeat_detected": bool(worker_heartbeat),
+        "finance_v2_shadow_enabled": bool(settings.finance_v2_shadow_enabled),
         "version": settings.app_version,
         "product_scope": "customer-restaurant-driver-admin",
         "merchant_managed_delivery": settings.merchant_managed_delivery,

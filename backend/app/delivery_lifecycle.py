@@ -52,6 +52,12 @@ def finalize_delivery(db: Session, order: models.Order, actor_user_id: int, sour
         referral.rewarded_at = datetime.now(timezone.utc)
 
     db.add(models.Notification(user_id=order.user_id,kind="delivery",title="Pedido entregado",message=f"Pedido #{order.id} entregado. ¡Buen provecho!"))
+    # Shadow evidence shares the same DB transaction as delivered status.
+    # OFF in production; never sends transfers or creates payable bank cash.
+    from .config import settings
+    if settings.finance_v2_shadow_enabled:
+        from .finance_core_v2 import book_delivered_order
+        book_delivered_order(db, order)
     db.commit()
     publish_order_event(order.id,"order.status",{"status":"delivered"})
     return order

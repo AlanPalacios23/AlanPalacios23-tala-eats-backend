@@ -15,7 +15,11 @@ class UserPublic(ORMModel):
 class RegisterRequest(BaseModel):
     name: str = Field(min_length=2, max_length=120); email: EmailStr; password: str = Field(min_length=8, max_length=128)
 class LoginRequest(BaseModel): email: EmailStr; password: str; otp: str = Field(default="", max_length=12)
-class GoogleAuthRequest(BaseModel): credential: str = Field(min_length=20)
+class GoogleAuthRequest(BaseModel):
+    credential: str = Field(min_length=20)
+    # TOTP is required for Google SSO when the linked account enables 2FA.
+    # Optional for ordinary customers and backward-compatible SSO clients.
+    otp: str = Field(default="", max_length=12)
 class AuthResponse(BaseModel): access_token: str; token_type: str = "bearer"; user: UserPublic; device_token: str = ""
 class ProfileUpdate(BaseModel):
     name: str|None = Field(default=None,min_length=2,max_length=120)
