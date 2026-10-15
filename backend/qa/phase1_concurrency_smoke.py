@@ -18,7 +18,10 @@ import tempfile
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from http.client import RemoteDisconnected
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -155,13 +158,61 @@ def main(mode: str) -> None:
                 assert stock_after == stock_before - 1, (stock_before, stock_after)
                 assert ledger_count > 0, ledger_count
 
-                # Model a client losing an acknowledged response after COMMIT:
-                # intentionally discard first HTTP reply and recover by retry.
+                # Genuine post-COMMIT network fault via a loopback-only
+                # reverse proxy: forward full request to Uvicorn, WAIT for its
+                # committed 201, then close downstream TCP without writing a
+                # single response byte. Client sees transport failure.
                 lost = {**payload, "client_reference": f"pg-lost-{mode}-{uuid.uuid4().hex}"}
-                ack_code, ack = submit(101, lost)
-                assert ack_code == 201, (ack_code, ack)
-                committed_id = ack["id"]
-                del ack
+
+                class DropReplyAfterCommit(BaseHTTPRequestHandler):
+                    protocol_version = "HTTP/1.1"
+
+                    def do_POST(self):
+                        assert self.path == "/api/v1/orders"
+                        length = int(self.headers.get("Content-Length", "0"))
+                        request_body = json.loads(self.rfile.read(length))
+                        upstream_headers = {
+                            "Authorization": self.headers["Authorization"],
+                            "Idempotency-Key": self.headers["Idempotency-Key"],
+                        }
+                        verified = http(base, self.path, method="POST",
+                                        json_body=request_body, headers=upstream_headers)
+                        self.server.upstream_result = verified
+                        # Fail closed: only discard a successful COMMIT ACK.
+                        assert verified[0] == 201, verified
+                        self.close_connection = True
+                        try:
+                            self.connection.shutdown(2)
+                        except OSError:
+                            pass
+                        self.connection.close()
+
+                    def log_message(self, *_args):
+                        pass
+
+                proxy = ThreadingHTTPServer(("127.0.0.1", 0), DropReplyAfterCommit)
+                proxy.upstream_result = None
+                t = Thread(target=proxy.serve_forever, daemon=True)
+                t.start()
+                try:
+                    try:
+                        code, _ = http(
+                            f"http://127.0.0.1:{proxy.server_address[1]}",
+                            "/api/v1/orders", method="POST",
+                            json_body=lost,
+                            headers={**auth, "Idempotency-Key": "f1-" + uuid.uuid4().hex},
+                        )
+                        raise AssertionError(f"Transport unexpectedly returned HTTP {code}")
+                    except (RemoteDisconnected, ConnectionResetError, BrokenPipeError, URLError):
+                        pass
+                finally:
+                    proxy.shutdown()
+                    proxy.server_close()
+                    t.join(timeout=5)
+
+                first_ack = proxy.upstream_result
+                assert first_ack is not None and first_ack[0] == 201, first_ack
+                committed_id = first_ack[1]["id"]
                 retry_code, retry = submit(102, lost)
                 assert retry_code == 201 and retry["id"] == committed_id, retry
                 with SessionLocal() as db:
