@@ -177,6 +177,35 @@ def fcm_delivery_policy(kind: str, order_id: str = "") -> dict[str, str]:
     }
 
 
+_ORDER_STATUS_HINTS = (
+    ("cancelad", "cancelled"), ("entregad", "delivered"),
+    ("en camino", "on_the_way"), ("recogid", "picked_up"),
+    ("prepar", "preparing"), ("listo", "ready"),
+    ("asignad", "assigned"), ("confirmad", "confirmed"),
+)
+
+
+def _obsolete_order_push(notification, application: str, recipient_id: int, order) -> bool:
+    """Conservative suppression: do not dispatch a known obsolete order state.
+
+    A payment, refund or security notification is never suppressed merely
+    because the order advanced. The check is advisory for legacy free-text
+    notifications; unknown messages keep their existing delivery behavior.
+    """
+    if application == "customer" and order.user_id != recipient_id:
+        return True
+    if application == "driver" and notification.kind in {"driver_order", "delivery", "driver_offer"}:
+        if order.driver_id is not None and order.driver_id != recipient_id:
+            return True
+    if notification.kind == "driver_offer":
+        return order.status != "ready"
+    if notification.kind not in {"order", "restaurant_order", "driver_order", "delivery"}:
+        return False
+    words = ((notification.title or "") + " " + (notification.message or "")).lower()
+    expected = next((state for phrase, state in _ORDER_STATUS_HINTS if phrase in words), None)
+    return expected is not None and order.status != expected
+
+
 class SendResult(NamedTuple):
     ok: bool
     permanent: bool = False
@@ -262,9 +291,20 @@ def deliver_native_push() -> tuple[int, int]:
             max_age = timedelta(hours=6 if _order_notification(notification) else 24)
             if (_now() - notification.created_at.replace(tzinfo=notification.created_at.tzinfo or timezone.utc)) > max_age:
                 job.state = "expired"; db.commit(); continue
+            found = ORDER_RE.search((notification.message or "") + " " + (notification.title or ""))
+            # Free-form legacy notifications may reference IDs that no longer
+            # exist; preserve those deliveries while protecting known orders.
+            if found and notification.kind not in PROMOTIONAL_KINDS:
+                raw_id = found.group(1)
+                if len(raw_id) > 18:
+                    job.state = "suppressed"; db.commit(); continue
+                linked_order = db.get(models.Order, int(raw_id))
+                if linked_order is not None and _obsolete_order_push(
+                    notification, device.application, user.id, linked_order
+                ):
+                    job.state = "suppressed"; db.commit(); continue
             try:
                 token = _cipher().decrypt(device.encrypted_token.encode("ascii")).decode("utf-8")
-                found = ORDER_RE.search(notification.message)
                 order_id = found.group(1) if found else ""
                 result = _send_fcm(token, title=notification.title, body=notification.message, notification_id=notification.id, order_id=order_id, notification_kind=notification.kind)
             except Exception:
