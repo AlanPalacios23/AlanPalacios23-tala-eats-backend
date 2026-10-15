@@ -55,3 +55,7 @@ No hay evidencia de una política completa automatizada de retención/purga para
 - [ ] Revisar políticas de acceso y backup en la instancia Kali realmente desplegada.
 
 El registro **F1.09 técnico** puede certificarse después de un QA Linux PASS del archivo y del parche asociado, **sin certificar la ley, el deploy ni retención automática**. Los requisitos externos siguen abiertos como dependencias de salida de Fase 2/3.
+
+## Revisión de seguridad independiente
+
+Este inventario y el parche de documentos privados se verifican en [PR #45](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/pull/45), aislados de cambios de caja, migraciones y confianza de proxies de la PR #44. Ejecutar CI de GitHub Actions en Linux; antes de fusionar exigir tests completos, PostgreSQL/Redis y auditoría de seguridad PASS. Cumplimiento ARCO/retención legal requiere aprobación separada.
