@@ -134,3 +134,29 @@ Al ejecutar `--backup`, se solicita dos veces la misma clave de al menos 16 cara
 
 ## Qué NO se ha hecho
 No se ha instalado runner auto-desplegador, no se ha habilitado `workflow_dispatch` de producción con credenciales, no se ha cambiado Compose, no se ha programado rollback, no se han hecho backups ni cambiado/ejecutado contenedores Kali.
+
+
+## Fase 1 · F1.03 — validar Caddy / Cloudflare ANTES de la RC
+
+Esta comprobación **no está aprobada** únicamente por pasar GitHub Actions. La RC `tala-eats-backend-fase1-p0-rc1-20261015` incluye defensas de proxy pero todavía **no se ha desplegado** en Kali. El ingreso público `/api/v1/ready` respondió HTTP 403 en una prueba externa anterior (Issue #21), cuya causa no se ha resuelto.
+
+Desde el checkout previamente autenticado de GitHub en Kali, sin tocar los contenedores:
+
+```bash
+cd ~/tala-backend-audit
+git pull --ff-only origin main
+python3 scripts/kali_proxy_trust_readonly.py --self-test
+python3 scripts/kali_proxy_trust_readonly.py
+```
+
+La herramienta solo consulta campos acotados de `docker inspect` de `talaeats-v3-backend-1` y `talaeats-v3-caddy-1`, y hace dos GET de `/api/v1/ready` (uno dentro del backend y otro vía HTTPS externo desde Kali), sin autorización ni payload. Emite booleanos y códigos de estado; **no extrae Docker env, Caddyfile, montajes, IP concretas, tokens, logs ni claves**. No reinicia, edita ni migra nada.
+
+El marcador `F103_KALI_PROXY_READONLY_PARTIAL_EVIDENCE` es **evidencia parcial**, no PASS de confianza de proxy. Antes del CHECK final en #43, revisar en privado, sin copiar credenciales:
+
+- Que el puerto del backend no esté publicado al internet público y que Caddy comparta únicamente redes autorizadas.
+- La **IP/subred real del peer inmediato** Caddy→API y la futura variable `UVICORN_FORWARDED_ALLOW_IPS`, jamás wildcard `*` y jamás adivinar IP Docker.
+- La configuración real de Caddy: descartar/sobrescribir `X-Forwarded-For` y `CF-Connecting-IP` enviados por visitantes no confiables y tomar la IP real solo desde Cloudflare Tunnel de confianza.
+- El 403 externo y la regla exacta en Cloudflare WAF/Access/Tunnel sin desactivar seguridad; requerir HTTP 200 y JSON `ready/database/redis=true` desde origen y red externa.
+- Prueba de falsificación de encabezados contra una API **aislada o staging**, confirmando que el rate limit no se evade ni agrupa todos los clientes detrás del proxy.
+
+**No modificar Caddy, Cloudflare, Kali ni producción automáticamente.** Cerrar F1.03 solo con evidencias reales y una validación de integración posterior; F1.08 y F1.10 corresponden a la RC de código, no al GO para producción.
