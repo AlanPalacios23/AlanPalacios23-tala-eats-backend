@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 import secrets
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -1006,3 +1006,76 @@ class MobilePushDelivery(Base):
     last_error: Mapped[str] = mapped_column(String(240), default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# FINANCE CORE V2 — isolated shadow accounting, feature-flagged OFF by default.
+# These tables DO NOT authorize bank transfers, Stripe movements or collections.
+class FinanceV2Wallet(Base):
+    __tablename__ = "finance_v2_wallets"
+    __table_args__ = (UniqueConstraint("owner_type", "owner_id", name="uq_fin_v2_wallet_owner"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    balance_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # This portion of positive credits is NOT payable until PSP/bank funding is verified.
+    unfunded_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # Physical cash under this participant's custody (not money in Tala Eats' bank).
+    cash_exposure_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="MXN")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class FinanceV2Journal(Base):
+    __tablename__ = "finance_v2_journals"
+    __table_args__ = (UniqueConstraint("order_id", "event_type", name="uq_fin_v2_order_event"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(35), nullable=False, default="delivered")
+    payment_method: Mapped[str] = mapped_column(String(30), nullable=False)
+    total_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # Platform revenue here is accrued; it is NOT a bank balance.
+    platform_revenue_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="MXN")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class FinanceV2JournalLine(Base):
+    __tablename__ = "finance_v2_journal_lines"
+    __table_args__ = (UniqueConstraint("journal_id", "seq", name="uq_fin_v2_journal_seq"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    journal_id: Mapped[int] = mapped_column(ForeignKey("finance_v2_journals.id"), index=True, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    account: Mapped[str] = mapped_column(String(90), nullable=False, index=True)
+    direction: Mapped[str] = mapped_column(String(6), nullable=False)
+    amount_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    owner_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    owner_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class FinanceV2WalletMovement(Base):
+    __tablename__ = "finance_v2_wallet_movements"
+    __table_args__ = (UniqueConstraint("journal_id", "owner_type", "owner_id", name="uq_fin_v2_mov_wallet"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    journal_id: Mapped[int] = mapped_column(ForeignKey("finance_v2_journals.id"), nullable=False, index=True)
+    owner_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    amount_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    unfunded_delta_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    cash_exposure_delta_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class FinanceV2CashAllocation(Base):
+    __tablename__ = "finance_v2_cash_allocations"
+    __table_args__ = (UniqueConstraint("order_id", name="uq_fin_v2_cash_order"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), nullable=False, index=True)
+    journal_id: Mapped[int] = mapped_column(ForeignKey("finance_v2_journals.id"), nullable=False)
+    collector_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    collector_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    received_cash_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    owed_by_collector_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # recorded != reconciled. Reconciliation with PSP/bank is future work.
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="recorded")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
