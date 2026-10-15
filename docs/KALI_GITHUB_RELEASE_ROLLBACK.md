@@ -84,6 +84,27 @@ python3 scripts/kali_release_candidate_plan_readonly.py
 
 No usar `docker image prune`, `docker compose down -v`, `docker volume prune`, `alembic downgrade` ni `git reset --hard` en este flujo. No ejecutar `up --build` en producción hasta ensayos y respaldos validados. Una copia de fuente y una imagen anterior NO son copia de PostgreSQL, fotos o Stripe.
 
+## Fase B2 — Conservar imágenes para rollback (etiquetas Docker locales)
+
+Luego de validar la topología y un plan de candidato, el operador podrá **etiquetar sin reiniciar** las dos imágenes exactas de v1.6.4. El procedimiento **sólo protege las imágenes** de backend/worker frente a compilaciones que sobrescriban el alias Docker que usa Compose; **no habilita todavía rollback ni equivale a respaldo de PostgreSQL/media**.
+
+```bash
+cd ~/tala-backend-audit
+git pull --ff-only origin main
+python3 scripts/kali_pin_rollback_images.py --dry-run
+# Si confirma versión 1.6.4, imágenes exactas y migración f21i00000001:
+python3 scripts/kali_pin_rollback_images.py --pin
+```
+
+`--dry-run` es el modo predeterminado y nunca altera Docker; `--pin` sólo ejecuta `docker image tag` sobre estos identificadores confirmados:
+
+- `talaeats-rollback/backend:v1.6.4-hf1-e22e4d5` → `sha256:3b1d89ec510d6768eacd27122a32e3bf0feffbe4a7937911f0f4defeda062360`
+- `talaeats-rollback/worker:v1.6.4-hf1-e22e4d5` → `sha256:624d02c855ec2d712f48d81ff32ab4019c78762e02e91a55bd59a2fa5d96246a`
+
+El script verifica etiquetas Compose, contenedores y API saludables, versión e imagen exactas, migración actual y conflictos de alias, y guarda un manifiesto local bajo `~/.local/share/talaeats/rollback-manifests/` con permisos 0600. Este manifiesto **no contiene secretos**. Nunca hace `compose up`, `down`, `restart`, `alembic upgrade/downgrade` ni `docker build`.
+
+**Limitación crítica:** los tags son locales; si falla el disco o alguien elimina la imagen, el tag puede desaparecer. Hacer después un respaldo cifrado fuera de Kali, verificar su restauración, ensayar en ambiente aislado y preparar el sistema de conmutación de código antes de autorizar LIVE.
+
 ## Fase C (pendiente): habilitación manual de Kali
 - Seleccionar SHA de commit de `main` con CI PASS y release/candidata identificable.
 - Guardar imagen anterior y respaldos verificables, compilar candidata separada.
