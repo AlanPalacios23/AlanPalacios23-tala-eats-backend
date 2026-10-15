@@ -44,7 +44,7 @@ y retiros deshabilitadas, SQLite efímero y sin GitHub-hosted Actions.
 |------|----|----------|---------------------|
 | `gps-fcm` | #40 | `929cec9acc10f6206ed41920e4954b9e0b8a4171` | Security preflight, smoke Connect, Alembic heads, pytest |
 | `readiness` | #41 | `a3b816b909d6649ac6e4bf24985488f9dde037c2` | Diagnóstico HTTP synthetic, unittest. GET público opt-in |
-| `finanzas` | #42 | `f3c8734e9b8564302eb4197fbd880b087fb88e74` | Test GO/NO-GO, suite opcional, salida bloqueante **2** |
+| `finanzas` | #42 | `985e3756a58b3b2be1f36b2ea12b36590f6acce9` | Test GO/NO-GO, suite opcional, salida bloqueante **2** |
 
 **Nota:** PR #41 depende de #20; PR #42 depende de #29. No debe hacerse
 merge de esas PR encima de `main` sin resolver su base, revisar seguridad,
@@ -68,3 +68,9 @@ monitor continuo o despliegues Kali.
 - [Run #2](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/actions/runs/38770923701): Python 3.13.16 PASS; FAIL parser PowerShell 5.1 por mensajes no ASCII en QA. Arreglado en PR #40 commit `929cec9acc10f6206ed41920e4954b9e0b8a4171`.
 - [Run #3](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/actions/runs/38771425138): reejecucion con codigo corregido. Su resultado final debe consultarse en GitHub; no se presume PASS.
 - Los disparadores temporales se retiraron y el workflow en `main` vuelve a ser **manual-only**, con commits fijados y pagos LIVE bloqueados.
+
+## Finanzas: alcance del gate Windows (15/oct/2026)
+
+- [Run lote monitoreo+finanzas](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/actions/runs/38772642704): readiness PASS; finanzas 25/25 tests GO/NO-GO PASS, y suite general 294 PASS + 17 FAIL, todos por ejecutar `/bin/sh` inexistente en Windows.
+- El commit financiero `985e3756a58b3b2be1f36b2ea12b36590f6acce9` marca esas 17 pruebas de `entrypoint.sh` como POSIX-only con `pytest.mark.skipif(os.name == "nt")`. **Siguen activas en CI Linux** y nunca deben contabilizarse como PASS en Windows.
+- [Run de revalidacion financiera](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/actions/runs/38773548357): consultar resultado; la suite Windows debe reportar las 17 como omitidas (skip), no suprimir el gate financiero GO/NO-GO. Un PASS de Windows no certifica Docker/Linux ni permite activar dinero real.
