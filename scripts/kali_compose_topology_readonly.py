@@ -126,7 +126,7 @@ def main():
     compose_files = [Path(p.strip()) for p in config_files.split(",") if p.strip()]
     if not compose_files or not all(p.is_file() for p in compose_files):
         raise RuntimeError("Falta al menos un fichero Compose")
-    cmd = ["docker", "compose", "--project-directory", str(working_path)]
+    cmd = ["docker", "compose", "-p", PROJECT, "--project-directory", str(working_path)]
     for path in compose_files:
         cmd.extend(["-f", str(path)])
     cmd.extend(["config", "--format", "json"])
