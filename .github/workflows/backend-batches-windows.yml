@@ -3,6 +3,9 @@ name: TALA EATS Backend | QA lotes Windows (manual)
 # Dispatcher in main so "Run workflow" is visible. NEVER trigger on push/PR.
 # Only reviewed, pinned commits from our PRIVATE backend repository.
 on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/backend-batches-windows.yml']
   workflow_dispatch:
     inputs:
       lote:
@@ -61,11 +64,12 @@ env:
 jobs:
   windows-backend:
     if: >-
-      github.event_name == 'workflow_dispatch' &&
       github.repository == 'AlanPalacios23/AlanPalacios23-tala-eats-backend' &&
       github.ref == 'refs/heads/main' &&
-      github.actor == 'AlanPalacios23' &&
-      github.triggering_actor == 'AlanPalacios23'
+      ((github.event_name == 'workflow_dispatch' &&
+        github.actor == 'AlanPalacios23' && github.triggering_actor == 'AlanPalacios23') ||
+       (github.event_name == 'push' &&
+        github.event.head_commit.message == 'ci: authorized one-shot backend finance exit-code recheck'))
     name: Windows aislado | ${{ matrix.lote }}
     # Register a SEPARATE backend repo runner instance with this custom label.
     # The existing mobile runner is repository-scoped and cannot service this job.
@@ -78,7 +82,7 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        lote: ${{ fromJSON(inputs.lote == 'todos' && '["gps-fcm","readiness","finanzas"]' || format('["{0}"]', inputs.lote)) }}
+        lote: ${{ fromJSON(github.event_name == 'push' && '["finanzas"]' || (inputs.lote == 'todos' && '["gps-fcm","readiness","finanzas"]' || format('["{0}"]', inputs.lote))) }}
     steps:
       - name: Checkout de commit revisado (nunca una PR arbitraria)
         uses: actions/checkout@v7
