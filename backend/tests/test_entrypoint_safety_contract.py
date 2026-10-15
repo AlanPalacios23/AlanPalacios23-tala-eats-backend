@@ -9,6 +9,13 @@ import subprocess
 
 import pytest
 
+# These use the literal POSIX executable /bin/sh, which does not exist on Windows.
+# Keep this contract active in Linux CI; never report it as Windows-tested.
+pytestmark = pytest.mark.skipif(
+    os.name == "nt",
+    reason="POSIX /bin/sh entrypoint tests require Linux; covered by Linux CI",
+)
+
 ENTRYPOINT = Path(__file__).resolve().parents[1] / "entrypoint.sh"
 
 
