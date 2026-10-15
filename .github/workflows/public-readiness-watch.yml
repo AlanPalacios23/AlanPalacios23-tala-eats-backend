@@ -1,26 +1,22 @@
-name: TALA EATS | Public Readiness Watch (read-only)
+name: TALA EATS | Public Readiness Diagnostic (manual, read-only)
 
+# No 15-minute recurring GitHub-hosted runner consumption.
+# Real 24/7 monitoring requires an explicitly configured on-call service
+# or approved self-hosted runner. Never imply that a manual probe is 24/7.
 on:
-  schedule:
-    - cron: '*/15 * * * *'
   workflow_dispatch:
-  push:
-    branches: [release/p0-checklist-last-four]
-    paths:
-      - 'scripts/check_public_readiness.py'
-      - '.github/workflows/public-readiness-watch.yml'
 
 permissions:
   contents: read
 
 jobs:
   monitor:
-    name: Only GET /ready, never payments or database writes
+    name: GET /ready diagnostics only, no payments or DB writes
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
-      - uses: actions/checkout@v4
-      - name: Self-test validation contract
+      - uses: actions/checkout@v7
+      - name: Synthetic self-test
         run: python3 scripts/check_public_readiness.py --self-test
-      - name: Public production readiness (read-only)
+      - name: Explicit public read-only probe
         run: python3 scripts/check_public_readiness.py
