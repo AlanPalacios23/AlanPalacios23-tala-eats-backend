@@ -55,6 +55,9 @@ def assess_payment_go_live(cfg: Any) -> dict[str, Any]:
     stripe_ok = len(stripe_reasons) == 2 and live_secret and live_public
 
     mp_reasons = []
+    mp_token = str(getattr(cfg, "mercado_pago_access_token", "") or "")
+    if mp_token.startswith("TEST-"):
+        mp_reasons.append("MP_SANDBOX_CREDENTIALS_NOT_LIVE")
     if not _present(cfg, "mercado_pago_access_token"):
         mp_reasons.append("MP_ACCESS_TOKEN_MISSING")
     if not _present(cfg, "mercado_pago_webhook_secret"):
