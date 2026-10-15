@@ -140,7 +140,7 @@ def get_onboarding_document(filename: str, user: models.User = Depends(get_curre
             models.OnboardingApplication.user_id == user.id,
         )).all()
         allowed = False
-        for (raw,) in rows:
+        for raw in rows:
             try:
                 listed = json.loads(raw or "[]")
             except (TypeError, ValueError):
