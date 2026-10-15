@@ -16,7 +16,7 @@ from app.main import app
 def _new_user(client, key):
     res = client.post("/api/v1/auth/register", json={
         "name": f"QA {key}",
-        "email": f"phase1-doc-{key}@example.test",
+        "email": f"phase1-doc-{key}@example.com",
         "password": "QA-documents-test-Strong1!",
     })
     assert res.status_code == 201, res.text
