@@ -26,3 +26,6 @@ Esta rama bloquea con HTTP 409 en producción: POST /api/v1/operations/admin/pay
 Pruebas PASS, respaldo y restauración comprobados, revisión SAT/CFDI según actividad y régimen, cuenta bancaria verificada, receivables contra extractos y proveedor, KYC de cada beneficiario, conciliación por pedido, reversos y límites de fraude. /ready=true solo prueba infraestructura, no cuentas monetarias.
 
 Ninguna modificación en esta rama aplica cambios a Kali, Stripe LIVE o Mercado Pago. El despliegue, migraciones y activaciones requieren autorización separada y validación de la versión realmente desplegada.
+## CI de release candidato
+
+El PR #29 apunta a main únicamente para validar en conjunto backend, seguridad y finanzas. Permanece DRAFT; que las suites pasen no constituye autorización para desplegar, migrar ni habilitar cobros LIVE.
