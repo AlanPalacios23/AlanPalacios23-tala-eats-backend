@@ -30,8 +30,8 @@ def fake_live(**extra):
         stripe_webhook_secret="whsec_CI_DUMMY", stripe_connect_enabled=True,
         stripe_connect_webhook_secret="whsec_CONNECT_DUMMY",
         withdrawals_preview_enabled=True, withdrawals_execution_enabled=True,
-        withdrawals_live_enabled=True, withdrawals_approved_accounts=["acct_dummy"],
-        withdrawals_approved_bank_destinations=["acct_dummy:ba_dummy"],
+        withdrawals_live_enabled=True, withdrawals_approved_accounts=["acct_dummy1234"],
+        withdrawals_approved_bank_destinations=["acct_dummy1234:ba_dummy1234"],
     )
     values.update(extra)
     return fake(**values)
@@ -88,7 +88,7 @@ def test_report_never_exposes_credentials(monkeypatch, capsys):
                   mercado_pago_access_token="APP_USR_SENSITIVE",
                   mercado_pago_webhook_secret="private-mp-secret")
     encoded = json.dumps(assess_payment_go_live(c))
-    for secret in ("TOP_SECRET", "SENSITIVE", "private-mp-secret", "acct_dummy"):
+    for secret in ("TOP_SECRET", "SENSITIVE", "private-mp-secret", "acct_dummy1234"):
         assert secret not in encoded
     monkeypatch.setattr("app.config.settings", c)
     assert main() == 2
@@ -112,3 +112,44 @@ def test_legacy_unverified_money_mutations_forbidden_in_production(monkeypatch, 
 def test_legacy_guard_allows_nonproduction_existing_contract(monkeypatch):
     monkeypatch.setattr(settings, "environment", "development")
     operations._block_unverified_legacy_finance()
+
+
+@pytest.mark.parametrize("approved_accounts, approved_destinations", [
+    (["acct_dummy1234"], ["acct_other1234:ba_dummy1234"]),
+    (["acct_dummy1234"], ["acct_dummy1234:ba_bad"]),
+    (["acct_dummy1234"], ["acct_dummy1234:ba_dummy1234", "acct_dummy1234:ba_other1234"]),
+    (["acct_dummy1234", "acct_other1234"], ["acct_dummy1234:ba_dummy1234"]),
+    (["acct_dummy1234", "acct_dummy1234"], ["acct_dummy1234:ba_dummy1234"]),
+    (["acct_dummy1234"], ["acct_dummy1234:ba_dummy1234:extra"]),
+])
+def test_withdrawals_preflight_rejects_unmatched_banks(approved_accounts, approved_destinations):
+    report = assess_payment_go_live(fake_live(
+        withdrawals_approved_accounts=approved_accounts,
+        withdrawals_approved_bank_destinations=approved_destinations,
+    ))
+    flow = report["flows"]["bank_withdrawals"]
+    assert flow["configuration_complete"] is False
+    assert "APPROVED_BANK_DESTINATIONS_MISMATCH" in flow["blockers"]
+    assert flow["automatic_real_money_activation_authorized"] is False
+
+
+@pytest.mark.parametrize("token", ["fake", "APP_USR-short", "APP_USR_", "TEST-123456789012345"])
+def test_mercado_pago_does_not_accept_obvious_placeholder_as_live(token):
+    report = assess_payment_go_live(fake(
+        mercado_pago_access_token=token,
+        mercado_pago_webhook_secret="ci-not-a-real-secret",
+    ))
+    assert report["flows"]["mercado_pago_checkout"]["configuration_complete"] is False
+    assert report["authorizes_real_money_activation"] is False
+
+
+def test_formatted_marketplace_configuration_still_needs_independent_provider_verification():
+    report = assess_payment_go_live(fake_live(
+        mercado_pago_access_token="APP_USR-CI_SYNTHETIC_NOT_A_REAL_ACCOUNT",
+        mercado_pago_webhook_secret="ci-not-a-real-secret",
+    ))
+    assert report["flows"]["mercado_pago_checkout"]["configuration_complete"] is True
+    assert report["flows"]["mercado_pago_checkout"]["independent_provider_and_bank_verification"] is False
+    assert report["flows"]["mercado_pago_checkout"]["automatic_real_money_activation_authorized"] is False
+    assert report["flows"]["bank_withdrawals"]["configuration_complete"] is True
+    assert report["flows"]["bank_withdrawals"]["independent_provider_and_bank_verification"] is False
