@@ -16,6 +16,7 @@ from ..geo import haversine_km
 from ..monetization import DEFAULTS, get_decimal_setting, money, commercial_value, commercial_v152_active, commercial_v162_active
 from ..wallet import credit_wallet, get_loyalty_account
 from ..feature_flags import enabled as feature_enabled
+from .uploads import validate_onboarding_documents
 
 router = APIRouter(prefix="/api/v1/operations", tags=["operations-v6"])
 ACTIVE_STATUSES = {"received", "confirmed", "preparing", "ready", "assigned", "picked_up", "on_the_way"}
@@ -54,6 +55,7 @@ def owner_restaurant(db: Session, user: models.User) -> models.Restaurant:
 # ---------------------------------------------------------------------------
 @router.post("/onboarding", response_model=schemas.OnboardingPublic, status_code=201)
 def create_onboarding(payload: schemas.OnboardingCreate, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    validate_onboarding_documents(user.id, payload.documents)
     if settings.merchant_managed_delivery and payload.entity_type == "driver":
         raise HTTPException(410, "El registro de repartidores no está activo en Tala Eats V1")
     existing = db.scalar(select(models.OnboardingApplication).where(
