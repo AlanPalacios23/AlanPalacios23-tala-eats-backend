@@ -18,7 +18,7 @@ a un repositorio personal no sirve automáticamente a otro.
    **`tala-eats-backend`**. Utilizar los comandos y el token efímero
    generados por GitHub; **nunca subir el token al repositorio**.
 3. Confirmar que aparece **Idle** y con etiquetas `self-hosted, Windows, X64,
-   tala-eats-backend`. Instalar Python **3.13** para el proceso del runner.
+   tala-eats-backend`. Python **3.13** se prepara automaticamente mediante `actions/setup-python@v7` en el runner. No exige cambiar la instalacion del sistema.
 4. Si el trabajo permanece en `Queued / Waiting for runner`, primero corregir
    registro, etiquetas, versión/servicio o disponibilidad de la PC; NO gastar
    minutos ejecutándolo en un runner alojado por GitHub.
@@ -42,7 +42,7 @@ y retiros deshabilitadas, SQLite efímero y sin GitHub-hosted Actions.
 
 | Lote | PR | SHA fijo | Cobertura de mañana |
 |------|----|----------|---------------------|
-| `gps-fcm` | #40 | `81372ba51e65e5e63ced898ca87ad746296cc89d` | Security preflight, smoke Connect, Alembic heads, pytest |
+| `gps-fcm` | #40 | `929cec9acc10f6206ed41920e4954b9e0b8a4171` | Security preflight, smoke Connect, Alembic heads, pytest |
 | `readiness` | #41 | `a3b816b909d6649ac6e4bf24985488f9dde037c2` | Diagnóstico HTTP synthetic, unittest. GET público opt-in |
 | `finanzas` | #42 | `f3c8734e9b8564302eb4197fbd880b087fb88e74` | Test GO/NO-GO, suite opcional, salida bloqueante **2** |
 
@@ -61,3 +61,10 @@ Este dispatcher **no ejecuta** PostgreSQL16/Redis8 en Docker, ni Stripe TEST
 externo, ni E2E Android ni firma de APK. Se harán en gates separados después
 de que estas primeras pruebas pasen. No activa dinero, migraciones de producción,
 monitor continuo o despliegues Kali.
+
+## Evidencia de ejecucion Windows (15/oct/2026)
+
+- [Run #1](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/actions/runs/38770193378): FAIL preflight: Python 3.13 no disponible en PATH. Arreglado en workflow con setup-python@v7.
+- [Run #2](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/actions/runs/38770923701): Python 3.13.16 PASS; FAIL parser PowerShell 5.1 por mensajes no ASCII en QA. Arreglado en PR #40 commit `929cec9acc10f6206ed41920e4954b9e0b8a4171`.
+- [Run #3](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/actions/runs/38771425138): reejecucion con codigo corregido. Su resultado final debe consultarse en GitHub; no se presume PASS.
+- Los disparadores temporales se retiraron y el workflow en `main` vuelve a ser **manual-only**, con commits fijados y pagos LIVE bloqueados.
