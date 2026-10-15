@@ -14,7 +14,7 @@ from .config import settings
 from .db import Base, SessionLocal, engine
 from .middleware import OriginGuardMiddleware, RateLimitMiddleware, IdempotencyMiddleware, RequestContextMiddleware, RequestSizeLimitMiddleware, close_runtime_clients
 from .realtime import close_realtime_clients, order_pubsub, redis_ping
-from .routes import admin, auth, driver, orders, owner, payments, platform, restaurants, uploads, operations, v9, v10, v11, resilience
+from .routes import admin, auth, driver, orders, owner, payments, platform, restaurants, uploads, operations, v9, v10, v11, resilience, cash_preview
 from .deps import user_from_access_token
 from .seed import seed_database
 from . import models
@@ -60,7 +60,7 @@ app.add_middleware(RequestContextMiddleware)
 from .routes import stripe_payments
 from .routes import withdrawals
 from . import native_push
-for router in [auth.router, restaurants.router, orders.router, owner.router, driver.router, admin.router, platform.router, payments.router, stripe_payments.router, withdrawals.router, native_push.router, uploads.router, operations.router, v9.router, v10.router, v11.router, resilience.router]:
+for router in [auth.router, restaurants.router, orders.router, owner.router, driver.router, admin.router, platform.router, payments.router, stripe_payments.router, withdrawals.router, native_push.router, uploads.router, operations.router, cash_preview.router, v9.router, v10.router, v11.router, resilience.router]:
     app.include_router(router)
 
 try:
