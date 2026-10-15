@@ -106,6 +106,44 @@ def payment_methods(db: Session = Depends(get_db)):
     }
 
 
+def _assert_same_order_reference(existing: models.Order, payload: schemas.OrderCreate) -> None:
+    """Fail closed when a client_reference is reused for a different purchase.
+
+    The DB unique key ensures at-most-once persistence for this reference;
+    this check ensures the persisted order actually represents the retry.
+    The server-authoritative price/distance are intentionally not compared.
+    """
+    stored_items = sorted(
+        (item.menu_item_id, item.quantity, item.options_snapshot or "")
+        for item in existing.items
+    )
+    incoming_items = sorted(
+        (item.menu_item_id, item.quantity, item.options or "")
+        for item in payload.items
+    )
+    immutable_equal = (
+        existing.restaurant_id == payload.restaurant_id
+        and existing.payment_method == payload.payment_method
+        and existing.order_type == payload.order_type
+        and existing.address == payload.address.strip()
+        and existing.notes == payload.notes.strip()
+        and Decimal(existing.tip) == Decimal(payload.tip)
+        and existing.coupon_code == payload.coupon_code.upper().strip()
+        and existing.group_code == payload.group_code.strip()
+        and existing.invoice_requested == payload.invoice_requested
+        and existing.invoice_tax_id == payload.invoice_tax_id
+        and existing.recipient_name == payload.recipient_name.strip()
+        and existing.recipient_phone == payload.recipient_phone.strip()
+        and existing.gift_message == payload.gift_message.strip()
+        and existing.corporate_account_id == payload.corporate_account_id
+        and existing.delivery_lat == payload.delivery_lat
+        and existing.delivery_lng == payload.delivery_lng
+        and stored_items == incoming_items
+    )
+    if not immutable_equal:
+        raise HTTPException(409, "La referencia del pedido ya se usó con una compra diferente")
+
+
 @router.post("",response_model=schemas.OrderPublic,status_code=201)
 def create_order(payload:schemas.OrderCreate,user:models.User=Depends(require_role("customer","admin")),db:Session=Depends(get_db)):
     if (settings.is_production and settings.require_online_payments
@@ -119,6 +157,7 @@ def create_order(payload:schemas.OrderCreate,user:models.User=Depends(require_ro
     if payload.client_reference:
         existing=db.scalar(select(models.Order).where(models.Order.user_id==user.id,models.Order.client_reference==payload.client_reference).options(*order_options()))
         if existing:
+            _assert_same_order_reference(existing, payload)
             return existing
     restaurant=db.get(models.Restaurant,payload.restaurant_id)
     if not restaurant:
@@ -231,7 +270,24 @@ def create_order(payload:schemas.OrderCreate,user:models.User=Depends(require_ro
         recipient_name=payload.recipient_name.strip(),recipient_phone=payload.recipient_phone.strip(),gift_message=payload.gift_message.strip(),corporate_account_id=payload.corporate_account_id,
         inventory_reserved_json=json.dumps({str(k): str(v) for k, v in ingredient_usage.items()}, sort_keys=True),
     )
-    db.add(order); db.flush()
+    db.add(order)
+    try:
+        db.flush()
+    except IntegrityError:
+        # The PostgreSQL UNIQUE(user_id, client_reference) can reject this
+        # insert BEFORE the later commit handler runs. Concurrent identical
+        # retries must return the committed original after transaction rollback.
+        db.rollback()
+        if payload.client_reference:
+            existing = db.scalar(
+                select(models.Order)
+                .where(models.Order.user_id == user.id, models.Order.client_reference == payload.client_reference)
+                .options(*order_options())
+            )
+            if existing:
+                _assert_same_order_reference(existing, payload)
+                return existing
+        raise
     enqueue_event(
         db,
         event_key=f"order:{order.id}:created",
@@ -281,6 +337,7 @@ def create_order(payload:schemas.OrderCreate,user:models.User=Depends(require_ro
                 .options(*order_options())
             )
             if existing:
+                _assert_same_order_reference(existing, payload)
                 return existing
         raise
     publish_order_event(order.id,"order.created",{"status":order.status,"payment_status":order.payment_status})

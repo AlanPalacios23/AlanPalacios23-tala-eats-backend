@@ -101,5 +101,7 @@ jobs:
         run: python -m alembic upgrade head
       - name: Pruebas PostgreSQL Redis roles integridad y health
         run: python -m qa.postgres_redis_smoke
+      - name: Competencia real de dos conexiones sobre una referencia de pedido
+        run: python -m qa.postgres_concurrency
       - name: Verificar Alembic current
         run: python -m alembic current

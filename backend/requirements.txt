@@ -2,7 +2,8 @@ fastapi==0.141.1
 uvicorn[standard]==0.40.0
 SQLAlchemy==2.0.52
 psycopg[binary]==3.3.4
-PyJWT==2.13.0
+# JWT pin includes fixes for multiple 2026 authentication advisories.
+PyJWT==2.15.1
 pydantic[email]==2.12.5
 python-multipart==0.0.32
 google-auth==2.45.0
@@ -17,4 +18,4 @@ opentelemetry-instrumentation-fastapi>=0.50b0,<1
 opentelemetry-exporter-otlp-proto-http>=1.29,<2
 stripe==15.6.0
 
-cryptography>=43,<47
+cryptography==50.0.2
