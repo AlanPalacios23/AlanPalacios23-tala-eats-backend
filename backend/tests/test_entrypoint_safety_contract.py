@@ -28,7 +28,7 @@ def _fake_command(binary: Path, log_file: Path) -> None:
     binary.chmod(0o755)
 
 
-def _startup(tmp_path, *, environment: str, auto_migrate: str | None = None, bootstrap: str | None = None, expect_success: bool = True):
+def _startup(tmp_path, *, environment: str, auto_migrate: str | None = None, bootstrap: str | None = None, forwarded_ips: str | None = None, expect_success: bool = True):
     tools = tmp_path / "bin"
     tools.mkdir()
     output = tmp_path / "boot.log"
@@ -43,6 +43,8 @@ def _startup(tmp_path, *, environment: str, auto_migrate: str | None = None, boo
     env.pop("AUTO_MIGRATE_ON_START", None)
     env.pop("UVICORN_FORWARDED_ALLOW_IPS", None)
     env.pop("BOOTSTRAP_ADMIN_ENABLED", None)
+    if forwarded_ips is not None:
+        env["UVICORN_FORWARDED_ALLOW_IPS"] = forwarded_ips
     if bootstrap is not None:
         env["BOOTSTRAP_ADMIN_ENABLED"] = bootstrap
     if auto_migrate is not None:
@@ -129,9 +131,10 @@ def test_bootstrap_flag_never_runs_automatically_in_production(tmp_path):
     _, logs = _startup(tmp_path, environment="PRODUCTION", bootstrap="true")
     assert "python -m app.bootstrap_admin" not in logs
 
-def test_production_rejects_wildcard_forwarded_allow_ips(tmp_path, monkeypatch):
-    monkeypatch.setenv("UVICORN_FORWARDED_ALLOW_IPS", "*")
-    result, logs = _startup(tmp_path, environment="production", expect_success=False)
+def test_production_rejects_wildcard_forwarded_allow_ips(tmp_path):
+    result, logs = _startup(
+        tmp_path, environment="production", forwarded_ips="*", expect_success=False,
+    )
     assert result.returncode == 78
     assert "ERROR: no se permiten todos los proxies" in result.stderr
     assert "uvicorn" not in logs
