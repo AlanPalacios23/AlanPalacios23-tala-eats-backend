@@ -81,12 +81,18 @@ jobs:
         lote: ${{ fromJSON(inputs.lote == 'todos' && '["gps-fcm","readiness","finanzas"]' || format('["{0}"]', inputs.lote)) }}
     steps:
       - name: Checkout de commit revisado (nunca una PR arbitraria)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
           clean: true
           path: lote
           ref: ${{ matrix.lote == 'gps-fcm' && '81372ba51e65e5e63ced898ca87ad746296cc89d' || matrix.lote == 'readiness' && 'a3b816b909d6649ac6e4bf24985488f9dde037c2' || 'f3c8734e9b8564302eb4197fbd880b087fb88e74' }}
+
+      - name: Instalar Python 3.13 en el runner Windows
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          check-latest: false
 
       - name: Comprobar SHA, Python 3.13 y aislamiento
         working-directory: lote
