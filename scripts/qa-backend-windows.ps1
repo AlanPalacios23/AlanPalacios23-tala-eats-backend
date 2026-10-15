@@ -47,6 +47,7 @@ $env:STRIPE_WEBHOOK_SECRET = ""
 $env:STRIPE_CONNECT_WEBHOOK_SECRET = ""
 $env:REQUIRE_SMTP = "false"
 $env:PYTHONDONTWRITEBYTECODE = "1"
+$env:PYTHONPATH = $backend
 
 Push-Location $repo
 try {
