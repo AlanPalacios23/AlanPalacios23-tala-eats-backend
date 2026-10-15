@@ -1,0 +1,136 @@
+name: TALA EATS Backend | Load Failover Rollback Lab
+
+on:
+  push:
+    branches: [release/p0-checklist-last-four]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-load-rollback-lab.yml'
+  pull_request:
+    branches: [release/p0-checklist-first-four]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tala-backend-rollback-lab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drill:
+    name: 2-worker Docker + pilot load + Redis outage + image rollback (all QA)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: talaqa
+          POSTGRES_PASSWORD: qa-only-local
+          POSTGRES_DB: talaqa
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U talaqa -d talaqa"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+      redis:
+        image: redis:8-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    env:
+      ENVIRONMENT: development
+      DEBUG: 'false'
+      DATABASE_URL: postgresql+psycopg://talaqa:qa-only-local@127.0.0.1:5432/talaqa
+      REDIS_URL: redis://127.0.0.1:6379/0
+      JWT_SECRET: 'qa-ephemeral-jwt-only-not-to-be-used-in-production-2026'
+      SEED_DEMO_DATA: 'false'
+      STRIPE_ENABLED: 'false'
+      STRIPE_SECRET_KEY: ''
+      STRIPE_CONNECT_ENABLED: 'false'
+      MERCADOPAGO_ACCESS_TOKEN: ''
+      WITHDRAWALS_EXECUTION_ENABLED: 'false'
+      WITHDRAWALS_LIVE_ENABLED: 'false'
+      HEALTH_CACHE_SECONDS: '0'
+      REQUIRE_SMTP: 'false'
+    steps:
+      - name: Descargar candidato del PR
+        uses: actions/checkout@v4
+      - name: Descargar commit base anterior sin tocar producción
+        uses: actions/checkout@v4
+        with:
+          ref: release/p0-checklist-first-four
+          path: baseline
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Instalar dependencias efímeras
+        run: python -m pip install --disable-pip-version-check -r backend/requirements-dev.txt
+      - name: Alembic en PostgreSQL aislado
+        working-directory: backend
+        run: python -m alembic upgrade head
+      - name: Compilar imágenes candidatas y base sin publicarlas
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C baseline rev-parse HEAD)" != "$(git rev-parse HEAD)"
+          docker build -q -t tala-lab-candidate:${{ github.sha }} backend
+          docker build -q -t tala-lab-previous:stable baseline/backend
+          test "$(docker image inspect --format '{{.Config.User}}' tala-lab-candidate:${{ github.sha }})" = 'talaeats'
+          test "$(docker image inspect --format '{{.Config.User}}' tala-lab-previous:stable)" = 'talaeats'
+      - name: Arrancar candidato aislado con dos workers
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name tala-lab-new --network host \
+            -e ENVIRONMENT -e DATABASE_URL -e REDIS_URL -e JWT_SECRET \
+            -e DEBUG -e SEED_DEMO_DATA -e STRIPE_ENABLED -e STRIPE_SECRET_KEY \
+            -e STRIPE_CONNECT_ENABLED -e MERCADOPAGO_ACCESS_TOKEN \
+            -e WITHDRAWALS_EXECUTION_ENABLED -e WITHDRAWALS_LIVE_ENABLED \
+            -e HEALTH_CACHE_SECONDS -e REQUIRE_SMTP \
+            --entrypoint python tala-lab-candidate:${{ github.sha }} \
+            -m uvicorn app.main:app --host 127.0.0.1 --port 18211 --workers 2
+          python backend/qa/load_fault_drill.py healthy
+      - name: Carga de lectura pilot-size y SLO
+        run: python backend/qa/load_fault_drill.py load
+      - name: Caída Redis -> readiness 503 -> recuperación
+        shell: bash
+        run: |
+          set -euo pipefail
+          redis_id="$(docker ps --filter ancestor=redis:8-alpine -q | head -n1)"
+          test -n "$redis_id"
+          trap 'docker unpause "$redis_id" >/dev/null 2>&1 || true' EXIT
+          docker pause "$redis_id" >/dev/null
+          python backend/qa/load_fault_drill.py redis-outage
+          docker unpause "$redis_id" >/dev/null
+          python backend/qa/load_fault_drill.py healthy
+          trap - EXIT
+      - name: Simular rollback cambiando imagen y restaurando readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker rm -f tala-lab-new >/dev/null
+          docker run -d --name tala-lab-rollback --network host \
+            -e ENVIRONMENT -e DATABASE_URL -e REDIS_URL -e JWT_SECRET \
+            -e DEBUG -e SEED_DEMO_DATA -e STRIPE_ENABLED -e STRIPE_SECRET_KEY \
+            -e STRIPE_CONNECT_ENABLED -e MERCADOPAGO_ACCESS_TOKEN \
+            -e WITHDRAWALS_EXECUTION_ENABLED -e WITHDRAWALS_LIVE_ENABLED \
+            -e HEALTH_CACHE_SECONDS -e REQUIRE_SMTP \
+            --entrypoint python tala-lab-previous:stable \
+            -m uvicorn app.main:app --host 127.0.0.1 --port 18211 --workers 2
+          python backend/qa/load_fault_drill.py healthy
+          echo "QA_IMAGE_ROLLBACK_PASS: candidate stopped, previous image healthy without migrations"
+      - name: Limpiar contenedores temporales
+        if: always()
+        shell: bash
+        run: |
+          docker rm -f tala-lab-new tala-lab-rollback >/dev/null 2>&1 || true
+          redis_id="$(docker ps -a --filter ancestor=redis:8-alpine -q | head -n1)"
+          if [ -n "$redis_id" ]; then docker unpause "$redis_id" >/dev/null 2>&1 || true; fi
