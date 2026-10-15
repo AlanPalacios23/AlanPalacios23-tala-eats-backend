@@ -1,0 +1,115 @@
+name: TALA EATS Backend | Finanzas PostgreSQL + Redis (CI aislado)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-finance-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-finance-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: finance-postgres-redis-${{ github.ref }}
+  cancel-in-progress: true
+
+# WARNING: Disposable DB only. No production network, tokens, Stripe keys or deployment.
+jobs:
+  finance-postgres-redis:
+    name: PostgreSQL 16 + Redis 8 + contratos financieros
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci_tala
+          POSTGRES_PASSWORD: ci-disposable-password
+          POSTGRES_DB: talaeats_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci_tala -d talaeats_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      GITHUB_ACTIONS: 'true'
+      TALAEATS_DISPOSABLE_FINANCE_CI: 'YES'
+      ENVIRONMENT: development
+      DEBUG: 'false'
+      DATABASE_URL: postgresql+psycopg://ci_tala:ci-disposable-password@127.0.0.1:5432/talaeats_ci
+      REDIS_URL: redis://127.0.0.1:6379/0
+      JWT_SECRET: ci-only-disposable-secret-for-finance-gates-at-least-40-chars
+      SEED_DEMO_DATA: 'true'
+      DOCS_ENABLED: 'false'
+      STRIPE_ENABLED: 'false'
+      STRIPE_CONNECT_ENABLED: 'false'
+      STRIPE_CONNECT_SELF_SERVICE_ENABLED: 'false'
+      WITHDRAWALS_PREVIEW_ENABLED: 'false'
+      WITHDRAWALS_EXECUTION_ENABLED: 'false'
+      WITHDRAWALS_LIVE_ENABLED: 'false'
+      STRIPE_SECRET_KEY: ''
+      STRIPE_PUBLISHABLE_KEY: ''
+      STRIPE_WEBHOOK_SECRET: ''
+      STRIPE_CONNECT_WEBHOOK_SECRET: ''
+      MERCADOPAGO_ACCESS_TOKEN: ''
+      REQUIRE_SMTP: 'false'
+      PYTHONDONTWRITEBYTECODE: '1'
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout privado
+        uses: actions/checkout@v4
+
+      - name: Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Auditoria de secretos en fuentes (sin exponer credenciales)
+        working-directory: .
+        run: python scripts/security_preflight.py --root .
+
+      - name: Instalar dependencias
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+
+      - name: Migraciones reales sobre PostgreSQL desechable
+        run: |
+          python -m alembic heads
+          python -m alembic upgrade head
+          python -m alembic current
+
+      - name: Contratos financieros con PostgreSQL y Redis reales
+        run: PYTHONPATH=. python scripts/ci_finance_pg_redis.py
+
+      - name: Suite de regresion SQLite + Stripe simulado (sin dinero)
+        run: python -m pytest -q --disable-warnings
+
+      - name: Resumen (sin desplegar ni mover dinero)
+        if: success()
+        run: echo 'PASS CI en infraestructura desechable; NO implica aprobacion para Stripe LIVE o Kali produccion.'
