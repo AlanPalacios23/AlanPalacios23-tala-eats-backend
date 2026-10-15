@@ -31,6 +31,8 @@
 
 [Monitor público desde GitHub FAIL](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/actions/runs/38510207933): no se pudo consultar `/api/v1/ready` desde el runner; ver [issue #21](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/issues/21). No asumir caída de Kali sin confirmar.
 
+**Diagnóstico mejorado (15/oct/2026, PR #20):** el monitor sigue consultando exclusivamente `GET /api/v1/ready` desde GitHub Actions y emite categorías fijas: `HTTP_403` o `HTTP_5xx` (Caddy/Cloudflare/política o API), `DNS_FAILURE`, `TLS_FAILURE`, `TIMEOUT`, `CONNECTION_REFUSED`, `NETWORK_FAILURE`, `INVALID_JSON` o `DEGRADED_OR_MISSING_FIELDS`. La clasificación **no imprime URL de respuesta, exception strings ni JSON completo**, y el autotest usa excepciones sintéticas. No presupone que el problema de conectividad esté resuelto; no cerrar el issue #21 sin HTTP 200 + JSON válido desde runner externo **y** entrega de alerta real. Diagnóstico recomendado: comparar salida de GitHub vs `/ready` consultado desde Kali y otra red, sin cambiar reglas Cloudflare automáticamente.
+
 **Pendiente PROD:** resolver acceso de /ready externo, probar entrega de alertas a personas de guardia, configurar on-call, observabilidad y alertas de 5xx, p95, pagos sin conciliar, outbox/DLQ, worker heartbeat, pedidos atascados y saldo de retiros. Simular rollback real de despliegue sin revertir a ciegas migraciones destructivas, cifrar backups y documentar responsables.
 
 ## 8. E2E Usuarios — Restaurante — Repartidor — ADMIN
