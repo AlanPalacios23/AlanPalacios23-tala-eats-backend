@@ -40,3 +40,9 @@
 - [ ] Solo con gates PASS crear PR para revisión y decidir su integración a `main`. **No fusionar** ni marcar las cuatro tareas completas antes de la evidencia.
 
 **Resultado actual: CÓDIGO PREPARADO / QA PENDIENTE / PRODUCCIÓN NO AUTORIZADA.**
+
+## Habilitación CI GitHub-hosted — 15/oct/2026
+
+Repositorio verificado **público**. El propietario autorizó ejecutar pruebas con **GitHub Actions GitHub-hosted Linux**. Este commit no incluye `[skip ci]` para que la PR #44 ejecute los workflows existentes de revisión: QA pytest, seguridad, PostgreSQL16/Redis8, imagen Docker y finanzas NO-LIVE. El antiguo run Windows queued no se usa para declarar PASS.
+
+**No desplegar ni fusionar automáticamente; analizar logs y corregir antes del siguiente paso.**
