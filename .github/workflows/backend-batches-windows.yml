@@ -3,6 +3,9 @@ name: TALA EATS Backend | QA lotes Windows (manual)
 # Dispatcher in main so "Run workflow" is visible. NEVER trigger on push/PR.
 # Only reviewed, pinned commits from our PRIVATE backend repository.
 on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/backend-batches-windows.yml']
   workflow_dispatch:
     inputs:
       lote:
@@ -61,11 +64,12 @@ env:
 jobs:
   windows-backend:
     if: >-
-      github.event_name == 'workflow_dispatch' &&
       github.repository == 'AlanPalacios23/AlanPalacios23-tala-eats-backend' &&
       github.ref == 'refs/heads/main' &&
-      github.actor == 'AlanPalacios23' &&
-      github.triggering_actor == 'AlanPalacios23'
+      ((github.event_name == 'workflow_dispatch' &&
+        github.actor == 'AlanPalacios23' && github.triggering_actor == 'AlanPalacios23') ||
+       (github.event_name == 'push' &&
+        github.event.head_commit.message == 'ci: authorized one-shot backend gps-fcm runner QA'))
     name: Windows aislado | ${{ matrix.lote }}
     # Register a SEPARATE backend repo runner instance with this custom label.
     # The existing mobile runner is repository-scoped and cannot service this job.
@@ -78,7 +82,7 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        lote: ${{ fromJSON(inputs.lote == 'todos' && '["gps-fcm","readiness","finanzas"]' || format('["{0}"]', inputs.lote)) }}
+        lote: ${{ fromJSON(github.event_name == 'push' && '["gps-fcm"]' || (inputs.lote == 'todos' && '["gps-fcm","readiness","finanzas"]' || format('["{0}"]', inputs.lote))) }}
     steps:
       - name: Checkout de commit revisado (nunca una PR arbitraria)
         uses: actions/checkout@v7
@@ -86,7 +90,7 @@ jobs:
           persist-credentials: false
           clean: true
           path: lote
-          ref: ${{ matrix.lote == 'gps-fcm' && '81372ba51e65e5e63ced898ca87ad746296cc89d' || matrix.lote == 'readiness' && 'a3b816b909d6649ac6e4bf24985488f9dde037c2' || 'f3c8734e9b8564302eb4197fbd880b087fb88e74' }}
+          ref: ${{ matrix.lote == 'gps-fcm' && '929cec9acc10f6206ed41920e4954b9e0b8a4171' || matrix.lote == 'readiness' && 'a3b816b909d6649ac6e4bf24985488f9dde037c2' || 'f3c8734e9b8564302eb4197fbd880b087fb88e74' }}
 
       - name: Instalar Python 3.13 en el runner Windows
         uses: actions/setup-python@v7
@@ -99,7 +103,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $expected = switch ('${{ matrix.lote }}') {
-            'gps-fcm' { '81372ba51e65e5e63ced898ca87ad746296cc89d' }
+            'gps-fcm' { '929cec9acc10f6206ed41920e4954b9e0b8a4171' }
             'readiness' { 'a3b816b909d6649ac6e4bf24985488f9dde037c2' }
             'finanzas' { 'f3c8734e9b8564302eb4197fbd880b087fb88e74' }
             default { throw 'Lote no autorizado' }
@@ -125,7 +129,7 @@ jobs:
         if: matrix.lote == 'gps-fcm'
         working-directory: lote
         run: |
-          if ('${{ inputs.suite_completa }}' -eq 'true') {
+          if ('${{ github.event_name == 'push' || inputs.suite_completa }}' -eq 'true') {
             & .\scripts\qa-backend-windows.ps1 -InstallDependencies
           } else {
             & .\scripts\qa-backend-windows.ps1 -InstallDependencies -SkipFullTests
