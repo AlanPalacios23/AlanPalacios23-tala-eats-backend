@@ -74,3 +74,16 @@ monitor continuo o despliegues Kali.
 - [Run lote monitoreo+finanzas](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/actions/runs/38772642704): readiness PASS; finanzas 25/25 tests GO/NO-GO PASS, y suite general 294 PASS + 17 FAIL, todos por ejecutar `/bin/sh` inexistente en Windows.
 - El commit financiero `985e3756a58b3b2be1f36b2ea12b36590f6acce9` marca esas 17 pruebas de `entrypoint.sh` como POSIX-only con `pytest.mark.skipif(os.name == "nt")`. **Siguen activas en CI Linux** y nunca deben contabilizarse como PASS en Windows.
 - [Run de revalidacion financiera](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/actions/runs/38773548357): consultar resultado; la suite Windows debe reportar las 17 como omitidas (skip), no suprimir el gate financiero GO/NO-GO. Un PASS de Windows no certifica Docker/Linux ni permite activar dinero real.
+
+## Resultados finales de la jornada (15/oct/2026)
+
+| PR | Ejecucion Windows | Evidencia | Estado de QA |
+|---|---|---|---|
+| [#40](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/pull/40) GPS/FCM | [Run 38771425138](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/actions/runs/38771425138) | Python 3.13, Alembic single head, security preflight; **253 passed, 9 warnings** | **PASS** en SQLite/Windows |
+| [#41](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/pull/41) readiness | [Run 38772642704](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/actions/runs/38772642704) job readiness | **4 unittest passed**, monitor self-test PASS, probe externo false | **PASS** offline |
+| [#42](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/pull/42) finanzas | [Run 38773548357](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/actions/runs/38773548357) | **294 passed, 17 POSIX-only skipped, 9 warnings**; el job marco failure solo por propagar el exit code NO-GO esperado | Suite Windows PASS, paso de salida corregido |
+| [#42](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/pull/42) finanzas | [Run 38774292373](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/actions/runs/38774292373) | **25 tests financieros passed**, security preflight 0, salida NO-GO verificada y normalizada despues de comprobarla | **PASS** focused, workflow SUCCESS |
+
+El exit code `2` del gate financiero representa **NO-GO esperado**: despues de verificar todos los bloqueos y JSON de salida, se normaliza el codigo de la shell a 0 para que GitHub Actions no marque fallo ficticio. Un return de codigo distinto a 2 sigue siendo FAIL.
+
+Las 17 pruebas POSIX no se ejecutaron en Windows; requieren `/bin/sh` en Linux, donde siguen activas. Los gates Windows no sustituyen QA PostgreSQL16/Redis8, Android E2E, provider TEST, backend Kali ni auditoria LIVE. Ninguna de las PR #40/#41/#42 se fusiono ni desplego. El workflow quedo **manual-only**; el runner debe permanecer abierto como proceso si se desea ejecutar otro trabajo.
