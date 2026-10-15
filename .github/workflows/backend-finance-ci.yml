@@ -105,7 +105,7 @@ jobs:
           python -m alembic current
 
       - name: Contratos financieros con PostgreSQL y Redis reales
-        run: python scripts/ci_finance_pg_redis.py
+        run: PYTHONPATH=. python scripts/ci_finance_pg_redis.py
 
       - name: Suite de regresion SQLite + Stripe simulado (sin dinero)
         run: python -m pytest -q --disable-warnings
