@@ -56,18 +56,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          image="talaeats-backend-ci:\${{ github.sha }}"
-          archive="dist/talaeats-backend-\${{ github.sha }}.docker.tar.gz"
+          image="talaeats-backend-ci:${{ github.sha }}"
+          archive="dist/talaeats-backend-${{ github.sha }}.docker.tar.gz"
           docker save "$image" | gzip -1 > "$archive"
           sha256sum "$archive" > dist/SHA256SUMS
           printf 'source_commit=%s\nimage_id=%s\n' \
-            '\${{ github.sha }}' "$(docker image inspect --format '{{.Id}}' "$image")" \
+            '${{ github.sha }}' "$(docker image inspect --format '{{.Id}}' "$image")" \
             > dist/PROVENANCE.txt
           echo "DOCKER_QA_ARCHIVE_SHA256_PASS"
       - name: Upload immutable QA artifact (90 day retention, not production deploy)
         uses: actions/upload-artifact@v4
         with:
-          name: talaeats-backend-ci-\${{ github.sha }}
+          name: talaeats-backend-ci-${{ github.sha }}
           path: |
             dist/*.docker.tar.gz
             dist/SHA256SUMS
