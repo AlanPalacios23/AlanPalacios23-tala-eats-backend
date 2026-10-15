@@ -50,3 +50,28 @@ jobs:
             -e STRIPE_ENABLED=false -e WITHDRAWALS_EXECUTION_ENABLED=false \
             talaeats-backend-ci:${{ github.sha }} \
             python -c "import app.main; from app.config import settings; print('DOCKER_IMPORT_PASS',settings.app_version)"
+
+      - name: Archive QA image bytes and SHA-256 (no registry push)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          image="talaeats-backend-ci:${{ github.sha }}"
+          archive="dist/talaeats-backend-${{ github.sha }}.docker.tar.gz"
+          docker save "$image" | gzip -1 > "$archive"
+          sha256sum "$archive" > dist/SHA256SUMS
+          printf 'source_commit=%s\nimage_id=%s\n' \
+            '${{ github.sha }}' "$(docker image inspect --format '{{.Id}}' "$image")" \
+            > dist/PROVENANCE.txt
+          echo "DOCKER_QA_ARCHIVE_SHA256_PASS"
+      - name: Upload immutable QA artifact (90 day retention, not production deploy)
+        uses: actions/upload-artifact@v4
+        with:
+          name: talaeats-backend-ci-${{ github.sha }}
+          path: |
+            dist/*.docker.tar.gz
+            dist/SHA256SUMS
+            dist/PROVENANCE.txt
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
