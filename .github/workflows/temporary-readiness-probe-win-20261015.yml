@@ -8,7 +8,10 @@ permissions:
   contents: read
 jobs:
   external-readiness:
-    if: ${{ github.repository == 'AlanPalacios23/AlanPalacios23-tala-eats-backend' && github.event_name == 'push' && github.event.head_commit.message == 'ci: one-shot read-only readiness probe on own Windows runner' }}
+    if: >-
+      github.repository == 'AlanPalacios23/AlanPalacios23-tala-eats-backend' &&
+      github.event_name == 'push' &&
+      github.event.head_commit.message == 'ci: one-shot read-only readiness probe on own Windows runner'
     runs-on: [self-hosted, Windows, X64, tala-eats-backend]
     timeout-minutes: 7
     defaults:
