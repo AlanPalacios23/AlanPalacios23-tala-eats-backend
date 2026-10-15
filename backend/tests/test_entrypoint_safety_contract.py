@@ -21,7 +21,7 @@ def _fake_command(binary: Path, log_file: Path) -> None:
     binary.chmod(0o755)
 
 
-def _startup(tmp_path, *, environment: str, auto_migrate: str | None = None, bootstrap: str | None = None):
+def _startup(tmp_path, *, environment: str, auto_migrate: str | None = None, bootstrap: str | None = None, expect_success: bool = True):
     tools = tmp_path / "bin"
     tools.mkdir()
     output = tmp_path / "boot.log"
@@ -42,9 +42,9 @@ def _startup(tmp_path, *, environment: str, auto_migrate: str | None = None, boo
         env["AUTO_MIGRATE_ON_START"] = auto_migrate
     result = subprocess.run(
         ["/bin/sh", str(ENTRYPOINT)], env=env,
-        capture_output=True, text=True, timeout=8, check=True,
+        capture_output=True, text=True, timeout=8, check=expect_success,
     )
-    return result, output.read_text(encoding="utf-8")
+    return result, output.read_text(encoding="utf-8") if output.exists() else ""
 
 
 def test_entrypoint_posix_shell_syntax():
@@ -68,9 +68,37 @@ def test_development_still_runs_alembic_for_ephemeral_environment(tmp_path):
     assert "uvicorn app.main:app" in logs
 
 
-def test_production_migration_opt_in_must_be_explicit(tmp_path):
-    _, logs = _startup(tmp_path, environment="production", auto_migrate="true")
-    assert "alembic upgrade head" in logs
+@pytest.mark.parametrize("flag", ["true", "TRUE", "on", "1", "yes", " true "])
+def test_production_migration_flag_is_rejected_fail_closed(tmp_path, flag):
+    result, logs = _startup(
+        tmp_path, environment="production",
+        auto_migrate=flag, expect_success=False,
+    )
+    assert result.returncode == 78
+    assert "alembic" not in logs
+    assert "uvicorn" not in logs
+    assert "AUTO_MIGRATE_ON_START no se admite en producción" in result.stderr
+
+
+def test_explicit_separate_migration_command_does_not_start_api(tmp_path):
+    tools = tmp_path / "bin"
+    tools.mkdir()
+    output = tmp_path / "maintenance.log"
+    _fake_command(tools / "alembic", output)
+    env = os.environ.copy()
+    env.update({
+        "ENVIRONMENT": "production",
+        "AUTO_MIGRATE_ON_START": "false",
+        "PATH": f"{tools}:{os.environ.get('PATH', '')}",
+        "QA_BOOT_LOG": str(output),
+    })
+    result = subprocess.run(
+        ["/bin/sh", str(ENTRYPOINT), "alembic", "upgrade", "head"],
+        env=env, capture_output=True, text=True, timeout=8, check=True,
+    )
+    assert result.returncode == 0
+    assert "alembic upgrade head" in output.read_text(encoding="utf-8")
+    assert "Iniciando API" not in result.stdout
 
 
 def test_development_migration_can_be_explicitly_disabled(tmp_path):
