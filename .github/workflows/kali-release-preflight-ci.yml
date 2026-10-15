@@ -6,6 +6,7 @@ on:
     paths:
       - 'scripts/kali_release_inventory_readonly.sh'
       - 'scripts/kali_compose_topology_readonly.py'
+      - 'scripts/kali_release_candidate_plan_readonly.py'
       - 'docs/KALI_GITHUB_RELEASE_ROLLBACK.md'
       - '.github/workflows/kali-release-preflight-ci.yml'
   push:
@@ -33,8 +34,9 @@ jobs:
         run: python3 scripts/security_preflight.py --root .
       - name: Python compilación y sanitización de Compose
         run: |
-          python3 -m py_compile scripts/kali_compose_topology_readonly.py
+          python3 -m py_compile scripts/kali_compose_topology_readonly.py scripts/kali_release_candidate_plan_readonly.py
           python3 scripts/kali_compose_topology_readonly.py --self-test
+          python3 scripts/kali_release_candidate_plan_readonly.py --self-test
       - name: Confirmar que no se accede a Kali ni Stripe
         run: |
           echo 'READONLY_PREFLIGHT_CI_PASS'
