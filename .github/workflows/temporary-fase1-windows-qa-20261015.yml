@@ -1,0 +1,116 @@
+name: TALA EATS | Fase 1 P0 QA Windows temporal
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/temporary-fase1-windows-qa-20261015.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  phase1-windows:
+    if: >-
+      github.repository == 'AlanPalacios23/AlanPalacios23-tala-eats-backend' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.head_commit.message == 'ci: authorized one-shot phase1 isolated Windows QA'
+    runs-on: [self-hosted, Windows, X64, tala-eats-backend]
+    timeout-minutes: 100
+    defaults:
+      run:
+        shell: powershell
+    env:
+      ENVIRONMENT: development
+      DEBUG: 'false'
+      DATABASE_URL: 'sqlite://'
+      REDIS_URL: ''
+      JWT_SECRET: 'phase1-qa-synthetic-secret-must-not-exist-in-production'
+      SEED_DEMO_DATA: 'true'
+      REQUIRE_SMTP: 'false'
+      STRIPE_ENABLED: 'false'
+      STRIPE_CONNECT_ENABLED: 'false'
+      STRIPE_CONNECT_SELF_SERVICE_ENABLED: 'false'
+      STRIPE_SECRET_KEY: ''
+      STRIPE_PUBLISHABLE_KEY: ''
+      STRIPE_WEBHOOK_SECRET: ''
+      STRIPE_CONNECT_WEBHOOK_SECRET: ''
+      MERCADOPAGO_ACCESS_TOKEN: ''
+      MERCADOPAGO_WEBHOOK_SECRET: ''
+      WITHDRAWALS_PREVIEW_ENABLED: 'false'
+      WITHDRAWALS_EXECUTION_ENABLED: 'false'
+      WITHDRAWALS_LIVE_ENABLED: 'false'
+      FINANCE_V2_SHADOW_ENABLED: 'false'
+      AUTO_MIGRATE_ON_START: 'false'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Checkout SHA revisado de rama Fase 1 (sin credenciales persistidas)
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          clean: true
+          ref: 'a34f71558c305098d980f4ef09b27807e96c170a'
+          path: fase1
+
+      - name: Configurar Python 3.13 en runner propio
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          check-latest: false
+
+      - name: Confirmar SHA y aislamiento NO LIVE
+        working-directory: fase1
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sha = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $sha -ne 'a34f71558c305098d980f4ef09b27807e96c170a') { throw "SHA no coincide" }
+          $ver = python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
+          if ($LASTEXITCODE -ne 0 -or $ver.Trim() -ne '3.13') { throw "Se requiere Python 3.13" }
+          if ($env:DATABASE_URL -ne 'sqlite://' -or $env:REDIS_URL -ne '' -or
+              $env:STRIPE_SECRET_KEY -ne '' -or $env:STRIPE_ENABLED -ne 'false' -or
+              $env:WITHDRAWALS_LIVE_ENABLED -ne 'false' -or $env:WITHDRAWALS_EXECUTION_ENABLED -ne 'false' -or
+              $env:MERCADOPAGO_ACCESS_TOKEN -ne '') { throw "Entorno NO aislado" }
+          Write-Host "FASE1_PINNED_SHA_AND_ISOLATION_PASS: $sha"
+
+      - name: Crear venv y dependencias sintéticas
+        working-directory: fase1
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m venv .venv-fase1
+          if ($LASTEXITCODE -ne 0) { throw "venv FAIL" }
+          & .\.venv-fase1\Scripts\python.exe -m pip install --disable-pip-version-check -r backend\requirements-dev.txt
+          if ($LASTEXITCODE -ne 0) { throw "pip FAIL" }
+          $env:PYTHONPATH = (Resolve-Path .\backend).Path
+          & .\.venv-fase1\Scripts\python.exe scripts\security_preflight.py --root .
+          if ($LASTEXITCODE -ne 0) { throw "preflight FAIL" }
+          Write-Host "FASE1_DEPS_AND_SECRET_SCAN_PASS"
+
+      - name: Tests Fase 1 enfocados (SQLite Windows)
+        working-directory: fase1
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:PYTHONPATH = (Resolve-Path .\backend).Path
+          Push-Location backend
+          try {
+            & ..\.venv-fase1\Scripts\python.exe -m pytest -q tests\test_checkout_reference_integrity_phase1.py tests\test_proxy_rate_identity_phase1.py tests\test_legacy_finance_production_block_phase1.py --tb=short
+            if ($LASTEXITCODE -ne 0) { throw "FASE1_FOCUSED_TESTS_FAIL" }
+            Write-Host "FASE1_FOCUSED_TESTS_PASS"
+          } finally { Pop-Location }
+
+      - name: Suite pytest completa de regresión (POSIX marcado SKIP en Windows)
+        working-directory: fase1
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:PYTHONPATH = (Resolve-Path .\backend).Path
+          Push-Location backend
+          try {
+            & ..\.venv-fase1\Scripts\python.exe -m pytest -q --tb=short
+            if ($LASTEXITCODE -ne 0) { throw "FASE1_FULL_TESTS_FAIL" }
+            Write-Host "FASE1_FULL_TESTS_WINDOWS_PASS_LINUX_POSIX_PENDING"
+          } finally { Pop-Location }
+
+      - name: Estado final no productivo
+        run: |
+          Write-Host 'QA Windows aislado. No autoriza despliegue, Stripe LIVE ni merge.'
+          Write-Host 'Pendiente: tests POSIX Linux, PG16/Redis8, revisión Caddy y QA de apps.'
