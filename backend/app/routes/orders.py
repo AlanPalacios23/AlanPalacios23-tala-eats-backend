@@ -1,5 +1,7 @@
 from decimal import Decimal
 from datetime import datetime, timezone
+import hashlib
+import hmac
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -106,6 +108,90 @@ def payment_methods(db: Session = Depends(get_db)):
     }
 
 
+def _checkout_fingerprint(payload: schemas.OrderCreate) -> str:
+    """HMAC of the validated checkout intent, not of mutable price/stock.
+
+    Includes gift card codes, scheduled time, item options and every other input
+    accepted by OrderCreate. Store only the HMAC, never the raw intent/secret.
+    """
+    canonical = json.dumps(
+        payload.model_dump(mode="json"), sort_keys=True,
+        ensure_ascii=False, separators=(",", ":"),
+    ).encode("utf-8")
+    return hmac.new(settings.jwt_secret.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+
+
+def _utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def _assert_same_order_reference(
+    db: Session, existing: models.Order, payload: schemas.OrderCreate,
+) -> None:
+    """A reused reference must prove the same original purchase or return 409.
+
+    New orders have a durable HMAC written within the order transaction.
+    Existing legacy orders have no stored fingerprint, so use a conservative
+    persisted-fields comparison and fail closed for legacy gift-card redemptions.
+    """
+    event = db.scalar(
+        select(models.OrderEvent)
+        .where(models.OrderEvent.order_id == existing.id,
+               models.OrderEvent.status == "received")
+        .order_by(models.OrderEvent.id)
+        .limit(1)
+    )
+    if event:
+        try:
+            saved = json.loads(event.metadata_json or "{}")
+            fingerprint = saved.get("checkout_intent_hmac")
+        except (TypeError, ValueError, AttributeError):
+            fingerprint = None
+        if fingerprint is not None:
+            if (isinstance(fingerprint, str)
+                    and hmac.compare_digest(fingerprint, _checkout_fingerprint(payload))):
+                return
+            raise HTTPException(409, "La referencia del pedido ya se uso con una compra diferente")
+
+    # Legacy orders did not persist the gift-card code or original full intent.
+    # Returning such an order on retry would claim unverifiable equivalence.
+    if existing.payment_method == "gift_card":
+        raise HTTPException(409, "Referencia de gift card anterior; consulta tus pedidos")
+
+    saved_items = sorted(
+        (item.menu_item_id, item.quantity, item.options_snapshot or "")
+        for item in existing.items
+    )
+    incoming_items = sorted(
+        (item.menu_item_id, item.quantity, item.options or "")
+        for item in payload.items
+    )
+    equal = (
+        existing.restaurant_id == payload.restaurant_id
+        and existing.payment_method == payload.payment_method
+        and existing.order_type == payload.order_type
+        and existing.address == payload.address.strip()
+        and existing.notes == payload.notes.strip()
+        and Decimal(existing.tip) == Decimal(payload.tip)
+        and existing.coupon_code == payload.coupon_code.upper().strip()
+        and existing.group_code == payload.group_code.strip()
+        and existing.invoice_requested == payload.invoice_requested
+        and existing.invoice_tax_id == payload.invoice_tax_id
+        and existing.recipient_name == payload.recipient_name.strip()
+        and existing.recipient_phone == payload.recipient_phone.strip()
+        and existing.gift_message == payload.gift_message.strip()
+        and existing.corporate_account_id == payload.corporate_account_id
+        and _utc(existing.scheduled_for) == _utc(payload.scheduled_for)
+        and existing.delivery_lat == payload.delivery_lat
+        and existing.delivery_lng == payload.delivery_lng
+        and saved_items == incoming_items
+    )
+    if not equal:
+        raise HTTPException(409, "La referencia del pedido ya se uso con una compra diferente")
+
+
 @router.post("",response_model=schemas.OrderPublic,status_code=201)
 def create_order(payload:schemas.OrderCreate,user:models.User=Depends(require_role("customer","admin")),db:Session=Depends(get_db)):
     if (settings.is_production and settings.require_online_payments
@@ -119,6 +205,7 @@ def create_order(payload:schemas.OrderCreate,user:models.User=Depends(require_ro
     if payload.client_reference:
         existing=db.scalar(select(models.Order).where(models.Order.user_id==user.id,models.Order.client_reference==payload.client_reference).options(*order_options()))
         if existing:
+            _assert_same_order_reference(db, existing, payload)
             return existing
     restaurant=db.get(models.Restaurant,payload.restaurant_id)
     if not restaurant:
@@ -266,7 +353,13 @@ def create_order(payload:schemas.OrderCreate,user:models.User=Depends(require_ro
     if payload.payment_method not in {"stripe", "mercadopago"}:
         db.add(models.Notification(user_id=restaurant.owner_id, kind="restaurant_order",
                                    title="Nuevo pedido", message=f"Pedido #{order.id} recibido en {restaurant.name}."))
-    db.add(models.OrderEvent(order_id=order.id,status="received",actor_user_id=user.id,metadata_json='{"source":"checkout"}'))
+    initial_event = {"source": "checkout"}
+    if payload.client_reference:
+        initial_event["checkout_intent_hmac"] = _checkout_fingerprint(payload)
+    db.add(models.OrderEvent(
+        order_id=order.id, status="received", actor_user_id=user.id,
+        metadata_json=json.dumps(initial_event, sort_keys=True),
+    ))
     post_order_ledger(db,order)
     if feature_enabled(db, "security.fraud_v14", user_id=user.id, role="customer", default=True):
         flag_order_if_needed(db, order)
@@ -281,6 +374,7 @@ def create_order(payload:schemas.OrderCreate,user:models.User=Depends(require_ro
                 .options(*order_options())
             )
             if existing:
+                _assert_same_order_reference(db, existing, payload)
                 return existing
         raise
     publish_order_event(order.id,"order.created",{"status":order.status,"payment_status":order.payment_status})
