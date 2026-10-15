@@ -58,9 +58,10 @@ app.add_middleware(RequestSizeLimitMiddleware)
 app.add_middleware(RequestContextMiddleware)
 
 from .routes import stripe_payments
+from .routes import finance_v2
 from .routes import withdrawals
 from . import native_push
-for router in [auth.router, restaurants.router, orders.router, owner.router, driver.router, admin.router, platform.router, payments.router, stripe_payments.router, withdrawals.router, native_push.router, uploads.router, operations.router, v9.router, v10.router, v11.router, resilience.router]:
+for router in [auth.router, restaurants.router, orders.router, owner.router, driver.router, admin.router, platform.router, payments.router, stripe_payments.router, withdrawals.router, native_push.router, finance_v2.router, uploads.router, operations.router, v9.router, v10.router, v11.router, resilience.router]:
     app.include_router(router)
 
 try:
