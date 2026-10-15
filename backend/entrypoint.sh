@@ -12,12 +12,18 @@ fi
 # Otherwise ENVIRONMENT=PRODUCTION could silently auto-migrate production.
 environment_normalized=$(printf '%s' "${ENVIRONMENT:-development}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
 if [ "$environment_normalized" = "production" ]; then
-  if [ "${AUTO_MIGRATE_ON_START:-false}" = "true" ]; then
-    echo "[Tala Eats] AVISO: migración automática productiva autorizada explícitamente"
-    alembic upgrade head
-  else
-    echo "[Tala Eats] Migraciones automáticas deshabilitadas en producción"
-  fi
+  # The startup path never performs production migrations, including when an
+  # older release environment still carries AUTO_MIGRATE_ON_START=true.
+  # Refuse a contradictory configuration rather than silently starting with
+  # an unexpected schema. Explicit CLI maintenance commands are handled above.
+  migrate_flag=$(printf '%s' "${AUTO_MIGRATE_ON_START:-false}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+  case "$migrate_flag" in
+    1|true|yes|on)
+      echo "[Tala Eats] ERROR: AUTO_MIGRATE_ON_START no se admite en producción; use un job de migración separado y aprobado" >&2
+      exit 78
+      ;;
+  esac
+  echo "[Tala Eats] Migraciones automáticas deshabilitadas en producción"
 elif [ "${AUTO_MIGRATE_ON_START:-true}" = "true" ]; then
   echo "[Tala Eats] Aplicando migraciones locales/de QA..."
   alembic upgrade head
