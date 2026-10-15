@@ -329,8 +329,14 @@ def live_order(order_id: int, user: models.User = Depends(get_current_user), db:
     # outside an active, authorized delivery even if the mobile UI ignores us.
     driver_info = public_order.get("driver_info")
     if isinstance(driver_info, dict):
-        driver_info.pop("current_lat", None)
-        driver_info.pop("current_lng", None)
+        # Preserve the mobile client's legacy map contract for authorized,
+        # active deliveries, but replace possibly delayed DB GPS with Redis.
+        if position is not None:
+            driver_info["current_lat"] = position["lat"]
+            driver_info["current_lng"] = position["lng"]
+        else:
+            driver_info.pop("current_lat", None)
+            driver_info.pop("current_lng", None)
     return {
         "order": public_order,
         "timeline": [{"status": e.status, "at": e.created_at, "metadata": e.metadata_json} for e in events],
