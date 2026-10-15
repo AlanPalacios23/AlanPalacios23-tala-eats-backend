@@ -35,22 +35,22 @@ La salida incluye nombres de servicios, proyecto y rutas Compose (no claves ni c
 
 ## Descubrimiento B0 del Compose activo (15-oct-2026)
 El operador ejecutó el inventario de sólo lectura desde Kali con resultado PASS:
-- Proyecto \`talaeats-v3\`, contenedores \`backend\`, \`worker\`, \`db\`, \`redis\`, \`frontend\`, \`caddy\`.
-- Compose: \`/home/alan/talaeats-releases/TalaEats-Web-v1.6.4-CONNECT-SELF-SERVICE-HF1-LIVE/docker-compose.cloudflare.yml\`.
-- API imagen declarada \`talaeats-v3-backend\` e ID \`sha256:3b1d89ec510d6768eacd27122a32e3bf0feffbe4a7937911f0f4defeda062360\`.
-- Worker imagen declarada \`talaeats-v3-worker\` (aún sin inspeccionar Dockerfile/contexto).
-- Volumen de fotos adjunto a API: \`talaeats-v3_talaeats_media\` en \`/app/media\`.
-- PostgreSQL y Redis sanos, versión backend 1.6.4, Alembic \`f21i00000001 (head)\`, espacio libre 822 GB observado.
+- Proyecto `talaeats-v3`, contenedores `backend`, `worker`, `db`, `redis`, `frontend`, `caddy`.
+- Compose: `/home/alan/talaeats-releases/TalaEats-Web-v1.6.4-CONNECT-SELF-SERVICE-HF1-LIVE/docker-compose.cloudflare.yml`.
+- API imagen declarada `talaeats-v3-backend` e ID `sha256:3b1d89ec510d6768eacd27122a32e3bf0feffbe4a7937911f0f4defeda062360`.
+- Worker imagen declarada `talaeats-v3-worker` (aún sin inspeccionar Dockerfile/contexto).
+- Volumen de fotos adjunto a API: `talaeats-v3_talaeats_media` en `/app/media`.
+- PostgreSQL y Redis sanos, versión backend 1.6.4, Alembic `f21i00000001 (head)`, espacio libre 822 GB observado.
 
 **Siguiente control, solamente de lectura:** 
 
-\`\`\`bash
+```bash
 cd ~/tala-backend-audit
 git pull --ff-only origin main
 python3 scripts/kali_compose_topology_readonly.py
-\`\`\`
+```
 
-El script consulta únicamente las etiquetas Docker, imágenes, estados, destinos de montajes y campos expresamente permitidos de \`docker compose config --format json\`. **No imprime** variables de entorno, build args, comandos completos, rutas de origen de bind mounts, claves, .env, Stripe ni registros DB. Ejecutar desde Kali cuando pase GitHub CI; revisar la salida antes de compartirla.
+El script consulta únicamente las etiquetas Docker, imágenes, estados, destinos de montajes y campos expresamente permitidos de `docker compose config --format json`. **No imprime** variables de entorno, build args, comandos completos, rutas de origen de bind mounts, claves, .env, Stripe ni registros DB. Ejecutar desde Kali cuando pase GitHub CI; revisar la salida antes de compartirla.
 
 Faltan verificar los contextos de compilación y las opciones Compose exactas para API/worker, pruebas de backup/restore y compatibilidad real de esquemas; estos pasos continúan pendientes.
 
