@@ -107,6 +107,21 @@ jobs:
       - name: Contratos financieros con PostgreSQL y Redis reales
         run: PYTHONPATH=. python scripts/ci_finance_pg_redis.py
 
+      - name: Fase 1 NO-GO bancario y proveedores LIVE (lectura de flags)
+        run: |
+          python - <<'PY'
+          from app.config import settings
+          assert settings.environment == "development"
+          assert not settings.stripe_enabled
+          assert not settings.stripe_connect_enabled
+          assert not settings.withdrawals_preview_enabled
+          assert not settings.withdrawals_execution_enabled
+          assert not settings.withdrawals_live_enabled
+          assert not settings.stripe_secret_key
+          assert not settings.mercado_pago_access_token
+          print("F1_FINANCE_NO_GO_PASS: no provider, transfer, payout or bank movement authorized")
+          PY
+
       - name: Suite de regresion SQLite + Stripe simulado (sin dinero)
         run: python -m pytest -q --disable-warnings
 
