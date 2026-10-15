@@ -170,17 +170,21 @@ runtime_metrics = RuntimeMetrics()
 
 
 def _client_ip(request: Request) -> str:
-    if settings.trust_proxy_headers:
-        cf_ip = request.headers.get("cf-connecting-ip", "").strip()
-        if cf_ip:
-            return cf_ip[:80]
-        forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-        if forwarded:
-            return forwarded[:80]
-        real_ip = request.headers.get("x-real-ip", "").strip()
-        if real_ip:
-            return real_ip[:80]
-    return (request.client.host if request.client else "unknown")[:80]
+    """Use the ASGI peer, NEVER raw visitor-controlled forwarding headers.
+
+    Uvicorn may rewrite scope["client"] only when the immediate proxy is in
+    UVICORN_FORWARDED_ALLOW_IPS. Caddy must strip/overwrite client-supplied
+    X-Forwarded-For. Trusting CF-Connecting-IP here would bypass that gate.
+    """
+    from ipaddress import ip_address
+
+    peer = request.client.host if request.client else ""
+    try:
+        return ip_address(peer).compressed
+    except ValueError:
+        # A malformed forwarded value must not create unlimited rate-limit
+        # identities via arbitrary strings. Fail closed on a shared bucket.
+        return "unknown"
 
 
 def _rate_policy(request: Request) -> tuple[str, int]:
