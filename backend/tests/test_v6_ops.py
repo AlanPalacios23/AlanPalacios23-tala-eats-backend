@@ -25,7 +25,8 @@ def test_onboarding_dispute_referral_and_financial_fields():
         # Fresh customer can apply to become a driver without bypassing approval.
         email='partner.v6@example.com';reg=c.post('/api/v1/auth/register',json={'name':'Partner V6','email':email,'password':'Partner123!'});assert reg.status_code in {201,409},reg.text
         partner=login(c,email,'Partner123!')
-        application=c.post('/api/v1/operations/onboarding',headers=partner,json={'entity_type':'driver','vehicle':'Motocicleta','documents':['ine://demo'],'payout_account_ref':'provider-token-demo'});assert application.status_code==201,application.text;aid=application.json()['id']
+        uploaded=c.post('/api/v1/uploads/onboarding-document',headers=partner,files={'file':('qa-driver.pdf',b'%PDF-1.7\\nsynthetic', 'application/pdf')});assert uploaded.status_code==200,uploaded.text
+        application=c.post('/api/v1/operations/onboarding',headers=partner,json={'entity_type':'driver','vehicle':'Motocicleta','documents':[uploaded.json()['url']],'payout_account_ref':'provider-token-demo'});assert application.status_code==201,application.text;aid=application.json()['id']
         admin=login(c,'admin@talaeats.mx','Admin123!')
         approve=c.patch(f'/api/v1/operations/admin/onboarding/{aid}',headers=admin,json={'status':'approved','notes':'pytest'});assert approve.status_code==200,approve.text
 
