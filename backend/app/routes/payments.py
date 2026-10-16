@@ -143,7 +143,13 @@ async def mercado_pago_webhook(request: Request, db: Session = Depends(get_db)):
             order.payment_provider_id = str(payment.get("id") or data_id)
             status = str(payment.get("status") or "")
 
-            if status == "approved":
+            # A previously terminal refund or chargeback cannot be resurrected
+            # by a late, duplicated or out-of-order provider notification. The
+            # event remains auditable, but no customer/owner notification, stock
+            # restoration or ledger credit is generated for this stale state.
+            if order.payment_status in {"refunded", "charged_back", "disputed"}:
+                pass
+            elif status == "approved":
                 # Very-late approvals after the local reservation expired are immediately refunded.
                 if order.status == "cancelled" and order.payment_status == "expired":
                     refund_response = await run_in_threadpool(
@@ -180,8 +186,12 @@ async def mercado_pago_webhook(request: Request, db: Session = Depends(get_db)):
                 order.status = "cancelled"
                 order.cancelled_reason = f"Mercado Pago: {status}"
             else:
-                order.payment_status = "pending"
-            publish_after_commit = (order.id, {"payment_status": order.payment_status, "status": order.status})
+                # Pending notifications may arrive after a successful checkout.
+                # Never downgrade an already-paid order on stale pending data.
+                if order.payment_status != "paid":
+                    order.payment_status = "pending"
+            if order.payment_status not in {"refunded", "charged_back", "disputed"}:
+                publish_after_commit = (order.id, {"payment_status": order.payment_status, "status": order.status})
 
     # Persist only after processing succeeds. If Mercado Pago lookup fails, return 5xx so it can retry.
     db.commit()
