@@ -125,3 +125,83 @@ def test_legacy_without_fingerprint_uses_safe_persisted_fields():
             **payload, "address": "Calle falsa 555",
         })
         assert response.status_code == 409
+
+
+def _register_other_customer(client):
+    response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "name": "Usuario de prueba aislado",
+            "email": f"f207-other-{uuid4().hex}@example.com",
+            "password": "OnlySyntheticCustomer123!",
+        },
+    )
+    assert response.status_code == 201, response.text
+    return {
+        "Authorization": "Bearer " + response.json()["access_token"],
+        "X-TalaEats-Client": "customer-mobile",
+    }
+
+
+def test_phase2_same_reference_and_http_key_isolated_between_customers():
+    """A Redis header cannot cache/replay another customer's entire order.
+
+    Two different signed-in users intentionally submit the *same* body,
+    client_reference and Idempotency-Key. Each is allowed their own purchase.
+    We never make Stripe/MP requests or touch a real customer or bank.
+    """
+    with TestClient(app) as client:
+        first_user = _login(client)
+        second_user = _register_other_customer(client)
+        payload = _payload()
+        key = "same-client-reference-" + uuid4().hex
+        payload["client_reference"] = key
+        headers_a = {**first_user, "Idempotency-Key": key}
+        headers_b = {**second_user, "Idempotency-Key": key}
+        with SessionLocal() as db:
+            initial = db.get(models.MenuItem, 1).stock
+        first = _create(client, headers_a, payload)
+        second = _create(client, headers_b, payload)
+        assert first.json()["id"] != second.json()["id"], "Cross-account order response leak"
+        assert first.json()["user_id"] != second.json()["user_id"]
+        assert first.json()["client_reference"] == second.json()["client_reference"] == key
+        # Replaying each scoped key returns its own order only.
+        assert _create(client, headers_a, payload).json()["id"] == first.json()["id"]
+        assert _create(client, headers_b, payload).json()["id"] == second.json()["id"]
+        mine_b = client.get("/api/v1/orders/mine", headers=second_user)
+        assert mine_b.status_code == 200, mine_b.text
+        ids_b = {order["id"] for order in mine_b.json()}
+        assert second.json()["id"] in ids_b
+        assert first.json()["id"] not in ids_b
+        with SessionLocal() as db:
+            matches = db.scalars(
+                select(models.Order).where(models.Order.client_reference == key)
+            ).all()
+            assert len(matches) == 2
+            assert len({row.user_id for row in matches}) == 2
+            assert db.get(models.MenuItem, 1).stock == initial - 2
+
+
+def test_phase2_retry_with_header_body_mismatch_fails_closed():
+    """Persistent PostgreSQL identity still guards changed checkout body."""
+    with TestClient(app) as client:
+        auth = _login(client)
+        payload = _payload()
+        headers = {**auth, "Idempotency-Key": payload["client_reference"]}
+        first = _create(client, headers, payload)
+        for change in (
+            {"address": "Different shipping address"},
+            {"tip": "4.00"},
+            {"items": [{"menu_item_id": 1, "quantity": 2, "options": "asada"}]},
+        ):
+            altered = {**payload, **change}
+            response = client.post("/api/v1/orders", headers=headers, json=altered)
+            assert response.status_code == 409, response.text
+        still_first = _create(client, headers, payload)
+        assert still_first.json()["id"] == first.json()["id"]
+        with SessionLocal() as db:
+            rows = db.scalars(select(models.Order).where(
+                models.Order.user_id == first.json()["user_id"],
+                models.Order.client_reference == payload["client_reference"],
+            )).all()
+            assert len(rows) == 1
