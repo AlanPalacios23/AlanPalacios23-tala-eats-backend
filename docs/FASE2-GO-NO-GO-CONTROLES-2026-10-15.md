@@ -68,6 +68,32 @@ faltan reconciliación real por PSP/identificador y beneficiario, custodia banca
 reembolsos/contracargos, saldos reservados, cash netting y autorización independiente.
 Solo declarar PASS del nuevo gate cuando GitHub Actions termine exitosamente.
 
+### Avance de laboratorio F2.10 — efectivo bajo custodia incierta (sin settlement)
+
+El análisis `qa.phase2_cash_exposure_readonly` consulta únicamente órdenes
+sintéticas de F2.11 con transacción `READ ONLY` en PostgreSQL16/Redis8
+efímeros. Diferencia una entrega activa, un pedido pickup y una entrega
+efectivamente registrada: los pedidos no entregados no se consideran efectivo
+cobrado; un pickup no convierte al repartidor en custodio de dinero.
+
+Regresiones en `test_phase2_cash_exposure_readonly.py` comprueban coincidencia
+exacta de identidad de cobrador y driver, importes, orden y créditos únicos,
+estatus confirmado en fuente simulada, netting **solo como hipótesis** entre
+créditos del **mismo beneficiario**, exclusión de créditos pendientes, tope
+por efectivo y protección de entregas activas. El límite usado es **solo QA**
+y no una cifra autorizada para negocio ni regla de despacho desplegada.
+
+La única salida es `NO_GO_DATA_INTEGRITY` o
+`PENDING_CUSTODY_PSP_LEGAL_APPROVAL`. El resultado siempre mantiene
+`payout_authorized=false` y `execute_netting=false`; un estado `settled`
+suministrado como texto no autentica por sí mismo saldo PSP ni banco.
+
+**F2.10 sigue [ ]**: faltan custodia real, ledger por colector verificado,
+conciliación de fondos PSP con identificadores autenticados, consentimiento
+contractual/fiscal MX, controles de saldo real y revisión de seguridad/
+riesgo antes de implantar límites sobre futuras ofertas de efectivo. No hay
+retiros, descuentos automáticos, cambios en app/backend operativo ni LIVE.
+
 ## F2.11 — Certificación comercial de política 1.6.2
 - 15% comisión sobre productos netos; 7% del subtotal neto para el cliente tanto tarjeta como efectivo, tope $25.
 - Envío $35 para primeros 2 km; +$5 por km/facción proporcional. Repartidor $32 primeros 2 km; +$4 por km/facción proporcional.
