@@ -33,7 +33,10 @@ def upsert_alert(db: Session, key: str, severity: str, component: str, message: 
         admins = db.execute(select(models.User.email, models.User.name).where(models.User.role == "admin", models.User.is_active.is_(True))).all()
         for email, name in admins:
             enqueue_email(db, email, f"[TALA EATS] Alerta {severity.upper()}: {component}", f"Hola {name},\n\n{message}\n\nDetalle: {json.dumps(detail, ensure_ascii=False, default=str)}\n\nRevisa /api/v1/resilience/status y /alerts.")
-        row.notified_at = instant if admins else None
+        # Enqueuing email is NOT evidence of SMTP delivery or human receipt.
+        # Leave notified_at unset until a separately verified delivery/ACK path
+        # exists; F2.06 must remain NO-GO without an observed human alert.
+        row.notified_at = None
     return row
 
 
