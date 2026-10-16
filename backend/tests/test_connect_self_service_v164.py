@@ -111,3 +111,100 @@ def test_bank_link_not_authorizing_payout(user_setup,monkeypatch):
     with pytest.raises(HTTPException):
         w.request_withdrawal('restaurant',x.restaurant.id,w.RequestPayout(amount_cents=100,totp='123456'),
                              'abc12345678901234567',x.owner,x.db)
+
+
+# F2.08 TEST-only defensive bank/KYC matrix. Provider is always mocked.
+# These regressions do NOT demonstrate real Stripe Connect TEST onboarding.
+@pytest.mark.parametrize("bank_list, expected", [
+    ([{"object": "bank_account", "id": "ba_test_one", "country": "MX",
+       "currency": "mxn", "status": "verified", "last4": "1234"},
+      {"object": "bank_account", "id": "ba_test_two", "country": "MX",
+       "currency": "mxn", "status": "verified", "last4": "5678"}], "review_required"),
+    ([{"object": "bank_account", "id": "ba_test_wrong_country",
+       "country": "US", "currency": "usd", "status": "verified",
+       "last4": "1234", "account_number": "SYNTHETIC_PRIVATE_NUMBER"}], "review_required"),
+    ([{"object": "bank_account", "id": "ba_test_untrusted",
+       "country": "MX", "currency": "mxn", "status": "errored",
+       "last4": "1234"}], "review_required"),
+    ([{"object": "bank_account", "id": "ba_test_bad_last4",
+       "country": "MX", "currency": "mxn", "status": "verified",
+       "last4": "12ab"}], "review_required"),
+    ([{"object": "card", "id": "card_test_not_bank"}], "not_linked"),
+])
+def test_f208_ambiguous_or_unverified_bank_never_enables_withdrawal(
+    user_setup, bank_list, expected
+):
+    x = user_setup
+    w.connect_self_service_onboarding('restaurant', x.restaurant.id, x.owner, x.db)
+    x.api.accounts.retrieve.return_value = {
+        "id": ACCOUNT_ID, "country": "MX",
+        "details_submitted": True, "payouts_enabled": True,
+        "capabilities": {"transfers": "active"},
+        "settings": {"payouts": {"schedule": {"interval": "manual"}}},
+        "requirements": {"currently_due": [], "past_due": []},
+    }
+    x.api.accounts.list_external_accounts.return_value = {
+        "has_more": False, "data": bank_list
+    }
+    status = w.connect_self_service_status('restaurant', x.restaurant.id, x.owner, x.db)
+    assert status["bank"]["status"] == expected
+    assert status["can_withdraw"] is False
+    assert "withdrawable_cents" not in status
+    assert "SYNTHETIC_PRIVATE_NUMBER" not in str(status)
+    assert "ba_test" not in str(status)
+
+
+def test_f208_pagination_of_bank_accounts_forces_manual_review(user_setup):
+    x = user_setup
+    w.connect_self_service_onboarding('restaurant', x.restaurant.id, x.owner, x.db)
+    x.api.accounts.list_external_accounts.return_value = {
+        "has_more": True, "data": []
+    }
+    status = w.connect_self_service_status('restaurant', x.restaurant.id, x.owner, x.db)
+    assert status["bank"]["status"] == "review_required"
+    assert status["can_withdraw"] is False
+
+
+def test_f208_provider_timeout_does_not_fake_kyc_verified(user_setup):
+    x = user_setup
+    w.connect_self_service_onboarding('restaurant', x.restaurant.id, x.owner, x.db)
+    x.api.accounts.retrieve.side_effect = TimeoutError("qa network outage only")
+    with pytest.raises(HTTPException) as exc:
+        w.connect_self_service_status('restaurant', x.restaurant.id, x.owner, x.db)
+    assert exc.value.status_code == 503
+    assert settings.withdrawals_execution_enabled is False
+
+
+def test_f208_nonmanual_provider_payout_schedule_cannot_be_verified(user_setup):
+    x = user_setup
+    w.connect_self_service_onboarding('restaurant', x.restaurant.id, x.owner, x.db)
+    x.api.accounts.retrieve.return_value = {
+        "id": ACCOUNT_ID, "country": "MX", "details_submitted": True,
+        "payouts_enabled": True, "capabilities": {"transfers": "active"},
+        "settings": {"payouts": {"schedule": {"interval": "daily"}}},
+        "requirements": {"currently_due": [], "past_due": []},
+    }
+    status = w.connect_self_service_status('restaurant', x.restaurant.id, x.owner, x.db)
+    assert status["status"] == "pending_verification"
+    assert status["can_withdraw"] is False
+
+
+def test_f208_unverified_restaurant_cannot_start_connect(user_setup):
+    x = user_setup
+    x.restaurant.verification_status = "pending"
+    x.db.commit()
+    with pytest.raises(HTTPException) as exc:
+        w.connect_self_service_onboarding('restaurant', x.restaurant.id, x.owner, x.db)
+    assert exc.value.status_code == 409
+    x.api.accounts.create.assert_not_called()
+
+
+def test_f208_wrong_provider_account_identity_denied(user_setup):
+    x = user_setup
+    w.connect_self_service_onboarding('restaurant', x.restaurant.id, x.owner, x.db)
+    x.api.accounts.retrieve.return_value = {
+        "id": "acct_DIFFERENT_MOCK", "country": "MX", "payouts_enabled": True
+    }
+    with pytest.raises(HTTPException) as exc:
+        w.connect_self_service_status('restaurant', x.restaurant.id, x.owner, x.db)
+    assert exc.value.status_code == 409
