@@ -47,7 +47,7 @@ def send_pending_emails(db: Session, limit: int = 20) -> tuple[int, int]:
     try:
         client = _smtp_connection()
     except Exception as exc:
-        error = str(exc)[:500]
+        error = "smtp_connection_error:" + type(exc).__name__[:80]
         for row in rows:
             row.attempts += 1
             row.status = "retry"
@@ -72,7 +72,7 @@ def send_pending_emails(db: Session, limit: int = 20) -> tuple[int, int]:
                 sent += 1
             except Exception as exc:
                 row.status = "retry"
-                row.last_error = str(exc)[:500]
+                row.last_error = "smtp_delivery_error:" + type(exc).__name__[:80]
                 failed += 1
     finally:
         try:
