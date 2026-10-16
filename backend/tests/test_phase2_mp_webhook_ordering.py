@@ -62,7 +62,7 @@ def notify(client, order, *, event="n-1", state="approved", paid_amount=None):
             "transaction_amount": float(paid_amount if paid_amount is not None else order["total"]),
             "status": state}
     return data, {
-        "path": "/api/v1/payments/mercadopago/webhook?type=payment&data.id=" + payment_id,
+        "url": "/api/v1/payments/mercadopago/webhook?type=payment&data.id=" + payment_id,
         "json": {"id": event, "date_created": "2026-10-15T20:00:00Z",
                  "action": "payment.updated", "type": "payment",
                  "data": {"id": payment_id}},
