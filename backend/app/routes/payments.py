@@ -147,7 +147,8 @@ async def mercado_pago_webhook(request: Request, db: Session = Depends(get_db)):
             # by a late, duplicated or out-of-order provider notification. The
             # event remains auditable, but no customer/owner notification, stock
             # restoration or ledger credit is generated for this stale state.
-            if order.payment_status in {"refunded", "charged_back", "disputed"}:
+            was_terminal = order.payment_status in {"refunded", "charged_back", "disputed"}
+            if was_terminal:
                 pass
             elif status == "approved":
                 # Very-late approvals after the local reservation expired are immediately refunded.
@@ -190,7 +191,7 @@ async def mercado_pago_webhook(request: Request, db: Session = Depends(get_db)):
                 # Never downgrade an already-paid order on stale pending data.
                 if order.payment_status != "paid":
                     order.payment_status = "pending"
-            if order.payment_status not in {"refunded", "charged_back", "disputed"}:
+            if not was_terminal:
                 publish_after_commit = (order.id, {"payment_status": order.payment_status, "status": order.status})
 
     # Persist only after processing succeeds. If Mercado Pago lookup fails, return 5xx so it can retry.
