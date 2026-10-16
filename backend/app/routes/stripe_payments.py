@@ -142,7 +142,12 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
                 order.payment_provider_id = str(obj["id"])
                 order.payment_preference_id = str(obj["id"])
             if typ == "payment_intent.succeeded":
-                if order.status == "cancelled" or order.payment_status in {"expired", "refunded"}:
+                if order.payment_status in {"refunded", "disputed"}:
+                    # A late success must never create a second refund or
+                    # override a fully reversed/disputed payment. The provider
+                    # event remains durably recorded for reconciliation.
+                    pass
+                elif order.status == "cancelled" or order.payment_status == "expired":
                     # Do not convert an expired/cancelled order into a deliverable one.
                     # The webhook is retried on refund failure.
                     client = stripe_client()
@@ -182,16 +187,21 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
                 if refunded_cents < 0 or refunded_cents > total_cents:
                     raise HTTPException(409, "Monto de reembolso inconsistente")
                 previous = money_cents(order.refunded_amount or 0)
-                if refunded_cents > previous:
-                    delta = Decimal(refunded_cents - previous) / Decimal(100)
-                    post_refund_ledger(db, order, delta, idempotency_suffix=f"stripe-event-{event_id}")
-                    order.refunded_amount = Decimal(refunded_cents) / Decimal(100)
-                if refunded_cents == total_cents:
-                    order.payment_status = "refunded"
-                    if order.status not in {"cancelled", "delivered"}:
+                if refunded_cents >= previous:
+                    # A stale lower-cumulative charge.refunded event must not
+                    # undo a newer/full refund. Disputes remain held for
+                    # independent resolution even if refunds are also observed.
+                    if refunded_cents > previous:
+                        delta = Decimal(refunded_cents - previous) / Decimal(100)
+                        post_refund_ledger(db, order, delta, idempotency_suffix=f"stripe-event-{event_id}")
+                        order.refunded_amount = Decimal(refunded_cents) / Decimal(100)
+                    if order.payment_status != "disputed":
+                        if refunded_cents == total_cents:
+                            order.payment_status = "refunded"
+                        elif refunded_cents > 0:
+                            order.payment_status = "partially_refunded"
+                    if refunded_cents == total_cents and order.status not in {"cancelled", "delivered"}:
                         _cancel_unpaid(db, order, "Stripe confirmó reembolso completo")
-                elif refunded_cents > 0:
-                    order.payment_status = "partially_refunded"
                 _event(db, order, "payment.stripe_refund_synced", f"stripe:event:{event_id}:order:{order.id}", {})
                 handled = True
     elif typ == "charge.dispute.created":
