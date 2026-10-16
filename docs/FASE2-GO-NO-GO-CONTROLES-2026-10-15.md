@@ -94,6 +94,24 @@ contractual/fiscal MX, controles de saldo real y revisión de seguridad/
 riesgo antes de implantar límites sobre futuras ofertas de efectivo. No hay
 retiros, descuentos automáticos, cambios en app/backend operativo ni LIVE.
 
+### F2.07 — Stripe: reembolsos acumulativos fuera de orden y firma HMAC (QA)
+
+La regresión `test_phase2_stripe_refund_ordering.py` protege: después de
+`charge.refunded` total, un evento de menor `amount_refunded` NO puede
+degradar `refunded` a `partially_refunded`; una disputa `disputed`
+permanece bajo revisión si llega un reembolso parcial; un
+`payment_intent.succeeded` tardío no vuelve a solicitar reembolso cuando
+ese cargo ya figura como totalmente reembolsado. Los cambios sí mantienen
+la auditoría y el ledger compensatorio cuando el acumulado **aumenta**.
+
+La firma Stripe se verifica también usando el SDK de producción con cuerpo
+y cabecera HMAC calculados localmente y `whsec` **sintética**. Una alteración
+del mensaje debe recibir HTTP 400. Esto comprueba validación criptográfica
+local, **NO** eventos recibidos de Stripe TEST o Stripe LIVE, ni conciliación
+de depósitos bancarios, reembolsos procesados externamente, KYC o payout.
+
+**F2.07 principal sigue pendiente de evidencias reales TEST/sandbox.**
+
 ### F2.07 — Matriz de regresión de webhooks (simulada, NO sandbox externo)
 
 Se añadió `backend/tests/test_phase2_mp_webhook_ordering.py` para Mercado Pago:
