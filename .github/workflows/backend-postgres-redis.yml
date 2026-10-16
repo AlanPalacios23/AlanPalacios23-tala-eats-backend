@@ -121,3 +121,8 @@ jobs:
         run: python -m qa.phase2_staging_rollback_drill
       - name: Fase 2 precios v1.6.2 y libro de pagos PostgreSQL (sintetico)
         run: python -m qa.phase2_pricing_pg_smoke
+
+      - name: Fase 2 F2.03 guardas de respaldo cifrado (solo datos sinteticos)
+        run: python -m qa.phase2_backup_restore_smoke --self-test
+      - name: Fase 2 F2.03 pg_dump + media AES256 y restore PostgreSQL separado (no Kali)
+        run: python -m qa.phase2_backup_restore_smoke
