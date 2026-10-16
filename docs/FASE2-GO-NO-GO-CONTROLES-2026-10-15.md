@@ -8,6 +8,25 @@ El usuario decidió dejar F1.03 (proxy real Caddy/Cloudflare en Kali) en **stand
 
 **Falta para marcar [x]:** staging independiente persistente o efímero con evidencia de migración **desde el esquema realmente desplegado en Kali**, respaldo restaurado en copia desidentificada, API+worker y 3 apps apuntando al mismo entorno. Una base vacía migrada hasta HEAD no demuestra upgrade de datos históricos.
 
+### Avance de laboratorio F2.03 — respaldo/restauración cifrados (sin Kali)
+
+Se añadió el gate `qa.phase2_backup_restore_smoke`: después de crear un ledger de prueba
+mediante F2.11, `pg_dump` crea un respaldo en formato PostgreSQL custom de la base
+desechable; un archivo media contiene bytes 100% sintéticos. Ambos se cifran con
+GPG AES256, se comprueban hashes SHA-256 de texto claro y cifrado, se eliminan
+los archivos sin cifrar antes de comprobar el descifrado y se restaura PostgreSQL
+en una **segunda base aleatoria** con nombre sujeto a guardas exactas. El ledger
+se compara por cantidad y digest SHA-256, y el archivo multimedia por nombre
+seguro y contenido íntegro. Además, se comprueba que hashes alterados se
+rechacen y que nunca se acepte un nombre arbitrario de base de datos.
+
+Esta prueba **solo certifica un procedimiento sintético en GitHub Actions si
+la ejecución pasa**. No demuestra backups cifrados **fuera de Kali**, acceso a
+copias reales, recuperación de fotos originales, claves operativas, tiempos RTO/RPO
+ni la restauración de una base productiva desidentificada. Por tanto,
+**F2.03 permanece [ ]**, hasta evidencias reales y aprobación separada.
+No copiar claves ni subir respaldos a artefactos públicos.
+
 ## F2.02 — Atestación Kali vs GitHub
 Requerido: versión, SHA Git y hashes de API+worker, imagen, Compose, Alembic y rollback, solo lectura, sin secrets ni cambios de infraestructura. En standby mientras no hay acceso a Kali. Issue #1.
 
