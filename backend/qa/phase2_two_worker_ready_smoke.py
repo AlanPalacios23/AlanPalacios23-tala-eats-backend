@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from urllib.request import urlopen
+from urllib.error import HTTPError
 from pathlib import Path
 
 from app.config import settings
@@ -25,6 +26,9 @@ def require_disposable_environment():
         and not settings.seed_demo_data
         and not settings.stripe_enabled
         and not settings.stripe_connect_enabled
+        and not settings.stripe_secret_key
+        and not settings.stripe_connect_webhook_secret
+        and not settings.withdrawals_preview_enabled
         and not settings.withdrawals_execution_enabled
         and not settings.withdrawals_live_enabled
         and not settings.mercado_pago_access_token
@@ -51,7 +55,16 @@ def main():
                     if response.status == 200 and all(
                         payload.get(k) is True for k in ("ready", "database", "redis")
                     ):
-                        print("F201_TWO_WORKER_LOOPBACK_READY_PASS")
+                        # Role endpoints must reject callers without a session.
+                        for route in ("/api/v1/orders/mine", "/api/v1/owner/orders",
+                                      "/api/v1/driver/dashboard"):
+                            try:
+                                with urlopen("http://127.0.0.1:18181" + route, timeout=3):
+                                    raise AssertionError("F201 unauthorized role endpoint exposed")
+                            except HTTPError as error:
+                                if error.code not in (401, 403):
+                                    raise AssertionError("F201 unauthorized role gate invalid")
+                        print("F201_TWO_WORKER_LOOPBACK_READY_ROLE_GATES_PASS")
                         return
             except (OSError, ValueError):
                 pass
