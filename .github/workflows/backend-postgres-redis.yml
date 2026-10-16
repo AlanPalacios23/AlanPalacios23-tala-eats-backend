@@ -119,6 +119,8 @@ jobs:
         env:
           GITHUB_ACTIONS: 'true'
         run: python -m qa.phase2_staging_rollback_drill
+      - name: F2.01 API real con dos workers y /ready en loopback GitHub (sin Kali)
+        run: python -m qa.phase2_two_worker_ready_smoke
       - name: Fase 2 precios v1.6.2 y libro de pagos PostgreSQL (sintetico)
         run: python -m qa.phase2_pricing_pg_smoke
 
