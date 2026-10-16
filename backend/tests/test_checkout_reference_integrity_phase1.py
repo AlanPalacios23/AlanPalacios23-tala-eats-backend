@@ -132,7 +132,7 @@ def _register_other_customer(client):
         "/api/v1/auth/register",
         json={
             "name": "Usuario de prueba aislado",
-            "email": f"f207-other-{uuid4().hex}@example.invalid",
+            "email": f"f207-other-{uuid4().hex}@example.com",
             "password": "OnlySyntheticCustomer123!",
         },
     )
