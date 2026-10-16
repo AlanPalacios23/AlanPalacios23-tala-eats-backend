@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
@@ -388,6 +388,32 @@ def create_order(payload:schemas.OrderCreate,user:models.User=Depends(require_ro
         raise
     publish_order_event(order.id,"order.created",{"status":order.status,"payment_status":order.payment_status})
     return _load_order(db,order.id)
+
+
+@router.get("/by-reference/{client_reference}", response_model=schemas.OrderPublic)
+def order_by_client_reference(
+    response: Response,
+    client_reference: str = Path(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$"),
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Recover only this signed-in user's own order after a lost POST response.
+
+    An unknown reference and another customer's reference both produce 404.
+    This endpoint is read-only: it does not retry checkout or provider payments.
+    """
+    response.headers["Cache-Control"] = "private, no-store"
+    order = db.scalar(
+        select(models.Order)
+        .where(
+            models.Order.user_id == user.id,
+            models.Order.client_reference == client_reference,
+        )
+        .options(*order_options())
+    )
+    if order is None:
+        raise HTTPException(404, "Pedido no encontrado")
+    return order
 
 
 @router.get("/mine",response_model=list[schemas.OrderPublic])
