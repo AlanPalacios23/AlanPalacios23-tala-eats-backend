@@ -124,6 +124,8 @@ jobs:
 
       - name: Fase 2 F2.09 verificar expectativas ledger vs custodia real (read-only)
         run: python -m qa.phase2_reconciliation_readonly
+      - name: Fase 2 F2.10 efectivo y custodia hipotetica sin escrituras
+        run: python -m qa.phase2_cash_exposure_readonly
       - name: Fase 2 F2.03 guardas de respaldo cifrado (solo datos sinteticos)
         run: python -m qa.phase2_backup_restore_smoke --self-test
       - name: Fase 2 F2.03 pg_dump + media AES256 y restore PostgreSQL separado (no Kali)
