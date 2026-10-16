@@ -48,6 +48,7 @@ def test_repeated_high_alert_does_not_fabricate_receipt_or_duplicate_open_alert(
 
 def test_no_active_admin_means_no_email_and_no_claimed_delivery():
     with SessionLocal() as db:
+        count_before = db.scalar(select(func.count(models.EmailOutbox.id))) or 0
         admins = db.scalars(select(models.User).where(models.User.role == "admin")).all()
         assert admins
         for admin in admins:
@@ -58,7 +59,7 @@ def test_no_active_admin_means_no_email_and_no_claimed_delivery():
         db.commit()
         db.refresh(alert)
         assert alert.notified_at is None
-        assert db.scalar(select(func.count(models.EmailOutbox.id))) == 0
+        assert (db.scalar(select(func.count(models.EmailOutbox.id))) or 0) == count_before
 
 
 def test_no_smtp_configuration_does_not_complete_delivery(monkeypatch):
