@@ -53,3 +53,19 @@ guardia activa, que los reintentos no duplican alertas abiertas y que sin
 SMTP configurado no se confunde cola con aviso enviado. **Aunque pytest
 termine PASS, F2.06 debe permanecer [ ]** hasta una notificación realmente
 recibida y reconocida por guardia.
+
+## F2.06 QA de entrega SMTP y protección de información (16-oct-2026)
+
+La regresión `backend/tests/test_phase2_smtp_delivery_boundary.py`
+simula sin red y sin correos reales: SMTP acepta mensaje (`sent_at`
+registrado, pero `SystemAlert.notified_at` sigue `NULL`); fallo de
+conexión SMTP, error de entrega, reintentos agotados y ausencia de ACK.
+
+Los errores de SMTP que se conservan en `EmailOutbox.last_error`
+ahora guardan solo un **tipo de excepción y fase** sin el texto original
+que podría contener usuario, dominio, contenido de respuesta o credencial.
+No se cambian destinatarios, proveedor SMTP ni frecuencia de reintentos.
+
+Un `sent_at` prueba como máximo que el transporte aceptó el envío;
+no demuestra entrega al buzón ni que exista una persona de guardia
+que recibió y reconoció la alerta. **F2.06 principal sigue [ ]**.
