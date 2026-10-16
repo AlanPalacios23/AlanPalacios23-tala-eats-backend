@@ -94,6 +94,22 @@ contractual/fiscal MX, controles de saldo real y revisión de seguridad/
 riesgo antes de implantar límites sobre futuras ofertas de efectivo. No hay
 retiros, descuentos automáticos, cambios en app/backend operativo ni LIVE.
 
+### F2.07 — Matriz de regresión de webhooks (simulada, NO sandbox externo)
+
+Se añadió `backend/tests/test_phase2_mp_webhook_ordering.py` para Mercado Pago:
+aprobación → notificación `pending` tardía; reintentos idénticos; reembolso
+o contracargo terminal → notificación tardía `approved/pending/rejected`;
+reembolso válido con ledger compensatorio único; monto falsificado, firma
+rechazada y proveedor 502. Todas las respuestas PSP vienen de mocks locales,
+sin credenciales ni red. La ruta de webhook mantiene el estado terminal
+de reembolso/chargeback y evita degradar un pago aprobado a `pending`.
+
+Esta prueba **no demuestra** sandbox Mercado Pago auténtico ni firma
+criptográfica real de un proveedor; tampoco certifica Stripe TEST o
+disputas E2E. Mantener la casilla principal **F2.07 [ ]** y prohibición LIVE
+hasta acreditar pagos y webhooks reales firmados en TEST/sandbox, referencias
+PSP, eventos fuera de orden y conciliación económica verificable.
+
 ## F2.11 — Certificación comercial de política 1.6.2
 - 15% comisión sobre productos netos; 7% del subtotal neto para el cliente tanto tarjeta como efectivo, tope $25.
 - Envío $35 para primeros 2 km; +$5 por km/facción proporcional. Repartidor $32 primeros 2 km; +$4 por km/facción proporcional.
