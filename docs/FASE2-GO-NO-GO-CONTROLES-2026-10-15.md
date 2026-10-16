@@ -48,6 +48,26 @@ Separar ingreso cobrado al cliente, custodia PSP/banco, saldo comprometido, prop
 
 **Efectivo físico**: quien lo recauda debe figurar en la operación y tener un saldo auditable; netting automático solo con payouts digitales confirmados del MISMO beneficiario. Si saldo insuficiente, limitar **futuros** pedidos de efectivo sin afectar entregas activas; no declarar ingreso bancario ni un recibo pagado por una simulación. Cuenta, PSP, consentimiento y mandato MX aún por validar. Issue #24.
 
+### Avance de laboratorio F2.09 — conciliación solo lectura, NO fondos disponibles
+
+El gate `backend/qa/phase2_reconciliation_readonly.py` consulta con transacción
+PostgreSQL READ ONLY las tres órdenes sintéticas creadas por F2.11, verificando:
+importe total exacto, cuentas por pagar al restaurante/repartidor, propina de
+delivery, ingresos plataforma, moneda MXN, dirección/kind del asiento y claves
+de idempotencia únicas. Valida efectivo y Mercado Pago sintéticos. Regresiones
+adicionales comprueban fraude contable por duplicados, cifras alteradas, propina
+perdida, reembolso no conciliado, divisas distintas y estado local 'paid'.
+
+**Regla explícita**: el reporte solo puede devolver `NO_GO_LEDGER` o
+`PENDING_EXTERNAL_EVIDENCE`, con `payout_authorized=false`; ningún asiento,
+GMV o `payment_status=paid` acredita que PSP/banco tenga el dinero. El script
+NO consulta redes ni cambia cuentas, saldos, tablas, endpoints o producción.
+
+Esto añade cobertura técnica sobre F2.09, pero **no cierra F2.09**:
+faltan reconciliación real por PSP/identificador y beneficiario, custodia bancaria,
+reembolsos/contracargos, saldos reservados, cash netting y autorización independiente.
+Solo declarar PASS del nuevo gate cuando GitHub Actions termine exitosamente.
+
 ## F2.11 — Certificación comercial de política 1.6.2
 - 15% comisión sobre productos netos; 7% del subtotal neto para el cliente tanto tarjeta como efectivo, tope $25.
 - Envío $35 para primeros 2 km; +$5 por km/facción proporcional. Repartidor $32 primeros 2 km; +$4 por km/facción proporcional.
