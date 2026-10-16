@@ -185,6 +185,11 @@ class SimulationCreate(BaseModel):
 class SimulationPublic(ORMModel):
     id:int; created_by_user_id:int; scenario:str; status:str; current_step:str; state_json:str; created_at:datetime; updated_at:datetime
 
+class MarketAssignment(BaseModel):
+    """Admin-only code assigning a business to its confirmed local market."""
+    market_code: str = Field(min_length=3, max_length=40, pattern=r"^[A-Z][A-Z0-9-]*$")
+
+
 class CommercialConfigUpdate(BaseModel):
     commercial_plan:str|None=Field(default=None,pattern="^(START|DELIVERY|PRO)$")
     commission_rate:Decimal|None=Field(default=None,ge=0,le=Decimal("0.50"))
