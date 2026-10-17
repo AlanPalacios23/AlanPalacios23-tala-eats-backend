@@ -74,7 +74,16 @@ def _authorize_app(application: str, user: models.User) -> None:
 
 @router.get("/config")
 def push_config():
-    return {"enabled": is_configured(), "provider": "fcm", "platforms": ["android", "ios"]}
+    # Public Firebase project ID only. The Android app must compare this
+    # against its own compiled FirebaseOptions before registering a token.
+    # Never expose the service-account path or its private key.
+    enabled = is_configured()
+    return {
+        "enabled": enabled,
+        "provider": "fcm",
+        "platforms": ["android", "ios"],
+        "project_id": settings.fcm_project_id if enabled else "",
+    }
 
 
 @router.put("/devices")
