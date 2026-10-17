@@ -36,6 +36,22 @@ def test_disabled_default():
         assert register(c,h).status_code==503
 
 
+def test_public_config_project_identity_never_leaks_credentials(monkeypatch):
+    enable(monkeypatch)
+    with TestClient(app) as c:
+        config = c.get('/api/v1/mobile-push/config').json()
+        assert config['enabled'] is True
+        assert config['provider'] == 'fcm'
+        assert config['project_id'] == 'test-local'
+        assert 'credentials' not in str(config).lower()
+        assert 'encryption' not in str(config).lower()
+    monkeypatch.setattr(settings, 'native_push_enabled', False)
+    with TestClient(app) as c:
+        config = c.get('/api/v1/mobile-push/config').json()
+        assert config['enabled'] is False
+        assert config['project_id'] == ''
+
+
 def test_register_role_bound_and_encrypted(monkeypatch):
     enable(monkeypatch)
     with TestClient(app) as c:
