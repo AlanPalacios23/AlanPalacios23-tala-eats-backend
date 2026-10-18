@@ -7,14 +7,12 @@ on:
   push:
     branches: [main]
     paths:
-      - 'backend/requirements.txt'
-      - 'backend/app/**'
+      - 'backend/**'
       - '.github/workflows/backend-security-audit.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'backend/requirements.txt'
-      - 'backend/app/**'
+      - 'backend/**'
       - '.github/workflows/backend-security-audit.yml'
 
 permissions:
