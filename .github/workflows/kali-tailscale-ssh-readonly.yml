@@ -1,4 +1,4 @@
-name: TALA EATS | Tailscale SSH Kali (manual, solo lectura)
+name: TALA EATS | Tailscale SSH Kali (diagnostico manual seguro)
 
 on:
   workflow_dispatch:
@@ -8,50 +8,102 @@ permissions:
 
 jobs:
   kali-ssh-connectivity:
-    name: Verificar SSH por Tailscale (sin deploy)
+    name: Credenciales, Tailscale y SSH (sin deploy)
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     environment: talaeats-production
     timeout-minutes: 10
     steps:
-      - name: Conectar runner a tailnet
-        uses: tailscale/github-action@v4
-        with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-          tags: tag:talaeats-ci
+      - name: Validar los tres secrets sin mostrarlos
+        shell: bash
+        env:
+          TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+          KALI_SSH_PRIVATE_KEY: ${{ secrets.KALI_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          for key in TS_OAUTH_CLIENT_ID TS_OAUTH_SECRET KALI_SSH_PRIVATE_KEY; do
+            if [[ -z "${!key}" ]]; then
+              echo "::error::Falta el Environment secret $key en talaeats-production."
+              exit 1
+            fi
+          done
+          echo "SECRETS_PRESENT_PASS"
 
-      - name: Verificar identidad SSH del servidor y acceso de solo lectura
+      - name: Preparar y validar llave SSH sin imprimirla
+        id: prepare
         shell: bash
         env:
           KALI_SSH_PRIVATE_KEY: ${{ secrets.KALI_SSH_PRIVATE_KEY }}
         run: |
           set -euo pipefail
           umask 077
-          tmpdir="$(mktemp -d)"
-          trap 'rm -rf "$tmpdir"' EXIT
-          printf '%s\n' "$KALI_SSH_PRIVATE_KEY" > "$tmpdir/id_ed25519"
-          unset KALI_SSH_PRIVATE_KEY
-          chmod 600 "$tmpdir/id_ed25519"
-
-          # ssh-keyscan no autentica por sí mismo: se compara con
-          # la huella ED25519 verificada previamente en Kali.
-          ssh-keyscan -T 10 -t ed25519 100.81.234.1 2>/dev/null > "$tmpdir/known_hosts"
-          test -s "$tmpdir/known_hosts"
-          actual="$(ssh-keygen -lf "$tmpdir/known_hosts" -E sha256 | awk '{print $2}')"
-          expected='SHA256:NBzEhEuiG8qbodvDtrhihAWfHbvtpNaOEKV67s/v7A8'
-          if [[ "$actual" != "$expected" ]]; then
-            echo "::error::Huella SSH inesperada; conexión rechazada."
+          keyfile="$RUNNER_TEMP/talaeats_ci_ssh_key"
+          export KEYFILE="$keyfile"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          key = os.environ["KALI_SSH_PRIVATE_KEY"].strip()
+          # Admitir claves copiadas con CRLF, o saltos de linea escapados.
+          if "\n" not in key and r"\n" in key:
+              key = key.replace(r"\n", "\n")
+          key = key.replace("\r\n", "\n")
+          if not (key.startswith("-----BEGIN OPENSSH PRIVATE KEY-----")
+                  and key.endswith("-----END OPENSSH PRIVATE KEY-----")):
+              raise SystemExit("::error::KALI_SSH_PRIVATE_KEY no contiene una llave OpenSSH completa (BEGIN/END).")
+          Path(os.environ["KEYFILE"]).write_text(key + "\n", encoding="utf-8")
+          PY
+          chmod 600 "$keyfile"
+          if ! ssh-keygen -y -P '' -f "$keyfile" >/dev/null 2>&1; then
+            echo "::error::La llave privada SSH no se puede leer. Actualiza KALI_SSH_PRIVATE_KEY con la llave completa, no la .pub."
             exit 1
           fi
+          echo "SSH_PRIVATE_KEY_VALID_PASS"
 
-          ssh -i "$tmpdir/id_ed25519" \
+      - name: Conectar runner a Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:talaeats-ci
+
+      - name: Verificar servidor Kali y SSH (solo lectura)
+        shell: bash
+        run: |
+          set -euo pipefail
+          keyfile="$RUNNER_TEMP/talaeats_ci_ssh_key"
+          known_hosts="$RUNNER_TEMP/talaeats_ci_known_hosts"
+          if ! timeout 18 ssh-keyscan -T 10 -t ed25519 100.81.234.1 2>/dev/null > "$known_hosts"; then
+            echo "::error::No se pudo consultar SSH en 100.81.234.1:22 por Tailscale (ACL/red/SSH)."
+            exit 1
+          fi
+          if [[ ! -s "$known_hosts" ]]; then
+            echo "::error::Kali no devolvio huella SSH."
+            exit 1
+          fi
+          actual="$(ssh-keygen -lf "$known_hosts" -E sha256 | awk '{print $2}')"
+          expected='SHA256:NBzEhEuiG8qbodvDtrhihAWfHbvtpNaOEKV67s/v7A8'
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::La huella SSH de Kali no coincide: no se intentara autenticar."
+            exit 1
+          fi
+          echo "TAILSCALE_NETWORK_AND_HOSTKEY_PASS"
+          if ! ssh -i "$keyfile" \
             -o IdentitiesOnly=yes \
             -o BatchMode=yes \
+            -o PasswordAuthentication=no \
             -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$tmpdir/known_hosts" \
+            -o UserKnownHostsFile="$known_hosts" \
             -o ConnectTimeout=12 \
             talaeats-ci@100.81.234.1 \
-            'printf "TAILSCALE_GITHUB_SSH_PASS\\n"; whoami; hostname; id'
+            'printf "TAILSCALE_GITHUB_SSH_PASS\n"; whoami; hostname; id'; then
+            echo "::error::SSH rechazo la llave: revisar que la llave PUBLICA correspondiente este en /home/talaeats-ci/.ssh/authorized_keys."
+            exit 1
+          fi
+          echo "READONLY_CONNECTIVITY_PASS; no se desplego nada."
 
-          echo 'Verificación completada; sin comandos de despliegue.'
+      - name: Borrar llaves temporales del runner
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/talaeats_ci_ssh_key" "$RUNNER_TEMP/talaeats_ci_known_hosts"
