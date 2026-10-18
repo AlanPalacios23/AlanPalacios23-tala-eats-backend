@@ -116,13 +116,11 @@ def verify_green_and_backup(rows: list[dict]) -> None:
         raise RuntimeError("GREEN no pasó prueba de readiness")
     if not BACKUP_DIR.is_dir() or BACKUP_DIR.is_symlink():
         raise RuntimeError("Respaldo cifrado de TALA EATS no localizado")
-    if not try_command("sha256sum", "--check", "--status", str(BACKUP_DIR / "SHA256SUMS.txt")):
-        # sha256sum relative paths must resolve inside backup dir; use cwd below.
-        p = subprocess.run(["sha256sum", "--check", "--status", "SHA256SUMS.txt"],
-                           cwd=BACKUP_DIR, stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL, timeout=120)
-        if p.returncode != 0:
-            raise RuntimeError("SHA256 backup Tala no pasó verificación")
+    p = subprocess.run(["sha256sum", "--check", "--status", "SHA256SUMS.txt"],
+                       cwd=BACKUP_DIR, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=120)
+    if p.returncode != 0:
+        raise RuntimeError("SHA256 backup Tala no pasó verificación")
     revision = command("docker", "image", "inspect", "--format",
                        '{{index .Config.Labels "org.opencontainers.image.revision"}}',
                        "talaeats-candidate:" + EXPECTED_SHA)
