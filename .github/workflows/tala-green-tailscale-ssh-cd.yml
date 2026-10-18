@@ -31,7 +31,7 @@ jobs:
           github.event.workflow_run.head_branch == 'main' &&
           github.event.workflow_run.conclusion == 'success') ]]
     runs-on: ubuntu-24.04
-    timeout-minutes: 22
+    timeout-minutes: 55
     outputs:
       sha: ${{ steps.verify.outputs.sha }}
     steps:
@@ -63,7 +63,7 @@ jobs:
               'TALA EATS Backend | Container Build Gate',
               'TALA EATS Backend | Security Audit',
             ];
-            for (let attempt=0; attempt<40; attempt++) {
+            for (let attempt=0; attempt<108; attempt++) {
               const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
                 owner, repo, head_sha:sha, event:'push', per_page:100,
               }, response => response.data.workflow_runs);
@@ -81,7 +81,7 @@ jobs:
                 core.info('GREEN cinco gates PASS: ' + sha.slice(0,12));
                 return;
               }
-              if (attempt < 39) await new Promise(resolve => setTimeout(resolve, 25000));
+              if (attempt < 107) await new Promise(resolve => setTimeout(resolve, 25000));
             }
             core.setFailed('NO-GO: falta alguno de los cinco controles CI');
 
