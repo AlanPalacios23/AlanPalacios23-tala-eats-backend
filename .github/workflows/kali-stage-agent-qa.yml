@@ -8,6 +8,7 @@ on:
       - '.github/workflows/kali-stage-approve.yml'
       - '.github/workflows/kali-stage-agent-qa.yml'
       - 'docs/KALI-PULL-AGENT-STAGING.md'
+      - 'scripts/kali_first_access_readonly.sh'
   push:
     branches: [main]
   workflow_dispatch:
@@ -25,3 +26,17 @@ jobs:
           python-version: '3.13'
       - run: python -m py_compile scripts/kali_stage_pull_agent.py scripts/test_kali_stage_pull_agent.py
       - run: python scripts/test_kali_stage_pull_agent.py
+      - name: Kali preinstallation inventory bash syntax and safety contract
+        run: |
+          set -euo pipefail
+          bash -n scripts/kali_first_access_readonly.sh
+          python - <<'PY'
+          from pathlib import Path
+          code=Path('scripts/kali_first_access_readonly.sh').read_text()
+          for unsafe in ('sudo ', 'apt-get ', 'pm2 restart', 'git pull', 'docker stop', 'docker restart', 'docker exec', 'systemctl start', 'systemctl enable', 'chmod ', 'chown ', 'CREATE DATABASE', 'alembic upgrade'):
+              assert unsafe not in '\\n'.join(l for l in code.splitlines() if not l.lstrip().startswith('#')), unsafe
+          assert 'TALA_KALI_PREFLIGHT_BEGIN' in code
+          assert 'TALA_KALI_PREFLIGHT_END_READONLY' in code
+          assert 'docker ps --format' in code and 'curl --silent' in code
+          print('KALI_PREFLIGHT_STATIC_SAFE_PASS')
+          PY
