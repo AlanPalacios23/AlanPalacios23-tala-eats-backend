@@ -8,7 +8,7 @@ Esta es una **alternativa para un VPS de pruebas separado**. No modifica Kali LI
 - PM2 administra `talaeats-pm2-api-stage` y `talaeats-pm2-worker-stage`.
 - PostgreSQL 16 y Redis instalados nativamente en el VPS (el backend real los necesita; PM2 no los sustituye).
 - Cloudflare Tunnel gratuito: dominio de **pruebas** a `http://127.0.0.1:18090`, sin Nginx y sin exponer el puerto de la API.
-- GitHub Actions: cada push que cambie `backend/**` en `main` entra por SSH al VPS y hace `git pull --ff-only` + instalación de dependencias + `pm2 startOrReload`.
+- GitHub Actions: cada push que cambie `backend/**` en `main` entra por SSH al VPS y hace `git pull --ff-only` + instalación de dependencias + `pm2 restart`.
 - Las herramientas son gratuitas; **el VPS, dominio y almacenamiento pueden costar**.
 
 ## Una vez, en el VPS nuevo
