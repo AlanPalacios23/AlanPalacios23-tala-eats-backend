@@ -1,0 +1,43 @@
+name: TALA EATS | Kali storage cleanup safety checks
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/kali_tala_only_storage_cleanup.py'
+      - '.github/workflows/kali-tala-only-storage-cleanup-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  safety:
+    name: Validate selective deletion guardrails (offline)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python compile + self-test
+        run: |
+          python3 -m py_compile scripts/kali_tala_only_storage_cleanup.py
+          python3 scripts/kali_tala_only_storage_cleanup.py --self-test
+      - name: Static allowlist and Tala protections
+        run: |
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
+          source = Path("scripts/kali_tala_only_storage_cleanup.py").read_text()
+          tree = ast.parse(source)
+          assert "BORRAR_SOLO_DATOS_NO_TALA" in source
+          assert "talaeats-green" in source and "talaeats-admin" in source and "talaeats-v3" in source
+          assert "127.0.0.1:18182/api/v1/ready" in source
+          assert "shutil.rmtree(target)" in source
+          assert "HOME.iterdir()" in source
+          assert "docker" in source and "volume" in source and "rm" in source
+          for forbidden in ("docker system prune", "docker volume prune", "docker image prune", "docker compose down", "rm -rf /", "rm -rf /home/alan"):
+              assert forbidden not in source, forbidden
+          for dangerous in ("talaeats-green_pgdata", "talaeats-v3_talaeats_postgres", "talaeats-green_media", "talaeats-v3_talaeats_media"):
+              assert dangerous not in source
+          print("TALA_ONLY_STORAGE_STATIC_CI_PASS")
+          PY
