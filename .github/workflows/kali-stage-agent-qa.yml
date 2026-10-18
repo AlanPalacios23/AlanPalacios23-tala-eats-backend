@@ -12,6 +12,8 @@ on:
       - 'scripts/kali_502_triage_readonly.sh'
       - 'scripts/kali_v3_pg_diagnostic_readonly.py'
       - 'scripts/test_kali_v3_pg_diagnostic_readonly.py'
+      - 'scripts/kali_v3_config_safe_readonly.py'
+      - 'scripts/test_kali_v3_config_safe_readonly.py'
   push:
     branches: [main]
   workflow_dispatch:
@@ -40,6 +42,19 @@ jobs:
           for forbidden in ('docker restart','docker stop','docker compose','docker rm','subprocess.Popen','os.system(','.Config.Env','alembic upgrade'):
               assert forbidden not in code, forbidden
           print('KALI_V3_DB_DIAGNOSTIC_SAFE_PASS')
+          PY
+      - name: V3 PostgreSQL config consistency read-only (14 cases)
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/kali_v3_config_safe_readonly.py scripts/test_kali_v3_config_safe_readonly.py
+          python scripts/test_kali_v3_config_safe_readonly.py
+          python - <<'PY'
+          from pathlib import Path
+          code=Path('scripts/kali_v3_config_safe_readonly.py').read_text()
+          assert 'NO_ENV_VALUES_NO_SECRETS_NO_SQL_NO_CHANGES' in code
+          for forbidden in ('docker restart','docker stop','docker exec','docker compose','docker rm','subprocess.Popen','os.system(', 'psql ', 'alembic upgrade', 'print(env)', 'print(url)'):
+              assert forbidden not in code, forbidden
+          print('KALI_V3_CONFIG_SANITIZED_SAFE_PASS')
           PY
       - name: Kali preinstallation inventory bash syntax and safety contract
         run: |
