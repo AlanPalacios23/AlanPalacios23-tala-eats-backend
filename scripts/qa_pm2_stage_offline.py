@@ -112,7 +112,8 @@ fi
 
     def run_script(self, file, *args):
         return subprocess.run(["bash", str(self.repo / file), *args],
-                              cwd=self.repo, env=self.env, text=True,
+                              cwd=(self.repo / "backend" if str(file).endswith("run-python.sh") else self.repo),
+                              env=self.env, text=True,
                               capture_output=True, timeout=20)
 
     def log(self):
