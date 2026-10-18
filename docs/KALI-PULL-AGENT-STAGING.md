@@ -12,6 +12,24 @@
 
 **Not yet done:** No SSH access to Kali exists from this conversation, no initial installation, no tunnel modifications, no auto-deploy enabled. The obsolete SSH deployment workflow was removed from PR #79. No VPS/Tailscale or GitHub SSH secrets are required for the pull-agent design.
 
+## Etapa 0: diagnóstico verificable en el único Kali (antes de instalar)
+
+Aún no existe acceso SSH remoto utilizable desde esta conversación a `192.168.100.45`. La preparación de GitHub NO instala archivos automáticamente en Kali. Para ejecutar esta etapa se requiere **una sesión SSH ya autorizada** en la red LAN, por acceso remoto existente, o físicamente en el servidor. Si no hay ninguno de esos accesos, no existe un camino seguro para completar la instalación todavía.
+
+Desde una sesión SSH del usuario `alan` en el Kali real, descarga el diagnóstico inmutable (SHA fijado en GitHub), revisa su sintaxis y ejecútalo **sin sudo**:
+
+~~~bash
+curl --fail --location --silent --show-error \
+  'https://raw.githubusercontent.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/3f91dc85e9f7b133bc7e4ed9f1b112743766509f/scripts/kali_first_access_readonly.sh' \
+  --output /tmp/tala-kali-preflight-readonly.sh
+bash -n /tmp/tala-kali-preflight-readonly.sh
+bash /tmp/tala-kali-preflight-readonly.sh
+~~~
+
+Se genera `TALA_KALI_PREFLIGHT_BEGIN` ... `TALA_KALI_PREFLIGHT_END_READONLY`. El script hace solo lectura de estado del host/puertos/contenedores y dos HTTP GET; **no** lee ficheros `.env`, contraseñas, llaves, logs sensibles, no ejecuta `git pull`, no modifica Linux y no instala nada. No pegues llaves ni contraseñas en el chat.
+
+**Importante:** Hasta analizar el diagnóstico, no se debe iniciar ni instalar PM2/Redis/PostgreSQL staging ni habilitar el agente: el servidor actual usa producción Docker. El HTTP 502 repetido contra la API pública es un bloqueo que debe diagnosticarse antes de una migración.
+
 ## User-level systemd templates (STAGING ONLY; after Kali access and resource audit)
 
 The repository includes deploy/pm2/talaeats-kali-stage-agent.service and deploy/pm2/talaeats-kali-stage-agent.timer. The stage-only non-root Linux user can install them after the staging checkout, isolated PG and Redis are validated.
