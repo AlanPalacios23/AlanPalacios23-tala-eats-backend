@@ -12,13 +12,6 @@ on:
       - '.github/workflows/backend-finance-ci.yml'
   push:
     branches: [main]
-    paths:
-      - 'scripts/kali_stage_pull_agent.py'
-      - 'scripts/test_kali_stage_pull_agent.py'
-      - '.github/workflows/kali-stage-approve.yml'
-      - '.github/workflows/kali-stage-agent-qa.yml'
-      - 'backend/**'
-      - '.github/workflows/backend-finance-ci.yml'
   workflow_dispatch:
 
 permissions:
