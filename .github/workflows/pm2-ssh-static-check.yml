@@ -3,11 +3,6 @@ name: Tala Eats | PM2 staging and pull-agent static check (no deploy)
 on:
   push:
     branches: [main]
-    paths:
-      - 'deploy/pm2/**'
-      - 'scripts/kali_stage_pull_agent.py'
-      - '.github/workflows/kali-stage-approve.yml'
-      - '.github/workflows/pm2-ssh-static-check.yml'
   pull_request:
     branches: [main]
     paths:
