@@ -20,6 +20,10 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - name: Python 3.13 for isolated PM2 QA
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
       - name: Bash and PM2 config syntax
         run: |
           set -euo pipefail
@@ -27,6 +31,8 @@ jobs:
           bash -n deploy/pm2/run-python.sh
           bash -n scripts/deploy_pm2_stage.sh
           node --check deploy/pm2/ecosystem.config.cjs
+      - name: Execute 30 disposable PM2 failure/success scenarios (no SSH/no network)
+        run: python3.13 scripts/qa_pm2_stage_offline.py
       - name: Contract and no-real-deploy guard
         run: |
           python3 - <<'PY'
