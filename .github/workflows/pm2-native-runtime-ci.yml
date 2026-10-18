@@ -3,13 +3,6 @@ name: Tala Eats | PM2 native Linux smoke (without Docker)
 on:
   push:
     branches: [main]
-    paths:
-      - 'backend/**'
-      - 'deploy/pm2/**'
-      - 'scripts/deploy_pm2_stage.sh'
-      - 'scripts/kali_stage_pull_agent.py'
-      - '.github/workflows/kali-stage-approve.yml'
-      - '.github/workflows/pm2-native-runtime-ci.yml'
   pull_request:
     branches: [main]
     paths:
