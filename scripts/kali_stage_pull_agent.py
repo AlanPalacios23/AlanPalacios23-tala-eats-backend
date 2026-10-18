@@ -23,6 +23,7 @@ CHECKS = frozenset({
     "PostgreSQL 16 + Redis 8 + contratos financieros",
     "PyPI OSV + Bandit static checks (read-only)",
     "Real PM2 + FastAPI + worker, native PostgreSQL/Redis, isolated",
+    "20 outbound agent security cases",
 })
 
 def fetch(path):
