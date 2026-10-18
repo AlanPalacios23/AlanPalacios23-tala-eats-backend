@@ -14,7 +14,7 @@ MAX_ENTRIES = 100000
 
 def safe_path(name: str) -> pathlib.PurePosixPath:
     p = pathlib.PurePosixPath(name)
-    if p.is_absolute() or ".." in p.parts or not p.parts or "\\x00" in name:
+    if p.is_absolute() or ".." in p.parts or not p.parts or "\x00" in name:
         raise ValueError("Ruta insegura en TAR: se rechazó el ensayo")
     parts = tuple(piece for piece in p.parts if piece not in ("", "."))
     if not parts:
