@@ -1,14 +1,22 @@
-name: Tala Eats | PM2 SSH syntax check (no deploy)
+name: Tala Eats | PM2 staging and pull-agent static check (no deploy)
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/pm2/**'
+      - 'scripts/kali_stage_pull_agent.py'
+      - '.github/workflows/kali-stage-approve.yml'
+      - '.github/workflows/pm2-ssh-static-check.yml'
   pull_request:
     branches: [main]
     paths:
       - 'deploy/pm2/**'
       - 'scripts/deploy_pm2_stage.sh'
       - 'scripts/pm2_vps_readonly_probe.sh'
-      - 'docs/PM2-SIMPLE-AUTO-DEPLOY-SSH.md'
-      - '.github/workflows/pm2-ssh-auto-deploy.yml'
+      - 'docs/KALI-PULL-AGENT-STAGING.md'
+      - 'scripts/kali_stage_pull_agent.py'
+      - '.github/workflows/kali-stage-approve.yml'
       - '.github/workflows/pm2-ssh-static-check.yml'
   workflow_dispatch:
 
@@ -43,19 +51,18 @@ jobs:
           r = Path('deploy/pm2/run-python.sh').read_text()
           g = Path('deploy/pm2/validate-stage.sh').read_text()
           d = Path('scripts/deploy_pm2_stage.sh').read_text()
-          w = Path('.github/workflows/pm2-ssh-auto-deploy.yml').read_text()
+          w = Path('.github/workflows/kali-stage-approve.yml').read_text()
           assert 'talaeats-pm2-api-stage' in p and 'talaeats-pm2-worker-stage' in p
           assert '--host 127.0.0.1 --port 18090' in r
           assert 'pm2 restart' in d and 'git pull --ff-only' in d
           assert 'alembic current --check-heads' in d and 'alembic upgrade' not in d
           assert 'validate-stage.sh' in r and 'validate-stage.sh' in d
           assert 'talaeats_stage' in g and 'STAGE_MEDIA_ISOLATION_REQUIRED' in g
-          assert 'PM2_STAGE_AUTO_DEPLOY_ENABLED' in w and 'PM2_STAGE_SSH_PROBE_PASS' in w
+          assert 'MANUAL_OWNER_STAGE_APPROVAL_PASS' in w and 'APPROVE_STAGE' in w
           assert 'get("database") is True' in d and 'get("redis") is True' in d
           assert '192.168.100.45' not in w and '100.81.234.1' not in w
           assert 'docker ' not in d.lower() and 'docker ' not in w.lower()
-          for key in ['PM2_SSH_HOST', 'PM2_SSH_USER', 'PM2_SSH_PRIVATE_KEY', 'PM2_SSH_KNOWN_HOSTS']:
-              assert chr(36)+'{{ secrets.'+key+' }}' in w
+          assert 'PM2_SSH_PRIVATE_KEY' not in w
           assert '@{!' not in w
-          print('PM2_SSH_STATIC_GATE_PASS, no deploy')
+          print('PM2_PULL_AGENT_STATIC_GATE_PASS, no deploy')
           PY
