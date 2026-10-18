@@ -1,0 +1,36 @@
+name: TALA EATS | Green clean backend preflight
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/kali_clean_green_boot.sh'
+      - '.github/workflows/kali-clean-green-qa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-green:
+    name: Shell syntax and isolated no-demo guards — no production access
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: bash -n scripts/kali_clean_green_boot.sh
+      - name: Self test
+        run: bash scripts/kali_clean_green_boot.sh --self-test
+      - name: Verify no-demo, new isolated network and no destructive volume operations
+        shell: bash
+        run: |
+          set -euo pipefail
+          f=scripts/kali_clean_green_boot.sh
+          grep -q 'SEED_DEMO_DATA": "false"' "$f"
+          grep -q 'BOOTSTRAP_ADMIN_ENABLED": "false"' "$f"
+          grep -q 'talaeats-green' "$f"
+          grep -q '127.0.0.1:18182:8000' "$f"
+          grep -q 'STRIPE_ENABLED": "false"' "$f"
+          ! grep -E 'docker (compose )?(down|system prune|volume rm)|rm -rf.*talaeats-v3' "$f"
+          echo GREEN_STATIC_GUARDS_PASS
