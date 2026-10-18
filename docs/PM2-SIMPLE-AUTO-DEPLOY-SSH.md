@@ -63,6 +63,10 @@ El puerto SSH del workflow es **22**. Protege el servicio SSH con llaves, firewa
 
 Una vez fusionado este PR a `main` y configurado el VPS, ejecuta **Actions → Tala Eats | Auto deploy Git Pull + PM2 por SSH (staging) → Run workflow → `operation=probe`**. Exige `PM2_STAGE_SSH_PROBE_PASS`. Después arranca el staging manualmente y valida API, worker, base de datos y Redis; ejecuta `operation=deploy` como prueba supervisada. **Solo entonces**, en Settings → Secrets and variables → Actions → Variables, crea `PM2_STAGE_AUTO_DEPLOY_ENABLED=YES` para habilitar los pushes automáticos. Sin esa variable, los pushes no ejecutan SSH ni deploy. Este flujo **no contiene Docker ni Nginx ni comandos contra Kali producción**.
 
+## Inventario pasivo del VPS antes de tocar servicios
+
+En el **VPS nuevo de staging**, dentro del checkout, ejecuta `bash scripts/pm2_vps_readonly_probe.sh`. Solo comprueba binarios, checkout de staging, permisos del archivo de configuración (sin leerlo ni imprimirlo), PostgreSQL local, Redis local, cloudflared y HTTP `/ready` en loopback. No instala, no migra, no reinicia, no hace `git pull` y no accede a Kali LIVE. Devuelve códigos `PASS`/`PENDING` aptos para compartir sin llaves ni contraseñas. El script **no prueba acceso SSH desde GitHub** ni HTTPS público mediante Cloudflare; esas dos validaciones deben hacerse de forma independiente.
+
 ## Verificación y límites
 
 `pm2 status`, `pm2 logs talaeats-pm2-api-stage --lines 50` y `curl -fsS http://127.0.0.1:18090/api/v1/ready` deben mostrar procesos sanos y `ready: true`.
