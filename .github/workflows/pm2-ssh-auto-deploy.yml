@@ -9,6 +9,13 @@ on:
       - 'scripts/deploy_pm2_stage.sh'
       - '.github/workflows/pm2-ssh-auto-deploy.yml'
   workflow_dispatch:
+    inputs:
+      operation:
+        description: 'probe verifica SSH, deploy actualiza staging'
+        type: choice
+        required: true
+        default: probe
+        options: [probe, deploy]
 
 permissions:
   contents: read
@@ -19,11 +26,12 @@ concurrency:
 
 jobs:
   auto-deploy:
-    if: github.ref == 'refs/heads/main'
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.PM2_STAGE_AUTO_DEPLOY_ENABLED == 'YES') }}
     runs-on: ubuntu-24.04
     environment: talaeats-pm2-staging
     timeout-minutes: 15
     env:
+      OPERATION: ${{ github.event_name == 'workflow_dispatch' && inputs.operation || 'deploy' }}
       VPS_HOST: ${{ secrets.PM2_SSH_HOST }}
       VPS_USER: ${{ secrets.PM2_SSH_USER }}
       VPS_SSH_PRIVATE_KEY: ${{ secrets.PM2_SSH_PRIVATE_KEY }}
@@ -48,12 +56,19 @@ jobs:
           printf '%s\n' "$VPS_SSH_KNOWN_HOSTS" > "$hostfile"
           chmod 600 "$keyfile" "$hostfile"
           ssh-keygen -y -P '' -f "$keyfile" >/dev/null
-          ssh -i "$keyfile" \
-            -o IdentitiesOnly=yes \
-            -o BatchMode=yes \
-            -o PasswordAuthentication=no \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$hostfile" \
-            -o ConnectTimeout=12 \
-            "$VPS_USER@$VPS_HOST" \
-            "bash ~/tala-eats-pm2-stage/scripts/deploy_pm2_stage.sh $GITHUB_SHA"
+          SSH=(ssh -i "$keyfile"
+            -o IdentitiesOnly=yes
+            -o BatchMode=yes
+            -o PasswordAuthentication=no
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$hostfile"
+            -o ConnectTimeout=12)
+          case "$OPERATION" in
+            probe)
+              "${SSH[@]}" "$VPS_USER@$VPS_HOST" 'printf "PM2_STAGE_SSH_PROBE_PASS\\n"'
+              ;;
+            deploy)
+              "${SSH[@]}" "$VPS_USER@$VPS_HOST" "bash ~/tala-eats-pm2-stage/scripts/deploy_pm2_stage.sh $GITHUB_SHA"
+              ;;
+            *) echo "::error::Operación no válida"; exit 2 ;;
+          esac

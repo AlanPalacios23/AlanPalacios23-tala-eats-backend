@@ -8,7 +8,7 @@ Esta es una **alternativa para un VPS de pruebas separado**. No modifica Kali LI
 - PM2 administra `talaeats-pm2-api-stage` y `talaeats-pm2-worker-stage`.
 - PostgreSQL 16 y Redis instalados nativamente en el VPS (el backend real los necesita; PM2 no los sustituye).
 - Cloudflare Tunnel gratuito: dominio de **pruebas** a `http://127.0.0.1:18090`, sin Nginx y sin exponer el puerto de la API.
-- GitHub Actions: cada push que cambie `backend/**` en `main` entra por SSH al VPS y hace `git pull --ff-only` + instalación de dependencias + `pm2 restart`.
+- GitHub Actions: primero prueba SSH con `operation=probe` sin deploy. Solo al poner `PM2_STAGE_AUTO_DEPLOY_ENABLED=YES`, cada push a `backend/**` en `main` hace `git pull --ff-only`, instalación de dependencias y `pm2 restart`.
 - Las herramientas son gratuitas; **el VPS, dominio y almacenamiento pueden costar**.
 
 ## Una vez, en el VPS nuevo
@@ -23,8 +23,9 @@ Esta es una **alternativa para un VPS de pruebas separado**. No modifica Kali LI
    git checkout main
    ~~~
 
-4. Guarda tu configuración privada **solo en el VPS**: copia `deploy/pm2/staging.env.example` a `~/.config/talaeats-pm2-stage.env`, edita contraseñas/URL/dominio/JWT **de staging** y ejecuta `chmod 600 ~/.config/talaeats-pm2-stage.env`. No subas ese archivo a GitHub ni compartas sus valores. PostgreSQL, Redis, JWT y orígenes HTTPS son parámetros realmente necesarios; no se deben eliminar.
-5. Arranca una vez sobre la nueva base de datos **de staging**:
+4. La base PostgreSQL debe llamarse **`talaeats_stage`**, usar `127.0.0.1`, Redis de staging debe usar `127.0.0.1:6379/1` y las fotos deben ir a `$HOME/talaeats-stage-media`: son barreras para evitar accidentalmente acceso a producción.
+5. Guarda tu configuración privada **solo en el VPS**: copia `deploy/pm2/staging.env.example` a `~/.config/talaeats-pm2-stage.env`, edita contraseñas/URL/dominio/JWT **de staging** y ejecuta `chmod 600 ~/.config/talaeats-pm2-stage.env`. No subas ese archivo a GitHub ni compartas sus valores. PostgreSQL, Redis, JWT y orígenes HTTPS son parámetros realmente necesarios; no se deben eliminar.
+6. Arranca una vez sobre la nueva base de datos **de staging**:
 
    ~~~bash
    cd ~/tala-eats-pm2-stage
@@ -46,7 +47,7 @@ Esta es una **alternativa para un VPS de pruebas separado**. No modifica Kali LI
 
    Activa el inicio tras reboot siguiendo el comando que muestre `pm2 startup`.
 
-6. En el panel Cloudflare Zero Trust crea o usa un Tunnel **del VPS nuevo**, instala cloudflared como servicio con el token privado generado en el panel y añade un hostname **nuevo de pruebas** que apunte al origen `http://127.0.0.1:18090`. No apuntes el dominio LIVE al servicio de pruebas.
+7. En el panel Cloudflare Zero Trust crea o usa un Tunnel **del VPS nuevo**, instala cloudflared como servicio con el token privado generado en el panel y añade un hostname **nuevo de pruebas** que apunte al origen `http://127.0.0.1:18090`. No apuntes el dominio LIVE al servicio de pruebas.
 
 ## En GitHub: 4 secretos y SSH
 
@@ -60,12 +61,12 @@ El puerto SSH del workflow es **22**. Protege el servicio SSH con llaves, firewa
 
 **Condición de red imprescindible:** el GitHub Runner NO puede entrar a `192.168.100.45`, la IP local de Kali. El túnel Cloudflare de HTTP NO es acceso SSH directo. Este flujo **sin Tailscale ni otra conectividad privada** requiere un VPS público con SSH alcanzable desde GitHub.
 
-Una vez fusionado este PR a `main` y configurado el VPS, los pushes relevantes activan automáticamente `.github/workflows/pm2-ssh-auto-deploy.yml`. Hay ejecución manual opcional desde Actions. Este flujo **no contiene Docker ni Nginx ni comandos contra Kali producción**.
+Una vez fusionado este PR a `main` y configurado el VPS, ejecuta **Actions → Tala Eats | Auto deploy Git Pull + PM2 por SSH (staging) → Run workflow → `operation=probe`**. Exige `PM2_STAGE_SSH_PROBE_PASS`. Después arranca el staging manualmente y valida API, worker, base de datos y Redis; ejecuta `operation=deploy` como prueba supervisada. **Solo entonces**, en Settings → Secrets and variables → Actions → Variables, crea `PM2_STAGE_AUTO_DEPLOY_ENABLED=YES` para habilitar los pushes automáticos. Sin esa variable, los pushes no ejecutan SSH ni deploy. Este flujo **no contiene Docker ni Nginx ni comandos contra Kali producción**.
 
 ## Verificación y límites
 
 `pm2 status`, `pm2 logs talaeats-pm2-api-stage --lines 50` y `curl -fsS http://127.0.0.1:18090/api/v1/ready` deben mostrar procesos sanos y `ready: true`.
 
-El script comprueba que la rama puede actualizarse con fast-forward, exige un SHA de main, **NO ejecuta migraciones automáticamente**, verifica que la BD ya está en la versión esperada y bloquea credenciales Stripe/MercadoPago y retiros en staging. Si falla la salud, informa error; el rollback es **manual**. No hagas `git reset` sobre una base de datos ni toques los pedidos reales.
+El script comprueba fast-forward y SHA de `main`, **NO ejecuta migraciones automáticamente**, verifica el HEAD de la base, exige PostgreSQL local `talaeats_stage`, Redis local base `1`, media exclusiva y bloquea credenciales y operaciones de pago. La salud exige `ready/database/redis=true` y los dos procesos PM2 en línea. Si falla la salud, informa error; el rollback es **manual**. No hagas `git reset` sobre una base de datos ni toques los pedidos reales.
 
 Una eventual sustitución de **producción** necesita un plan aparte para PostgreSQL, Redis, media, workers, webhooks y pagos. El cambio de Docker a PM2 NO es una actualización trivial sobre la infraestructura que ya está aceptando pedidos.

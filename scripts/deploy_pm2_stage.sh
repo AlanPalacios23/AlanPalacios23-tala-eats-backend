@@ -30,35 +30,27 @@ fi
 for binary in python3.13 pm2 curl; do
   command -v "$binary" >/dev/null || { echo "Missing $binary" >&2; exit 2; }
 done
-APP_CONFIG="$HOME/.config/talaeats-pm2-stage.env"
-[[ -f "$APP_CONFIG" && ! -L "$APP_CONFIG" ]] || { echo "Missing staging config" >&2; exit 2; }
-[[ "$(stat -c %a "$APP_CONFIG")" == 600 && "$(stat -c %u "$APP_CONFIG")" == "$(id -u)" ]] || {
-  echo "Invalid staging config permissions" >&2; exit 2;
-}
+# Validate isolation before fetching packages or modifying the checkout.
+# shellcheck source=deploy/pm2/validate-stage.sh
+source deploy/pm2/validate-stage.sh
 git pull --ff-only --quiet origin main
 [[ "$(git rev-parse HEAD)" == "$expected_sha" ]] || {
   echo "Pulled unexpected HEAD; refusing restart" >&2; exit 2;
 }
+source deploy/pm2/validate-stage.sh
 python3.13 -m venv backend/.venv
 backend/.venv/bin/python -m pip install --disable-pip-version-check -q -r backend/requirements.txt
 
 # Migrations must be reviewed and applied separately; never during git pull.
 (
   cd backend
-  set -a
-  # shellcheck disable=SC1090
-  source "$APP_CONFIG"
-  set +a
-  [[ "${ENVIRONMENT:-}" == "production" && "${STRIPE_ENABLED:-false}" == false &&
-     -z "${STRIPE_SECRET_KEY:-}" && -z "${MERCADO_PAGO_ACCESS_TOKEN:-}" &&
-     "${WITHDRAWALS_EXECUTION_ENABLED:-false}" == false ]] || exit 78
   .venv/bin/alembic current --check-heads >/dev/null
 ) || { echo "MIGRATION_GATE_BLOCKED: DB head differs; manual review needed" >&2; exit 2; }
 
 pm2 restart deploy/pm2/ecosystem.config.cjs --update-env >/dev/null
 for _ in {1..20}; do
   if curl -fsS --max-time 3 http://127.0.0.1:18090/api/v1/ready \
-      | python3.13 -c 'import json,sys; assert json.load(sys.stdin).get("ready") is True' 2>/dev/null; then
+      | python3.13 -c 'import json,sys; r=json.load(sys.stdin); assert r.get("ready") is True and r.get("database") is True and r.get("redis") is True' 2>/dev/null; then
     pm2 jlist | python3.13 -c 'import json,sys; x={p["name"]:p["pm2_env"]["status"] for p in json.load(sys.stdin)}; assert x.get("talaeats-pm2-api-stage")=="online" and x.get("talaeats-pm2-worker-stage")=="online"' || exit 2
     echo "PM2_STAGE_DEPLOY_PASS sha=$expected_sha"
     exit 0
