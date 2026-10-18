@@ -35,7 +35,7 @@ jobs:
           set -euo pipefail
           umask 077
           for key in VPS_HOST VPS_USER VPS_SSH_PRIVATE_KEY VPS_SSH_KNOWN_HOSTS; do
-            if [[ -z "@{!key}" ]]; then
+            if [[ -z "${!key}" ]]; then
               echo "::error::Falta secreto $key para PM2 staging"; exit 1
             fi
           done
