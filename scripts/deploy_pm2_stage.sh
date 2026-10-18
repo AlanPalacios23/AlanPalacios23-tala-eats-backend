@@ -55,7 +55,7 @@ backend/.venv/bin/python -m pip install --disable-pip-version-check -q -r backen
   .venv/bin/alembic current --check-heads >/dev/null
 ) || { echo "MIGRATION_GATE_BLOCKED: DB head differs; manual review needed" >&2; exit 2; }
 
-pm2 startOrReload deploy/pm2/ecosystem.config.cjs --update-env >/dev/null
+pm2 restart deploy/pm2/ecosystem.config.cjs --update-env >/dev/null
 for _ in {1..20}; do
   if curl -fsS --max-time 3 http://127.0.0.1:18090/api/v1/ready \
       | python3.13 -c 'import json,sys; assert json.load(sys.stdin).get("ready") is True' 2>/dev/null; then
