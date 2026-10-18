@@ -9,6 +9,7 @@ on:
       - '.github/workflows/kali-stage-agent-qa.yml'
       - 'docs/KALI-PULL-AGENT-STAGING.md'
       - 'scripts/kali_first_access_readonly.sh'
+      - 'scripts/kali_502_triage_readonly.sh'
   push:
     branches: [main]
   workflow_dispatch:
@@ -39,4 +40,21 @@ jobs:
           assert 'TALA_KALI_PREFLIGHT_END_READONLY' in code
           assert 'docker ps --format' in code and 'curl --silent' in code
           print('KALI_PREFLIGHT_STATIC_SAFE_PASS')
+          PY
+      - name: Kali 502 diagnostic must classify logs without exposing them
+        run: |
+          set -euo pipefail
+          bash -n scripts/kali_502_triage_readonly.sh
+          python - <<'PY'
+          from pathlib import Path
+          code=Path('scripts/kali_502_triage_readonly.sh').read_text()
+          assert 'RAW_LOGS_NOT_PRINTED' in code
+          assert 'EXCEPTION_TYPE' in code
+          assert 'docker logs --tail 120' in code
+          assert 'TALA_502_TRIAGE_END_READONLY' in code
+          for line in code.splitlines():
+              if line.lstrip().startswith('#'): continue
+              for forbidden in ('sudo ', 'systemctl restart', 'systemctl start', 'docker restart', 'docker stop', 'docker compose up', 'docker exec', 'docker inspect -f', 'docker rm ', 'git pull', 'apt install'):
+                  assert forbidden not in line, forbidden
+          print('KALI_502_TRIAGE_STATIC_SAFE_PASS')
           PY
