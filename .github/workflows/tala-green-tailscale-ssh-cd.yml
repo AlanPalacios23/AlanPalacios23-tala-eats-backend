@@ -25,11 +25,11 @@ jobs:
   gate:
     name: SHA main + cinco CI exitosos (o probe)
     if: >-
-      [[ github.event_name == 'workflow_dispatch' ||
+      ${{ github.event_name == 'workflow_dispatch' ||
          (vars.TALAEATS_GREEN_CD_ENABLED == 'YES' &&
           github.event.workflow_run.event == 'push' &&
           github.event.workflow_run.head_branch == 'main' &&
-          github.event.workflow_run.conclusion == 'success') ]]
+          github.event.workflow_run.conclusion == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     outputs:
@@ -111,17 +111,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ${{ -n "$SSH_HOST" && -n "$SSH_KEY" && -n "$SSH_KNOWN_HOSTS" && -n "$SSH_USER" }}
-          ${{ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ }}
-          ${{ "$SSH_PORT" =~ ^[0-9]{1,5}$ }}
+          [[ -n "$SSH_HOST" && -n "$SSH_KEY" && -n "$SSH_KNOWN_HOSTS" && -n "$SSH_USER" ]]
+          [[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ ]]
           (( 10#$SSH_PORT >= 1 && 10#$SSH_PORT <= 65535 ))
           # Never connect to local/LAN/private-public arbitrary hosts;
           # Tailscale IP or MagicDNS only.
           [[ "$SSH_HOST" =~ ^100\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ||
              "$SSH_HOST" =~ ^[a-z0-9.-]+\.ts\.net$ ]]
-          if ${{ "[[ github.event_name }}" != "workflow_dispatch" ]]; then
-            ${{ "$GREEN_CD_ENABLED" == "YES" }}
-            ${{ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ }}
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" ]]; then
+            [[ "$GREEN_CD_ENABLED" == "YES" ]]
+            [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           fi
           mkdir -p "$RUNNER_TEMP/tala-green-ssh"
           chmod 700 "$RUNNER_TEMP/tala-green-ssh"
@@ -132,7 +132,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ${{ "[[ github.event_name }}" == "workflow_dispatch" ]]; then
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             command="talaeats-green-cd probe"
           else
             command="talaeats-green-cd deploy $TARGET_SHA"
