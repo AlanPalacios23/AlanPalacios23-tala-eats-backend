@@ -1,0 +1,59 @@
+name: Tala Eats | Auto deploy Git Pull + PM2 por SSH (staging)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'deploy/pm2/**'
+      - 'scripts/deploy_pm2_stage.sh'
+      - '.github/workflows/pm2-ssh-auto-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: talaeats-pm2-staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  auto-deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: talaeats-pm2-staging
+    timeout-minutes: 15
+    env:
+      VPS_HOST: ${{ secrets.PM2_SSH_HOST } }
+      VPS_USER: ${{ secrets.PM2_SSH_USER } }
+      VPS_SSH_PRIVATE_KEY: ${{ secrets.PM2_SSH_PRIVATE_KEY } }
+      VPS_SSH_KNOWN_HOSTS: ${{ secrets.PM2_SSH_KNOWN_HOSTS } }
+    steps:
+      - name: Git pull y reinicio PM2 por SSH (sin Docker)
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          for key in VPS_HOST VPS_USER VPS_SSH_PRIVATE_KEY VPS_SSH_KNOWN_HOSTS; do
+            if [[ -z "@{!key}" ]]; then
+              echo "::error::Falta secreto $key para PM2 staging"; exit 1
+            fi
+          done
+          case "$VPS_HOST" in *[!a-zA-Z0-9.:-]*|"") echo "::error::Host SSH inválido"; exit 1;; esac
+          case "$VPS_USER" in *[!a-zA-Z0-9_-]*|"") echo "::error::Usuario SSH inválido"; exit 1;; esac
+          keyfile="$RUNNER_TEMP/tala_pm2_deploy_key"
+          hostfile="$RUNNER_TEMP/tala_pm2_known_hosts"
+          trap 'rm -f "$keyfile" "$hostfile"' EXIT
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > "$keyfile"
+          printf '%s\n' "$VPS_SSH_KNOWN_HOSTS" > "$hostfile"
+          chmod 600 "$keyfile" "$hostfile"
+          ssh-keygen -y -P '' -f "$keyfile" >/dev/null
+          ssh -i "$keyfile" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o PasswordAuthentication=no \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$hostfile" \
+            -o ConnectTimeout=12 \
+            "$VPS_USER@$VPS_HOST" \
+            "bash ~/tala-eats-pm2-stage/scripts/deploy_pm2_stage.sh $GITHUB_SHA"
