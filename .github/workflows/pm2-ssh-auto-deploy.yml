@@ -24,10 +24,10 @@ jobs:
     environment: talaeats-pm2-staging
     timeout-minutes: 15
     env:
-      VPS_HOST: ${{ secrets.PM2_SSH_HOST } }
-      VPS_USER: ${{ secrets.PM2_SSH_USER } }
-      VPS_SSH_PRIVATE_KEY: ${{ secrets.PM2_SSH_PRIVATE_KEY } }
-      VPS_SSH_KNOWN_HOSTS: ${{ secrets.PM2_SSH_KNOWN_HOSTS } }
+      VPS_HOST: ${{ secrets.PM2_SSH_HOST }}
+      VPS_USER: ${{ secrets.PM2_SSH_USER }}
+      VPS_SSH_PRIVATE_KEY: ${{ secrets.PM2_SSH_PRIVATE_KEY }}
+      VPS_SSH_KNOWN_HOSTS: ${{ secrets.PM2_SSH_KNOWN_HOSTS }}
     steps:
       - name: Git pull y reinicio PM2 por SSH (sin Docker)
         shell: bash
