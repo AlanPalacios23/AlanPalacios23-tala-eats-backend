@@ -10,6 +10,8 @@ on:
       - 'docs/KALI-PULL-AGENT-STAGING.md'
       - 'scripts/kali_first_access_readonly.sh'
       - 'scripts/kali_502_triage_readonly.sh'
+      - 'scripts/kali_v3_pg_diagnostic_readonly.py'
+      - 'scripts/test_kali_v3_pg_diagnostic_readonly.py'
   push:
     branches: [main]
   workflow_dispatch:
@@ -27,6 +29,18 @@ jobs:
           python-version: '3.13'
       - run: python -m py_compile scripts/kali_stage_pull_agent.py scripts/test_kali_stage_pull_agent.py
       - run: python scripts/test_kali_stage_pull_agent.py
+      - name: PostgreSQL V3 classified error test (17 fixtures, no real Docker)
+        run: |
+          python -m py_compile scripts/kali_v3_pg_diagnostic_readonly.py scripts/test_kali_v3_pg_diagnostic_readonly.py
+          python scripts/test_kali_v3_pg_diagnostic_readonly.py
+          python - <<'PY'
+          from pathlib import Path
+          code=Path('scripts/kali_v3_pg_diagnostic_readonly.py').read_text()
+          assert 'docker","logs' in code and 'LOG_CLASSIFICATION_ONLY_NO_RAW_LOGS' in code
+          for forbidden in ('docker restart','docker stop','docker compose','docker rm','subprocess.Popen','os.system(','.Config.Env','alembic upgrade'):
+              assert forbidden not in code, forbidden
+          print('KALI_V3_DB_DIAGNOSTIC_SAFE_PASS')
+          PY
       - name: Kali preinstallation inventory bash syntax and safety contract
         run: |
           set -euo pipefail
