@@ -1,0 +1,47 @@
+name: TALA EATS | Green SSH CD contract (offline)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/kali_green_cd.py'
+      - 'scripts/kali_green_cd_ssh_receiver.sh'
+      - 'scripts/green_cd_contract_test.py'
+      - '.github/workflows/tala-green-tailscale-ssh-cd.yml'
+      - '.github/workflows/tala-green-cd-contract-ci.yml'
+      - '.github/workflows/backend-container-build.yml'
+      - '.github/workflows/backend-security-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-safety:
+    name: QA Python/Bash/YAML GREEN sin tocar Kali ni SSH
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sintaxis shell/Python
+        run: |
+          bash -n scripts/kali_green_cd_ssh_receiver.sh
+          python3 -m py_compile scripts/kali_green_cd.py scripts/green_cd_contract_test.py
+      - name: Autoprueba receptor Python
+        run: python3 scripts/kali_green_cd.py --probe
+      - name: Contrato servicios protegidos y SHA
+        run: python3 scripts/green_cd_contract_test.py
+      - name: Validar YAML Actions y scripts bash sin desplegar
+        run: |
+          python3 -m pip install --disable-pip-version-check 'PyYAML==6.0.2'
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+          doc=yaml.load(Path('.github/workflows/tala-green-tailscale-ssh-cd.yml').read_text(),Loader=yaml.BaseLoader)
+          assert 'workflow_run' in doc['on'] and 'workflow_dispatch' in doc['on']
+          assert set(doc['jobs']) == {'gate','ssh'}
+          env=doc['jobs']['ssh']['steps']
+          assert any(s.get('uses')=='tailscale/github-action@v4' for s in env)
+          assert 'talaeats-green' in Path('scripts/kali_green_cd.py').read_text()
+          print('GREEN_ACTIONS_YAML_PASS')
+          PY
