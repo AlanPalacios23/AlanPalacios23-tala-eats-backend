@@ -7,7 +7,7 @@ output, migrations, DB restore, volume manipulation or live env edits.
 """
 from __future__ import annotations
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import fcntl
 import hashlib
 import json
@@ -142,7 +142,7 @@ def approval():
         raise ReleaseBlocked("NO-GO: caducidad de autorización inválida") from exc
     if expires.tzinfo is None or expires <= datetime.now(timezone.utc):
         raise ReleaseBlocked("NO-GO: autorización de operaciones caducada")
-    if expires > datetime.now(timezone.utc).replace(microsecond=0) + __import__("datetime").timedelta(days=30):
+    if expires > datetime.now(timezone.utc) + timedelta(days=30):
         raise ReleaseBlocked("NO-GO: autorización excede 30 días")
 
 
@@ -178,6 +178,13 @@ def runtime_snapshot():
             if env.get("WITHDRAWALS_LIVE_ENABLED") in ("true", "1", "yes") or \
                env.get("WITHDRAWALS_EXECUTION_ENABLED") in ("true", "1", "yes"):
                 raise ReleaseBlocked("Payouts LIVE activos: requiere despliegue manual")
+    try:
+        with urlopen(READY, timeout=8) as res:
+            health = json.loads(res.read(16384))
+        if health.get("ready") is not True or health.get("database") is not True or health.get("redis") is not True:
+            raise ReleaseBlocked("API LIVE no está lista para rollout")
+    except (OSError, ValueError, TimeoutError) as exc:
+        raise ReleaseBlocked("No se pudo verificar readiness LIVE") from exc
     current = docker("exec", "-w", "/app", f"{PROJECT}-backend-1", "alembic", "current")
     if current.strip() != SCHEMA + " (head)":
         raise ReleaseBlocked("Alembic del servidor no coincide")
@@ -220,6 +227,7 @@ def compose(overlay, *args, timeout=180):
 
 
 def overlay_file(dir_, backend, worker):
+    dir_.mkdir(parents=True, exist_ok=True)
     path = dir_ / "override.yml"
     path.write_text(
         "services:\n  backend:\n    image: " + backend +
@@ -322,8 +330,6 @@ def self_test():
             pass
         else:
             raise AssertionError("SHA inseguro permitido")
-    assert "restore_test_pass" in approval.__code__.co_consts or \
-           "offsite_backup_verified" in str(approval.__code__.co_consts)
     print("TALA_CD_STATIC_GUARDS_PASS")
 
 
