@@ -20,8 +20,9 @@ case "${1:-}" in
     [[ "$READY" == http://127.0.0.1:18182/* ]]
     echo "KALI_GREEN_BOOT_SAFETY_SELFTEST_PASS"
     exit 0 ;;
-  --launch) ;;
-  *) echo "Uso: bash kali_clean_green_boot.sh --launch|--self-test"; exit 2 ;;
+  --launch) MODE=launch ;;
+  --resume) MODE=resume ;;
+  *) echo "Uso: bash kali_clean_green_boot.sh --launch|--resume|--self-test"; exit 2 ;;
 esac
 
 for executable in docker python3; do
@@ -42,6 +43,36 @@ actual="$(docker image inspect --format '{{index .Config.Labels "org.opencontain
 docker inspect "$old_db" --format '{{index .Config.Labels "com.docker.compose.project"}}' |
   grep -qx "talaeats-v3" || { echo "ABORT: el proyecto antiguo cambió"; exit 2; }
 
+if [[ "$MODE" == "resume" ]]; then
+  # Do not regenerate secrets, overwrite files or discard volumes.
+  [[ -d "$DIR" && -f "$DIR/compose.yml" && -f "$DIR/green.env" &&
+     ! -L "$DIR" && ! -L "$DIR/green.env" ]] || {
+    echo "ABORT: falta la instalación verde anterior; no crear/limpiar automáticamente"
+    exit 2
+  }
+  python3 - "$DIR/green.env" <<'PY'
+from pathlib import Path
+import sys
+rows = Path(sys.argv[1]).read_text().splitlines()
+env = dict(row.split("=", 1) for row in rows if "=" in row)
+for key, expected in {
+    "ENVIRONMENT": "production",
+    "SEED_DEMO_DATA": "false",
+    "BOOTSTRAP_ADMIN_ENABLED": "false",
+    "AUTO_MIGRATE_ON_START": "false",
+    "STRIPE_ENABLED": "false",
+    "WITHDRAWALS_EXECUTION_ENABLED": "false",
+    "WITHDRAWALS_LIVE_ENABLED": "false",
+}.items():
+    if env.get(key) != expected:
+        raise SystemExit("GREEN_RESUME_ABORT: configuración inesperada en " + key)
+if env.get("DATABASE_URL", "").split("@")[-1] != "db:5432/tala_green":
+    raise SystemExit("GREEN_RESUME_ABORT: DB no apunta al proyecto verde")
+print("GREEN_RESUME_NO_DEMOS_CONFIG_PASS")
+PY
+fi
+
+if [[ "$MODE" == "launch" ]]; then
 # No overwrites or replacement of an existing green instance.
 [[ ! -e "$DIR" ]] || {
   echo "ABORT: carpeta green ya existe, se conserva sin sobrescribir. Revisa el estado manualmente."
@@ -195,6 +226,7 @@ with os.fdopen(fd, "w") as f:
         f.write(f"{k}={v}\n")
 print("GREEN_LOCAL_SECRETS_CREATED (no se muestran)")
 PY
+fi
 
 compose() {
   docker compose -p "$PROJECT" --project-directory "$DIR" --env-file "$DIR/green.env" -f "$DIR/compose.yml" "$@"
@@ -210,8 +242,24 @@ for i in {1..50}; do
 done
 [[ "$d" == healthy && "$r" == healthy ]] || { echo "GREEN_DEPENDENCIES_NOT_READY"; exit 2; }
 
-echo "Aplicando migraciones SOLO sobre la base green vacía..."
-compose --profile migration run --rm --no-deps migrate
+echo "Verificando conexión desde el contenedor migrador al PostgreSQL verde..."
+probe=0
+for attempt in {1..12}; do
+  if compose --profile migration run --rm migrate python -c \
+    'import os,psycopg;psycopg.connect(os.environ["DATABASE_URL"].replace("postgresql+psycopg://","postgresql://"),connect_timeout=4).close()' \
+    >/dev/null 2>&1; then
+    probe=1
+    break
+  fi
+  sleep 5
+done
+[[ "$probe" == "1" ]] || {
+  echo "GREEN_DB_FROM_MIGRATOR_UNREACHABLE: abortado sin modificar producción"
+  exit 2
+}
+echo "GREEN_DB_NETWORK_PASS"
+echo "Aplicando migraciones SOLO sobre la base green..."
+compose --profile migration run --rm migrate
 
 echo "Confirmando que no existen usuarios, restaurantes ni pedidos..."
 counts="$(compose exec -T db psql -X -qAt -v ON_ERROR_STOP=1 -U tala_green -d tala_green -c "SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM restaurants), (SELECT count(*) FROM orders)")"
