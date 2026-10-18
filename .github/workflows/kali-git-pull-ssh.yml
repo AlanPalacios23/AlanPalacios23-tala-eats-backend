@@ -1,0 +1,80 @@
+name: Kali | git pull automático por SSH
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "probe comprueba SSH; pull sincroniza Git en Kali"
+        required: true
+        type: choice
+        options: [probe, pull]
+        default: probe
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kali-git-pull
+  cancel-in-progress: false
+
+jobs:
+  git-pull:
+    # No tocar Kali por un push hasta habilitarlo explícitamente.
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.KALI_GIT_PULL_ENABLED == 'YES' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      KALI_SSH_HOST: ${{ secrets.KALI_SSH_HOST }}
+      KALI_SSH_PORT: ${{ secrets.KALI_SSH_PORT }}
+      KALI_SSH_USER: ${{ secrets.KALI_SSH_USER }}
+      KALI_SSH_PRIVATE_KEY: ${{ secrets.KALI_SSH_PRIVATE_KEY }}
+      KALI_SSH_KNOWN_HOSTS: ${{ secrets.KALI_SSH_KNOWN_HOSTS }}
+      OPERATION: ${{ github.event_name == 'workflow_dispatch' && inputs.operation || 'pull' }}
+    steps:
+      - name: Preparar conexión SSH verificada
+        shell: bash
+        run: |
+          set -euo pipefail
+          for key in KALI_SSH_HOST KALI_SSH_USER KALI_SSH_PRIVATE_KEY KALI_SSH_KNOWN_HOSTS; do
+            [[ -n "${!key}" ]] || { echo "::error::Falta el secret $key"; exit 1; }
+          done
+          [[ "${KALI_SSH_PORT:-22}" =~ ^[0-9]{1,5}$ ]] || { echo "::error::Puerto SSH inválido"; exit 1; }
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$KALI_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519_kali
+          printf '%s\n' "$KALI_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519_kali ~/.ssh/known_hosts
+
+      - name: Probe SSH o git pull --ff-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          PORT="${KALI_SSH_PORT:-22}"
+          SSH=(ssh -T -i "$HOME/.ssh/id_ed25519_kali" -p "$PORT"
+            -o BatchMode=yes -o ConnectTimeout=15
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -- "$KALI_SSH_USER@$KALI_SSH_HOST")
+          if [[ "$OPERATION" == probe ]]; then
+            "${SSH[@]}" 'printf "KALI_SSH_PROBE_OK\\n"'
+          elif [[ "$OPERATION" == pull ]]; then
+            "${SSH[@]}" 'bash -se' <<'KALI'
+          set -euo pipefail
+          cd /home/alan/tala-backend-audit
+          [[ "$(pwd -P)" == "/home/alan/tala-backend-audit" ]] || exit 2
+          [[ "$(git rev-parse --abbrev-ref HEAD)" == main ]] || {
+            echo "KALI_GIT_PULL_BLOCKED: checkout no está en main" >&2; exit 2;
+          }
+          [[ -z "$(git status --porcelain --untracked-files=no)" ]] || {
+            echo "KALI_GIT_PULL_BLOCKED: hay cambios locales" >&2; exit 2;
+          }
+          git pull --ff-only origin main
+          echo "KALI_GIT_PULL_PASS $(git rev-parse HEAD)"
+          echo "Solo archivos Git; NO se reinició backend de producción."
+          KALI
+          else
+            echo "::error::Operación inválida"
+            exit 2
+          fi
