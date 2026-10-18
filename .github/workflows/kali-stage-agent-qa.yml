@@ -10,11 +10,6 @@ on:
       - 'docs/KALI-PULL-AGENT-STAGING.md'
   push:
     branches: [main]
-    paths:
-      - 'scripts/kali_stage_pull_agent.py'
-      - 'scripts/test_kali_stage_pull_agent.py'
-      - '.github/workflows/kali-stage-approve.yml'
-      - '.github/workflows/kali-stage-agent-qa.yml'
   workflow_dispatch:
 permissions:
   contents: read
