@@ -6,14 +6,6 @@ on:
     - cron: '19 13 * * 1'
   push:
     branches: [main]
-    paths:
-      - 'scripts/kali_stage_pull_agent.py'
-      - 'scripts/test_kali_stage_pull_agent.py'
-      - '.github/workflows/kali-stage-approve.yml'
-      - '.github/workflows/kali-stage-agent-qa.yml'
-      - 'backend/requirements.txt'
-      - 'backend/app/**'
-      - '.github/workflows/backend-security-audit.yml'
   pull_request:
     branches: [main]
     paths:
