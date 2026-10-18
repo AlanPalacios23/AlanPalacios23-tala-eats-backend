@@ -1,0 +1,57 @@
+name: TALA EATS | Tailscale SSH Kali (manual, solo lectura)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kali-ssh-connectivity:
+    name: Verificar SSH por Tailscale (sin deploy)
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    environment: talaeats-production
+    timeout-minutes: 10
+    steps:
+      - name: Conectar runner a tailnet
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:talaeats-ci
+
+      - name: Verificar identidad SSH del servidor y acceso de solo lectura
+        shell: bash
+        env:
+          KALI_SSH_PRIVATE_KEY: ${{ secrets.KALI_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "$tmpdir"' EXIT
+          printf '%s\n' "$KALI_SSH_PRIVATE_KEY" > "$tmpdir/id_ed25519"
+          unset KALI_SSH_PRIVATE_KEY
+          chmod 600 "$tmpdir/id_ed25519"
+
+          # ssh-keyscan no autentica por sí mismo: se compara con
+          # la huella ED25519 verificada previamente en Kali.
+          ssh-keyscan -T 10 -t ed25519 100.81.234.1 2>/dev/null > "$tmpdir/known_hosts"
+          test -s "$tmpdir/known_hosts"
+          actual="$(ssh-keygen -lf "$tmpdir/known_hosts" -E sha256 | awk '{print $2}')"
+          expected='SHA256:NBzEhEuiG8qbodvDtrhihAWfHbvtpNaOEKV67s/v7A8'
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::Huella SSH inesperada; conexión rechazada."
+            exit 1
+          fi
+
+          ssh -i "$tmpdir/id_ed25519" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$tmpdir/known_hosts" \
+            -o ConnectTimeout=12 \
+            talaeats-ci@100.81.234.1 \
+            'printf "TAILSCALE_GITHUB_SSH_PASS\\n"; whoami; hostname; id'
+
+          echo 'Verificación completada; sin comandos de despliegue.'
