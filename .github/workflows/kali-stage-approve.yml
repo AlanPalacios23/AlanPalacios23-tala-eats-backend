@@ -17,10 +17,23 @@ permissions:
 jobs:
   approve:
     name: Approved Kali staging SHA (no server access)
-    if: ${{ github.ref == 'refs/heads/main' && github.actor == 'AlanPalacios23' && inputs.approval == 'APPROVE_STAGE' }}
+
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - name: Reject non-owner or non-APPROVE_STAGE dispatch
+        shell: bash
+        env:
+          REF: ${{ github.ref }}
+          ACTOR: ${{ github.actor }}
+          APPROVAL: ${{ inputs.approval }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF" != "refs/heads/main" || "$ACTOR" != "AlanPalacios23" || "$APPROVAL" != "APPROVE_STAGE" ]]; then
+            echo "::error::DENIED: manual APPROVE_STAGE from owner on main only"
+            exit 1
+          fi
+          echo "MANUAL_OWNER_STAGE_APPROVAL_PASS"
       - name: Confirm all seven CI checks on this exact main SHA
         env:
           GH_TOKEN: ${{ github.token }}
