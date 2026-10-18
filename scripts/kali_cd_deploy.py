@@ -27,7 +27,7 @@ PROJECT = "talaeats-v3"
 LIVE = Path.home() / "talaeats-releases/TalaEats-Web-v1.6.4-CONNECT-SELF-SERVICE-HF1-LIVE"
 COMPOSE = LIVE / "docker-compose.cloudflare.yml"
 APPROVAL = Path("/etc/talaeats/cd-approval.json")
-BACKUP = Path.home() / "talaeats-backups/20261018T042833Z-encrypted.VkjIWd6q"
+BACKUPS = Path.home() / "talaeats-backups"
 READY = "http://127.0.0.1:8082/api/v1/ready"
 SCHEMA = "f21i00000001"
 SERVICES = ("backend", "worker")
@@ -101,9 +101,21 @@ def checkout_sha(sha):
 
 
 def verify_backup():
-    if not BACKUP.is_dir() or BACKUP.is_symlink():
-        raise ReleaseBlocked("Falta respaldo cifrado local")
-    manifest = BACKUP / "SHA256SUMS.txt"
+    # The previous backup is immutable; require a newly-created encrypted
+    # backup at each release, so an old October dump cannot authorize CD
+    # indefinitely. An independent, actually verified off-host pipeline
+    # remains mandatory via the root-owned approval.
+    if not BACKUPS.is_dir() or BACKUPS.is_symlink():
+        raise ReleaseBlocked("No hay directorio de respaldos")
+    candidates = [p for p in BACKUPS.iterdir() if p.is_dir() and not p.is_symlink()
+                  and re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-encrypted\.[A-Za-z0-9]+", p.name)]
+    if not candidates:
+        raise ReleaseBlocked("Falta respaldo cifrado reciente")
+    backup = max(candidates, key=lambda p: p.stat().st_mtime)
+    age = time.time() - backup.stat().st_mtime
+    if age < 0 or age > 72 * 3600:
+        raise ReleaseBlocked("Backup no tiene menos de 72 horas")
+    manifest = backup / "SHA256SUMS.txt"
     if not manifest.is_file() or manifest.is_symlink():
         raise ReleaseBlocked("Manifiesto SHA256 ausente")
     found = set()
@@ -112,7 +124,7 @@ def verify_backup():
         if not m:
             raise ReleaseBlocked("Manifiesto SHA256 inválido")
         expected, name = m.groups()
-        file = BACKUP / name
+        file = backup / name
         if not file.is_file() or file.is_symlink() or sha256(file) != expected:
             raise ReleaseBlocked("Respaldo alterado o no disponible: " + name)
         found.add(name)
@@ -126,7 +138,8 @@ def approval():
     if not APPROVAL.is_file() or APPROVAL.is_symlink():
         raise ReleaseBlocked("NO-GO: falta aprobación local de recuperación")
     st = APPROVAL.stat()
-    if st.st_uid != 0 or st.st_mode & 0o022:
+    parent = APPROVAL.parent.stat()
+    if st.st_uid != 0 or st.st_mode & 0o022 or parent.st_uid != 0 or parent.st_mode & 0o022:
         raise ReleaseBlocked("NO-GO: la aprobación debe pertenecer a root")
     data = json.loads(APPROVAL.read_text(encoding="utf-8"))
     if any(data.get(k) is not True for k in (
