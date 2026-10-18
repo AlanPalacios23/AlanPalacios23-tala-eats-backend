@@ -6,6 +6,7 @@ on:
     paths:
       - 'deploy/pm2/**'
       - 'scripts/deploy_pm2_stage.sh'
+      - 'scripts/pm2_vps_readonly_probe.sh'
       - 'docs/PM2-SIMPLE-AUTO-DEPLOY-SSH.md'
       - '.github/workflows/pm2-ssh-auto-deploy.yml'
       - '.github/workflows/pm2-ssh-static-check.yml'
@@ -30,6 +31,7 @@ jobs:
           bash -n deploy/pm2/validate-stage.sh
           bash -n deploy/pm2/run-python.sh
           bash -n scripts/deploy_pm2_stage.sh
+          bash -n scripts/pm2_vps_readonly_probe.sh
           node --check deploy/pm2/ecosystem.config.cjs
       - name: Execute 30 disposable PM2 failure/success scenarios (no SSH/no network)
         run: python3.13 scripts/qa_pm2_stage_offline.py
