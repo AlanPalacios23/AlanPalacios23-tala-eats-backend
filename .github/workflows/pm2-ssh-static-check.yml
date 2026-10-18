@@ -36,7 +36,7 @@ jobs:
           w = Path('.github/workflows/pm2-ssh-auto-deploy.yml').read_text()
           assert 'talaeats-pm2-api-stage' in p and 'talaeats-pm2-worker-stage' in p
           assert '--host 127.0.0.1 --port 18090' in r
-          assert 'pm2 startOrReload' in d and 'git pull --ff-only' in d
+          assert 'pm2 restart' in d and 'git pull --ff-only' in d
           assert 'alembic current --check-heads' in d and 'alembic upgrade' not in d
           assert '192.168.100.45' not in w and '100.81.234.1' not in w
           assert 'docker ' not in d.lower() and 'docker ' not in w.lower()
