@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll approved GitHub staging releases, outbound HTTPS only
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=10min
+RandomizedDelaySec=40s
+Unit=talaeats-kali-stage-agent.service
+
+[Install]
+WantedBy=timers.target
