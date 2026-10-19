@@ -600,3 +600,22 @@ model PlatformSupportTicket {
   @@index([orderId])
   @@map("support_tickets")
 }
+
+  
+// E4: READ-ONLY wallet history contract. Financial mutations are DISABLED.
+// Rows in disposable PG15 are synthetic; do not import live money or payouts.
+model StageWalletTransaction {
+  id             Int       @id @default(autoincrement())
+  userId         Int       @map("user_id")
+  kind           String    @db.VarChar(40)
+  amount         Decimal   @db.Decimal(10,2)
+  balanceAfter   Decimal   @map("balance_after") @db.Decimal(10,2)
+  referenceType  String    @default("") @map("reference_type") @db.VarChar(40)
+  referenceId    String    @default("") @map("reference_id") @db.VarChar(120)
+  description    String    @default("") @db.VarChar(300)
+  idempotencyKey String?   @unique @map("idempotency_key") @db.VarChar(180)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  @@index([userId,createdAt])
+  @@index([kind])
+  @@map("wallet_transactions")
+}
