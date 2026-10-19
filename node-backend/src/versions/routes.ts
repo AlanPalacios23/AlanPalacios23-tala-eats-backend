@@ -1463,10 +1463,12 @@ v9Router.get('/experiments/active',async(req,res)=>{
   const options=JSON.parse(exp.variantsJson) as string[];
   const variants=options.length?options:['control'];
   const index=userExperimentBucket('variant:'+exp.key+':'+who.id)%variants.length;
-  const x=await db.stageExperimentAssignment.upsert({where:{
-   uq_experiment_user:{experimentId:exp.id,userId:who.id}},
-   create:{experimentId:exp.id,userId:who.id,variant:variants[index]!},
-   update:{}});
+  await db.stageExperimentAssignment.createMany({data:[{
+   experimentId:exp.id,userId:who.id,variant:variants[index]!}],
+   skipDuplicates:true});
+  const x=await db.stageExperimentAssignment.findUnique({where:{
+   uq_experiment_user:{experimentId:exp.id,userId:who.id}}});
+  if(!x)return bad(503,'Asignación de cohorte no disponible');
   rows.push({key:exp.key,variant:x.variant,metric:exp.primaryMetric});
  }
  res.setHeader('Cache-Control','private, no-store');
