@@ -6,6 +6,8 @@ import { config } from './config.js';
 import { stripeWebhook } from './webhook.js';
 import { authRouter } from './auth/routes.js';
 import { platformRouter, platformErrors } from './platform/routes.js';
+import { adminRouter, operationsRouter, opsErrors } from './operational/routes.js';
+import { v9Router, v10Router, v11Router } from './versions/routes.js';
 import { marketplaceRouter, ownerRouter, stageOrdersRouter,
   stageDriverRouter, marketplaceErrors } from './marketplace/routes.js';
 
@@ -24,6 +26,12 @@ if (config.MARKETPLACE_B_ENABLED === 'true') {
   app.use('/api/v1/orders', stageOrdersRouter);
   app.use('/api/v1/driver', stageDriverRouter);
   app.use('/api/v1/platform', platformRouter);
+  app.use('/api/v1/admin', adminRouter);
+  app.use('/api/v1/operations', operationsRouter);
+  app.use('/api/v1/v9', v9Router);
+  app.use('/api/v1/v10', v10Router);
+  app.use('/api/v1/v11', v11Router);
+  app.use(opsErrors);
   app.use(platformErrors);
   app.use(marketplaceErrors);
 }
