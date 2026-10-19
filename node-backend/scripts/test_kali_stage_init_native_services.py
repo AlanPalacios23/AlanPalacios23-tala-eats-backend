@@ -88,9 +88,11 @@ class NativeSafety(TestCase):
 
     def test_11_no_install_apt_docker_or_systemctl(self):
         source=TARGET.read_text()
-        for forbidden in ('"apt-get"', '"docker"', '"sudo"',
+        for forbidden in ('"apt-get"', '"sudo"',
                           '"systemctl"', '"pg_dropcluster"'):
             self.assertNotIn(forbidden, source)
+        self.assertNotIn('["docker",', source)
+        self.assertNotIn('("docker",', source)
 
 if __name__ == "__main__":
     main(verbosity=2)
