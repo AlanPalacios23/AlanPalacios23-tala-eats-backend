@@ -1,13 +1,11 @@
 [Unit]
-Description=TALA EATS staging Node24 PM2 API + receipt worker
+Description=TALA EATS staging user Node24 PM2 API + BullMQ worker
 Requires=tala-node-stage-pg15.service tala-node-stage-redis.service
-After=network.target tala-node-stage-pg15.service tala-node-stage-redis.service
+After=tala-node-stage-pg15.service tala-node-stage-redis.service
 AssertPathExists=/home/tala-node-stage/.pm2/dump.pm2
 
 [Service]
 Type=forking
-User=tala-node-stage
-Group=tala-node-stage
 WorkingDirectory=/home/tala-node-stage/talaeats-node-source/node-backend
 Environment=HOME=/home/tala-node-stage
 Environment=PM2_HOME=/home/tala-node-stage/.pm2
@@ -23,10 +21,7 @@ TimeoutStartSec=120
 TimeoutStopSec=50
 StartLimitIntervalSec=180
 StartLimitBurst=3
-NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectSystem=full
 UMask=0077
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
