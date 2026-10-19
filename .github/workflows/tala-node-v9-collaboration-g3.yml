@@ -1,0 +1,111 @@
+name: TALA EATS | Node V9 Collaboration and Privacy G3 PG15 Redis8
+on:
+  push:
+    branches: [feat/node-v9-collaboration-privacy-g3-20261019]
+  pull_request:
+    branches: [feat/node-v9-consumer-merchant-g2-20261019]
+permissions:
+  contents: read
+jobs:
+  stage-cash-pickup:
+    name: G3 +20 V9 privacy, corporate, group carts, CRM and previous regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: tala_node_stage
+          POSTGRES_PASSWORD: stage-ci-pass
+          POSTGRES_DB: tala_node_stage
+        ports: ['15435:5432']
+        options: >-
+          --health-cmd "pg_isready -U tala_node_stage -d tala_node_stage"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+      redis:
+        image: redis:8
+        ports: ['16379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      NODE_ENV: staging
+      HOST: 127.0.0.1
+      PORT: '18190'
+      DATABASE_URL: postgresql://tala_node_stage:stage-ci-pass@127.0.0.1:15435/tala_node_stage
+      REDIS_URL: redis://:stage-ci-redis@127.0.0.1:16379/0
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+      AUTH_V02_ENABLED: 'true'
+      MARKETPLACE_B_ENABLED: 'true'
+      STAGE_PICKUP_CASH_CHECKOUT_ENABLED: 'true'
+      AUTH_JWT_SECRET: ci-only-auth-secret-not-shared-with-prod-xxxxxxxxxxxxxxxxxxxxxxxxxx
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Strict Python route inventory unchanged
+        run: |
+          python3 scripts/python_route_inventory.py --check
+          python3 scripts/node_route_coverage.py --check
+          python3 scripts/node_route_coverage.py --json > /tmp/tala-node-first100.json
+          python3 -c 'import json; p=json.load(open("/tmp/tala-node-first100.json")); assert p["structural_matches"]==166, p["structural_matches"]; assert p["python_routes_without_node_declaration"]==86, p["python_routes_without_node_declaration"]'
+      - name: Frozen dependencies and disposable PG15 migrations
+        run: |
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:validate
+          npm run db:migrate:deploy
+      - name: Compilation and unit tests
+        run: |
+          npm run build
+          npm test
+      - name: Secure CI-only Redis
+        run: |
+          node --input-type=module -e '
+            import { Redis } from "ioredis";
+            const r=new Redis("redis://127.0.0.1:16379");
+            await r.config("SET","requirepass","stage-ci-redis");
+            r.disconnect();
+            const secured=new Redis(process.env.REDIS_URL);
+            if(await secured.ping()!=="PONG")process.exitCode=1;
+            secured.disconnect();
+          '
+      - name: Python auth, Phase B and atomic Phase C checkout REST E2E
+        run: |
+          set -euo pipefail
+          node dist/server.js >/tmp/tala-node-cash-stage-e2e.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          node scripts/ci-auth-contract-e2e.mjs
+          node scripts/ci-marketplace-contract-e2e.mjs
+          node scripts/ci-cash-pickup-atomic-e2e.mjs
+          node scripts/ci-order-lifecycle-c2-e2e.mjs
+          node scripts/ci-pickup-complete-c3-e2e.mjs
+          node scripts/ci-python-node-decimal-parity-e2e.mjs
+          node scripts/ci-owner-operational-d1-e2e.mjs
+      - name: Synthetic driver lifecycle integration (separate feature-flagged process)
+        env:
+          STAGE_DRIVER_DELIVERY_ENABLED: 'true'
+        run: |
+          set -euo pipefail
+          node dist/server.js > /tmp/tala-node-driver-d2.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          node scripts/ci-driver-operational-d2-e2e.mjs
+          node scripts/ci-customer-platform-e1-e2e.mjs
+          node scripts/ci-platform-reviews-e2-e2e.mjs
+          node scripts/ci-platform-chat-support-e3-e2e.mjs
+          node scripts/ci-platform-wallet-groups-e4-e2e.mjs
+          node scripts/ci-first-100-routes-f1-e2e.mjs
+          node scripts/ci-operations-mutations-g1-e2e.mjs
+          node scripts/ci-v9-functional-g2-e2e.mjs
+          node scripts/ci-v9-collaboration-privacy-g3-e2e.mjs
+      - name: Fail closed for LIVE credentials
+        run: |
+          ! grep -ER --include='*.ts' -E 'sk_live_|rk_live_|DATABASE_URL_PRODUCTION' src

@@ -801,3 +801,96 @@ model StageWasteRecord {
  @@index([ingredientId])
  @@map("waste_records")
 }
+
+
+model StageGroupCart {
+ id Int @id @default(autoincrement())
+ code String @unique @db.VarChar(12)
+ restaurantId Int @map("restaurant_id")
+ ownerUserId Int @map("owner_user_id")
+ locked Boolean @default(false)
+ createdAt DateTime @default(now()) @map("created_at")
+ items StageGroupCartItem[]
+ @@index([restaurantId])
+ @@index([ownerUserId])
+ @@map("group_carts")
+}
+model StageGroupCartItem {
+ id Int @id @default(autoincrement())
+ groupCartId Int @map("group_cart_id")
+ userId Int @map("user_id")
+ menuItemId Int @map("menu_item_id")
+ quantity Int @default(1)
+ options String @default("")
+ createdAt DateTime @default(now()) @map("created_at")
+ cart StageGroupCart @relation(fields:[groupCartId],references:[id],onDelete:Cascade)
+ @@unique([groupCartId,userId,menuItemId],name:"uq_group_cart_user_item")
+ @@index([groupCartId])
+ @@index([userId])
+ @@index([menuItemId])
+ @@map("group_cart_items")
+}
+model StageCorporateAccount {
+ id Int @id @default(autoincrement())
+ name String @unique @db.VarChar(180)
+ joinCode String @unique @map("join_code") @db.VarChar(30)
+ monthlyBudget Decimal @default(0) @map("monthly_budget") @db.Decimal(12,2)
+ costCenter String @default("GENERAL") @map("cost_center") @db.VarChar(80)
+ active Boolean @default(true)
+ createdAt DateTime @default(now()) @map("created_at")
+ members StageCorporateMember[]
+ @@map("corporate_accounts")
+}
+model StageCorporateMember {
+ id Int @id @default(autoincrement())
+ corporateAccountId Int @map("corporate_account_id")
+ userId Int @map("user_id")
+ employeeCode String @default("") @map("employee_code") @db.VarChar(80)
+ individualBudget Decimal @default(0) @map("individual_budget") @db.Decimal(12,2)
+ active Boolean @default(true)
+ account StageCorporateAccount @relation(fields:[corporateAccountId],references:[id],onDelete:Cascade)
+ @@unique([corporateAccountId,userId],name:"uq_corporate_member")
+ @@index([userId])
+ @@map("corporate_members")
+}
+model StagePrivacyRequest {
+ id Int @id @default(autoincrement())
+ userId Int @map("user_id")
+ requestType String @map("request_type") @db.VarChar(30)
+ status String @default("pending") @db.VarChar(30)
+ resultJson String @default("{}") @map("result_json")
+ createdAt DateTime @default(now()) @map("created_at")
+ completedAt DateTime? @map("completed_at")
+ @@index([userId])
+ @@index([requestType])
+ @@index([status])
+ @@map("privacy_requests")
+}
+model StageMarketingAutomation {
+ id Int @id @default(autoincrement())
+ name String @db.VarChar(180)
+ triggerType String @map("trigger_type") @db.VarChar(80)
+ segment String @default("all") @db.VarChar(80)
+ channel String @default("in_app") @db.VarChar(30)
+ couponCode String @default("") @map("coupon_code") @db.VarChar(50)
+ messageTemplate String @default("") @map("message_template")
+ active Boolean @default(true)
+ lastRunAt DateTime? @map("last_run_at")
+ createdAt DateTime @default(now()) @map("created_at")
+ @@index([triggerType])
+ @@index([active])
+ @@map("marketing_automations")
+}
+model StageDriverIncentive {
+ id Int @id @default(autoincrement())
+ zoneName String @default("General") @map("zone_name") @db.VarChar(120)
+ title String @db.VarChar(180)
+ bonusPerDelivery Decimal @default(0) @map("bonus_per_delivery") @db.Decimal(10,2)
+ multiplier Decimal @default(1) @db.Decimal(5,2)
+ startsAt DateTime @default(now()) @map("starts_at")
+ endsAt DateTime? @map("ends_at")
+ active Boolean @default(true)
+ @@index([zoneName])
+ @@index([active])
+ @@map("driver_incentives")
+}
