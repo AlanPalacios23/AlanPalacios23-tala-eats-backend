@@ -384,7 +384,10 @@ v9Router.post('/events',async(req,res)=>{
 });
 v9Router.get('/search',async(req,res)=>{
  const q=typeof req.query.q==='string'?req.query.q.trim().slice(0,160):'';
- const limit=numberArg(req,'limit',20,1,50);
+ const limitArg=req.query.limit;
+ const limit=limitArg===undefined?20:Number(limitArg);
+ if(!Number.isInteger(limit)||limit<1||limit>50)
+  return bad(422,'Límite de búsqueda inválido');
  const maxPrice=req.query.max_price===undefined?null:Number(req.query.max_price);
  if(maxPrice!==null&&(!Number.isFinite(maxPrice)||maxPrice<0||maxPrice>1000000))
   return bad(422,'Precio inválido');
