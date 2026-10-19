@@ -157,10 +157,16 @@ const all=await api(a,'/notifications/read-all','POST');
 assert.equal(all.status,200);
 assert.equal(all.json.updated,unreadBefore); // Includes any register/welcome notices.
 assert.equal((await api(a,'/notifications/read-all','POST')).json.updated,0);
-assert.equal((await api(b,'/notifications')).json.length,1);
-assert.equal((await api(b,'/notifications')).json[0].is_read,false);
-assert.equal((await api(driver,'/notifications')).status,200);
-assert.equal((await api(driver,'/notifications')).json.length,0);
+const bInbox=await api(b,'/notifications');
+assert.equal(bInbox.status,200);
+const otherMessage=bInbox.json.find(x=>x.id===bNotification);
+assert.ok(otherMessage);
+assert.equal(otherMessage.is_read,false);
+assert.equal(otherMessage.title,'B-only');
+assert.equal(bInbox.json.some(x=>x.title.startsWith('E1 notice')),false);
+const driverInbox=await api(driver,'/notifications');
+assert.equal(driverInbox.status,200);
+assert.equal(driverInbox.json.some(x=>x.title.startsWith('E1 notice')||x.title==='B-only'),false);
 const otherUnread=(await db.query(
  'SELECT is_read FROM notifications WHERE id=$1',[bNotification])).rows[0].is_read;
 assert.equal(otherUnread,false);
