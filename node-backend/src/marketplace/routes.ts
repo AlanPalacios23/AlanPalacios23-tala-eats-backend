@@ -7,6 +7,7 @@ import { db } from '../db.js';
 import { config } from '../config.js';
 import { createCashPickupOnly, isCashPickupIntent } from './checkout.js';
 import { previewCancelStage, cancelCashPickupStage, moveCashPickupOwnerStage } from './lifecycle.js';
+import { completeCashPickupStage } from './pickup.js';
 import { current } from '../auth/routes.js';
 import type { AuthUser, MarketplaceRestaurant, MarketplaceMenuItem,
   MarketplaceDriverProfile, MarketOrder, MarketOrderItem } from '../generated/prisma/client.js';
@@ -324,6 +325,25 @@ stageOrdersRouter.post('/',async(req,res)=>{
   if(!created)throw new RouteError(503,'Pedido transaccional no encontrado');
   res.setHeader('Cache-Control','private, no-store');
   res.status(201).json(orderView(created,true));
+});
+// Python owner.py /orders/{id}/complete: only cash pickup C1 in staging.
+// Driver/merchant delivery completion remains disabled; no external capture.
+const stageCompletePickup=z.strictObject({
+  pin:z.string().regex(/^\\d{4}$/),
+  photo_url:z.string().max(600).default(''),
+  lat:z.number().finite().min(-90).max(90).nullable().optional(),
+  lng:z.number().finite().min(-180).max(180).nullable().optional(),
+}).refine(v=>(v.lat==null)===(v.lng==null),{
+  message:'lat y lng deben enviarse juntos',
+});
+ownerRouter.post('/orders/:orderId/complete',async(req,res)=>{
+  const account=await user(req,['restaurant','admin']);
+  const data=input(stageCompletePickup,req.body);
+  const id=await completeCashPickupStage(idParam(req,'orderId'),account,data);
+  const order=await db.marketOrder.findUnique({where:{id},include:orderInclude});
+  if(!order)throw new RouteError(503,'Pedido de recogida no encontrado');
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(orderView(order,false));
 });
 ownerRouter.patch('/orders/:orderId/status',async(req,res)=>{
   const account=await user(req,['restaurant','admin']);
