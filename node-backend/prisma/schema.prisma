@@ -435,3 +435,32 @@ model StageMenuRecipe {
   @@index([ingredientId])
   @@map("menu_recipes")
 }
+
+// C3 isolated cash-pickup completion. No third-party PSP, driver dispatch,
+// external payout or real-world proof persistence.
+model StageDeliveryProof {
+  id          Int      @id @default(autoincrement())
+  orderId     Int      @unique @map("order_id")
+  driverId    Int      @map("driver_id")
+  pinVerified Boolean  @default(false) @map("pin_verified")
+  photoUrl    String   @default("") @map("photo_url") @db.VarChar(600)
+  lat         Float?
+  lng         Float?
+  createdAt   DateTime @default(now()) @map("created_at")
+  @@index([driverId])
+  @@map("delivery_proofs")
+}
+model StageProductEvent {
+  id             Int      @id @default(autoincrement())
+  userId         Int?     @map("user_id")
+  sessionId      String   @default("") @map("session_id") @db.VarChar(80)
+  eventName      String   @map("event_name") @db.VarChar(100)
+  route          String   @default("") @db.VarChar(240)
+  propertiesJson String   @default("{}") @map("properties_json")
+  createdAt      DateTime @default(now()) @map("created_at")
+  @@index([userId])
+  @@index([sessionId])
+  @@index([eventName])
+  @@index([createdAt])
+  @@map("product_events")
+}
