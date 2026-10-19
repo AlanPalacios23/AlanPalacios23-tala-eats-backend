@@ -4,12 +4,16 @@ on:
     branches: [main]
     paths:
       - 'node-backend/scripts/kali-*.sh'
+      - 'node-backend/scripts/kali-*.py'
+      - 'node-backend/scripts/test_kali_*.py'
       - 'node-backend/docs/KALI-NATIVE-DEPLOYMENT-EXECUTION.md'
       - '.github/workflows/tala-kali-native-deploy-guards.yml'
   push:
     branches: [main, feat/node24-pm2-native-staging-20261019]
     paths:
       - 'node-backend/scripts/kali-*.sh'
+      - 'node-backend/scripts/kali-*.py'
+      - 'node-backend/scripts/test_kali_*.py'
       - 'node-backend/docs/KALI-NATIVE-DEPLOYMENT-EXECUTION.md'
       - '.github/workflows/tala-kali-native-deploy-guards.yml'
 permissions:
@@ -34,6 +38,12 @@ jobs:
           bash node-backend/scripts/kali-provision-native-stage.sh --plan
           bash node-backend/scripts/kali-native-preflight.sh
           echo KALI_PLANS_EXIT=PASS
+      - name: Validate native PostgreSQL 15.19 Redis8 Python initializer without running services
+        run: |
+          python3 -m py_compile node-backend/scripts/kali-stage-init-native-services.py
+          python3 -m py_compile node-backend/scripts/test_kali_stage_init_native_services.py
+          python3 node-backend/scripts/test_kali_stage_init_native_services.py
+          echo PG15_NATIVE_PYTHON_SAFETY=PASS
       - name: Validate separation controls statically
         run: |
           python3 - <<'PY'
