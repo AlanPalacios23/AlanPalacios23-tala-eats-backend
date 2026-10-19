@@ -1,0 +1,25 @@
+name: TALA EATS | V3 recovery source preflight offline QA
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/kali_v3_recovery_source_readonly.py'
+      - 'scripts/test_kali_v3_recovery_source_readonly.py'
+      - '.github/workflows/kali-v3-recovery-source-qa.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  readonly:
+    name: V3 release source preflight 12 safety tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m py_compile scripts/kali_v3_recovery_source_readonly.py scripts/test_kali_v3_recovery_source_readonly.py
+      - run: python scripts/test_kali_v3_recovery_source_readonly.py
