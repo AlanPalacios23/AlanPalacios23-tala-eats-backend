@@ -656,6 +656,133 @@ operationsRouter.get('/driver/finance',async(req,res)=>{
   payouts:payouts.map(p=>({id:p.id,amount:money(p.amount),status:p.status}))});
 });
 
+
+adminRouter.post('/restaurants',async(req,res)=>{
+ const admin=await account(req,['admin']);
+ const p=payload(z.strictObject({
+  name:z.string().min(2).max(150),description:z.string().default(''),
+  cuisine:z.string().default('Comida local'),emoji:z.string().default('🍽️'),
+  eta_min:z.number().int().min(5).max(180).default(30),
+  delivery_fee:centsDecimal.default('0'),is_open:z.boolean().default(true),
+  owner_email:z.email().nullable().default(null),
+  lat:z.number().finite().min(-90).max(90).default(20.6534),
+  lng:z.number().finite().min(-180).max(180).default(-103.704),
+  address:z.string().max(300).default(''),
+  delivery_radius_km:z.number().finite().gt(0).max(150).default(8),
+  per_km_fee:centsDecimal.default('4'),pickup_enabled:z.boolean().default(true),
+  sponsored:z.boolean().default(false),
+ }),req.body);
+ const created=await db.$transaction(async tx=>{
+  let ownerId:number|null=null;
+  if(p.owner_email){
+   const owner=await tx.authUser.findUnique({where:{email:p.owner_email.toLowerCase()}});
+   if(!owner)return bad(404,'Usuario no encontrado');
+   ownerId=owner.id;
+   await tx.authUser.update({where:{id:owner.id},data:{role:'restaurant'}});
+  }
+  const row=await tx.marketplaceRestaurant.create({data:{
+   ownerId,name:p.name,description:p.description,cuisine:p.cuisine,emoji:p.emoji,
+   etaMin:p.eta_min,deliveryFee:p.delivery_fee,isOpen:p.is_open,
+   lat:p.lat,lng:p.lng,address:p.address,deliveryRadiusKm:p.delivery_radius_km,
+   perKmFee:p.per_km_fee,pickupEnabled:p.pickup_enabled,sponsored:p.sponsored}});
+  await tx.authAuditEvent.create({data:{userId:admin.id,
+   action:'restaurant.create',entityType:'restaurant',entityId:String(row.id),
+   detail:'admin onboarding'}});
+  return row;
+ });
+ res.status(201).json({id:created.id,name:created.name,description:created.description,
+  cuisine:created.cuisine,emoji:created.emoji,eta_min:created.etaMin,
+  delivery_fee:money(created.deliveryFee),is_open:created.isOpen,owner_id:created.ownerId,
+  lat:created.lat,lng:created.lng,address:created.address,
+  delivery_radius_km:created.deliveryRadiusKm,per_km_fee:money(created.perKmFee),
+  pickup_enabled:created.pickupEnabled,sponsored:created.sponsored,
+  rating:created.rating.toFixed(2)});
+});
+const boolQuery=(req:Request,key:string,base:boolean)=>{
+ const raw=req.query[key];
+ if(raw===undefined)return base;
+ if(raw==='true')return true;if(raw==='false')return false;
+ return bad(422,'Parámetro booleano inválido');
+};
+adminRouter.patch('/users/:userId/active',async(req,res)=>{
+ const admin=await account(req,['admin']);
+ const id=param(req,'userId'),enabled=boolQuery(req,'active',true);
+ if(admin.id===id&&!enabled)return bad(400,'No puedes desactivar tu propia cuenta');
+ const row=await db.$transaction(async tx=>{
+  const user=await tx.authUser.findUnique({where:{id}});
+  if(!user)return bad(404,'Usuario no encontrado');
+  const updated=await tx.authUser.update({where:{id},data:{isActive:enabled}});
+  if(!enabled)await tx.authDeviceSession.updateMany({
+   where:{userId:id,active:true},data:{active:false}});
+  await tx.authAuditEvent.create({data:{userId:admin.id,action:'user.active',
+   entityType:'user',entityId:String(id),detail:String(enabled)}});
+  return updated;
+ });
+ res.json(userFields(row));
+});
+adminRouter.patch('/fraud/:flagId/resolved',async(req,res)=>{
+ const who=await account(req,['admin']);
+ const id=param(req,'flagId'),resolved=boolQuery(req,'resolved',true);
+ const prior=await db.opsFraudFlag.findUnique({where:{id}});
+ if(!prior)return bad(404,'Señal no encontrada');
+ const row=await db.$transaction(async tx=>{
+  const updated=await tx.opsFraudFlag.update({where:{id},data:{resolved}});
+  await tx.authAuditEvent.create({data:{userId:who.id,action:'fraud.resolve',
+   entityType:'fraud_flag',entityId:String(id),detail:String(resolved)}});
+  return updated;
+ });
+ res.json({id:row.id,resolved:row.resolved});
+});
+adminRouter.patch('/restaurants/:restaurantId/verification',async(req,res)=>{
+ const who=await account(req,['admin']);
+ const id=param(req,'restaurantId');
+ const status=req.query.status??'verified';
+ if(typeof status!=='string'||!['pending','verified','rejected','suspended'].includes(status))
+  return bad(400,'Estado inválido');
+ const row=await db.marketplaceRestaurant.findUnique({where:{id}});
+ if(!row)return bad(404,'Restaurante no encontrado');
+ const updated=await db.$transaction(async tx=>{
+  const result=await tx.marketplaceRestaurant.update({where:{id},data:{
+   verificationStatus:status}});
+  await tx.authAuditEvent.create({data:{userId:who.id,action:'restaurant.verify',
+   entityType:'restaurant',entityId:String(id),detail:status}});
+  return result;
+ });
+ res.json({id:updated.id,verification_status:updated.verificationStatus});
+});
+adminRouter.patch('/drivers/:userId/verified',async(req,res)=>{
+ const who=await account(req,['admin']);
+ const id=param(req,'userId'),verified=boolQuery(req,'verified',true);
+ const existing=await db.marketplaceDriverProfile.findUnique({where:{userId:id}});
+ if(!existing)return bad(404,'Perfil de repartidor no encontrado');
+ const updated=await db.$transaction(async tx=>{
+  const result=await tx.marketplaceDriverProfile.update({where:{userId:id},
+   data:{isVerified:verified,...(!verified?{isOnline:false}:{})}});
+  await tx.authAuditEvent.create({data:{userId:who.id,action:'driver.verify',
+   entityType:'driver',entityId:String(id),detail:String(verified)}});
+  return result;
+ });
+ res.json({user_id:id,is_verified:updated.isVerified});
+});
+adminRouter.patch('/verifications/:recordId',async(req,res)=>{
+ const who=await account(req,['admin']);
+ const id=param(req,'recordId');
+ const raw=req.query.status;
+ if(typeof raw!=='string'||!['pending','approved','rejected','needs_info'].includes(raw))
+  return bad(400,'Estado inválido');
+ const notes=typeof req.query.notes==='string'?req.query.notes.slice(0,500):'';
+ const existing=await db.opsVerificationRecord.findUnique({where:{id}});
+ if(!existing)return bad(404,'Verificación no encontrada');
+ const result=await db.$transaction(async tx=>{
+  const row=await tx.opsVerificationRecord.update({where:{id},
+   data:{status:raw,notes}});
+  await tx.authAuditEvent.create({data:{userId:who.id,action:'verification.update',
+   entityType:'verification',entityId:String(id),detail:raw}});
+  return row;
+ });
+ res.json({id:result.id,status:result.status,notes:result.notes});
+});
+
 export function opsErrors(err:unknown,_req:Request,res:Response,next:NextFunction){
  if(err instanceof OpsError){res.status(err.code).json({detail:err.message});return;}
  next(err);
