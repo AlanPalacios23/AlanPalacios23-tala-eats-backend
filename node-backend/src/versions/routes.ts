@@ -1226,3 +1226,200 @@ v11Router.get('/orders/:orderId/live',async(req,res)=>{
   next_action:order.status==='delivered'?'rate':
    order.status==='on_the_way'?'delivery_pin':'track'});
 });
+
+
+const substitutionPublic=(x:{
+ id:number;orderId:number;orderItemId:number;restaurantId:number;
+ requestedByUserId:number;replacementMenuItemId:number|null;issueType:string;
+ message:string;originalAmount:{toFixed:(n:number)=>string};
+ replacementAmount:{toFixed:(n:number)=>string};status:string;resolution:string;
+ createdAt:Date;expiresAt:Date|null;resolvedAt:Date|null;
+})=>({
+ id:x.id,order_id:x.orderId,order_item_id:x.orderItemId,
+ restaurant_id:x.restaurantId,requested_by_user_id:x.requestedByUserId,
+ replacement_menu_item_id:x.replacementMenuItemId,issue_type:x.issueType,
+ message:x.message,original_amount:x.originalAmount.toFixed(2),
+ replacement_amount:x.replacementAmount.toFixed(2),
+ status:x.status,resolution:x.resolution,created_at:x.createdAt.toISOString(),
+ expires_at:x.expiresAt?.toISOString()??null,
+ resolved_at:x.resolvedAt?.toISOString()??null});
+const amountCents=(x:{toFixed:(n:number)=>string}):bigint=>{
+ const [whole,frac]=x.toFixed(2).split('.');
+ return BigInt(whole!)*100n+BigInt(frac??'00');
+};
+v11Router.post('/merchant/orders/:orderId/substitutions',async(req,res)=>{
+ const who=await account(req,['restaurant','admin']);
+ const id=param(req,'orderId');
+ const p=valid(z.strictObject({
+  order_item_id:z.number().int().positive(),
+  replacement_menu_item_id:z.number().int().positive().nullable().default(null),
+  issue_type:z.enum(['unavailable','quality','quantity','other']).default('unavailable'),
+  message:z.string().max(500).default(''),
+ }),req.body);
+ const order=await authorizedOrder(id,who);
+ if(['cancelled','delivered'].includes(order.status))
+  return bad(409,'El pedido ya no admite sustituciones');
+ const item=await db.marketOrderItem.findUnique({where:{id:p.order_item_id}});
+ if(!item||item.orderId!==order.id)return bad(404,'Artículo no encontrado');
+ const replacement=p.replacement_menu_item_id?
+  await db.marketplaceMenuItem.findUnique({where:{id:p.replacement_menu_item_id}}):null;
+ if(replacement&&replacement.restaurantId!==order.restaurantId)
+  return bad(400,'El reemplazo debe pertenecer al mismo restaurante');
+ const base=amountCents(item.unitPrice)*BigInt(item.quantity);
+ const replacementCents=replacement?amountCents(replacement.price)*BigInt(item.quantity):0n;
+ if(replacementCents>base)return bad(400,'El precio del reemplazo no puede aumentar');
+ const fmt=(x:bigint)=>(x/100n).toString()+'.'+(x%100n).toString().padStart(2,'0');
+ const row=await db.$transaction(async tx=>{
+  const created=await tx.stageSubstitution.create({data:{
+   orderId:id,orderItemId:item.id,restaurantId:order.restaurantId,
+   requestedByUserId:who.id,
+   replacementMenuItemId:replacement?.id??null,issueType:p.issue_type,
+   message:p.message,originalAmount:fmt(base),replacementAmount:fmt(replacementCents),
+   expiresAt:new Date(Date.now()+15*60000)}});
+  await tx.authNotification.create({data:{userId:order.userId,kind:'order',
+   title:'Tu restaurante necesita una decisión',
+   message:'Hay un cambio pendiente en el pedido #'+id+'.'}});
+  await tx.stageEventOutbox.create({data:{eventKey:'order:'+id+':substitution:'+created.id,
+   aggregateType:'order',aggregateId:String(id),eventType:'order.substitution',
+   payloadJson:JSON.stringify({substitution_id:created.id,status:'pending'})}});
+  return created;
+ },{maxWait:10000,timeout:15000});
+ res.status(201).json(substitutionPublic(row));
+});
+v11Router.get('/orders/:orderId/substitutions',async(req,res)=>{
+ const who=await account(req),id=param(req,'orderId');
+ await authorizedOrder(id,who);
+ const rows=await db.stageSubstitution.findMany({where:{orderId:id},
+  orderBy:{createdAt:'desc'},take:200});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(rows.map(substitutionPublic));
+});
+v11Router.post('/orders/:orderId/substitutions/:substitutionId/respond',
+ async(req,res)=>{
+ const who=await account(req,['customer']),id=param(req,'orderId'),
+  subId=param(req,'substitutionId');
+ const p=valid(z.strictObject({
+  action:z.enum(['accept','remove_item','cancel_order','reject'])}),req.body);
+ const order=await authorizedOrder(id,who);
+ if(order.userId!==who.id)return bad(403,'Solo el comprador puede responder');
+ const row=await db.$transaction(async tx=>{
+  await tx.$queryRawUnsafe('SELECT id FROM orders WHERE id=$1 FOR UPDATE',id);
+  const pending=await tx.stageSubstitution.findUnique({where:{id:subId}});
+  if(!pending||pending.orderId!==id||pending.status!=='pending')
+   return bad(404,'Sustitución pendiente no encontrada');
+  if(pending.expiresAt&&pending.expiresAt<new Date()){
+   await tx.stageSubstitution.update({where:{id:subId},
+    data:{status:'expired'}});
+   return bad(409,'La sustitución expiró');
+  }
+  const line=await tx.marketOrderItem.findUnique({where:{id:pending.orderItemId}});
+  if(!line||line.orderId!==id)return bad(404,'Artículo original no encontrado');
+  // Reject any action requiring a refund until reconciled TEST ledger parity.
+  // This prevents phantom Wallet balances and unaccounted POS cash returns.
+  if(p.action!=='accept'||!pending.replacementMenuItemId||
+   amountCents(pending.originalAmount)!==amountCents(pending.replacementAmount))
+   return bad(503,'Esta decisión necesita conciliación de reembolso TEST');
+  const replacement=await tx.marketplaceMenuItem.findUnique({
+   where:{id:pending.replacementMenuItemId}});
+  if(!replacement?.isAvailable||replacement.restaurantId!==order.restaurantId)
+   return bad(409,'El reemplazo ya no está disponible');
+  await tx.marketOrderItem.update({where:{id:line.id},data:{
+   menuItemId:replacement.id,nameSnapshot:replacement.name,
+   unitPrice:replacement.price}});
+  const updated=await tx.stageSubstitution.update({where:{id:subId},
+   data:{status:'resolved',resolution:'replacement_accepted',
+    resolvedAt:new Date()}});
+  await tx.stageEventOutbox.create({data:{
+   eventKey:'order:'+id+':substitution-resolved:'+subId,
+   aggregateType:'order',aggregateId:String(id),
+   eventType:'order.substitution',payloadJson:JSON.stringify({
+    substitution_id:subId,status:'resolved',resolution:'replacement_accepted'})}});
+  return updated;
+ },{maxWait:10000,timeout:15000});
+ res.json(substitutionPublic(row));
+});
+v11Router.get('/orders/:orderId/refunds',async(req,res)=>{
+ const who=await account(req),id=param(req,'orderId');
+ await authorizedOrder(id,who);
+ const rows=await db.stageRefundAdjustment.findMany({where:{orderId:id},
+  orderBy:{createdAt:'desc'},take:200});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(rows.map(x=>({
+  id:x.id,order_id:x.orderId,created_by_user_id:x.createdByUserId,
+  amount:x.amount.toFixed(2),reason:x.reason,provider:x.provider,
+  provider_ref:x.providerRef,status:x.status,idempotency_key:x.idempotencyKey,
+  created_at:x.createdAt.toISOString(),
+  completed_at:x.completedAt?.toISOString()??null})));
+});
+v11Router.get('/merchant/kds-pro',async(req,res)=>{
+ const who=await account(req,['restaurant','admin']);
+ const shop=await db.marketplaceRestaurant.findFirst({
+  ...(who.role==='admin'?{orderBy:{id:'asc'}}:{where:{ownerId:who.id}})});
+ if(!shop)return res.json({restaurant:null,lanes:{},stations:{},sla:{}});
+ const status=['received','confirmed','preparing','ready'];
+ const rows=await db.marketOrder.findMany({where:{restaurantId:shop.id,
+  status:{in:status}},include:{items:true},
+  orderBy:{createdAt:'asc'},take:500});
+ const ids=[...new Set(rows.flatMap(x=>x.items.flatMap(i=>
+  i.menuItemId?[i.menuItemId]:[])))];
+ const products=await db.marketplaceMenuItem.findMany({where:{id:{in:ids}},
+  select:{id:true,category:true}});
+ const categories=new Map(products.map(x=>[x.id,x.category]));
+ const lanes:Record<string,unknown[]>={},stations:Record<string,number>={};
+ status.forEach(key=>{lanes[key]=[];});
+ const instant=Date.now();
+ let oldest=0;
+ for(const o of rows){
+  const age=Math.max(0,Math.floor((instant-o.createdAt.getTime())/60000));
+  oldest=Math.max(oldest,age);
+  const priority=age>=35?'critical':age>=20?'attention':'normal';
+  const cats=new Set<string>();
+  for(const item of o.items){
+   const key=categories.get(item.menuItemId??-1)??'General';
+   cats.add(key);stations[key]=(stations[key]??0)+item.quantity;
+  }
+  lanes[o.status]!.push({
+   order:{id:o.id,restaurant_id:o.restaurantId,status:o.status,
+    total:o.total.toFixed(2),created_at:o.createdAt.toISOString(),
+    items:o.items.map(i=>({id:i.id,menu_item_id:i.menuItemId,
+     name_snapshot:i.nameSnapshot,quantity:i.quantity,
+     unit_price:i.unitPrice.toFixed(2)}))},
+   age_min:age,priority,stations:[...cats].sort()});
+ }
+ const preps=rows.flatMap(o=>o.readyAt&&o.preparingAt?
+  [Math.max(0,Math.floor((o.readyAt.getTime()-o.preparingAt.getTime())/60000))]:[]);
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({restaurant:{id:shop.id,name:shop.name},lanes,stations,
+  sla:{open_tickets:rows.length,oldest_min:oldest,
+   avg_prep_min:preps.length?round(preps.reduce((s,v)=>s+v,0)/preps.length,1):null}});
+});
+v11Router.get('/admin/command-center',async(req,res)=>{
+ await account(req,['admin']);
+ const cutoff=new Date(Date.now()-45*60000);
+ const [active,delayed,noDriver,incidents,subs,payoutFailures,
+  delivered]=await Promise.all([
+  db.marketOrder.count({where:{status:{in:ACTIVE}}}),
+  db.marketOrder.count({where:{status:{in:ACTIVE},createdAt:{lt:cutoff}}}),
+  db.marketOrder.count({where:{status:'ready',driverId:null}}),
+  db.opsIncident.count({where:{status:'open'}}),
+  db.stageSubstitution.count({where:{status:'pending'}}),
+  db.opsPayout.count({where:{status:'failed'}}),
+  db.marketOrder.findMany({where:{status:'delivered'},
+   select:{total:true,contributionMargin:true}}),
+ ]);
+ const total=delivered.reduce((n,x)=>n+amountCents(x.total),0n);
+ const margin=delivered.reduce((n,x)=>n+amountCents(x.contributionMargin),0n);
+ const money=(n:bigint)=>(n/100n).toString()+'.'+(n%100n).toString().padStart(2,'0');
+ const stageSetting=await db.stageSystemSetting.findUnique({where:{key:'v11.canary_percent'}});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({checked_at:new Date().toISOString(),version:VERSION,
+  status:delayed||payoutFailures||incidents?'attention':'healthy',
+  operations:{active_orders:active,delayed_orders:delayed,
+   without_driver:noDriver,open_incidents:incidents,pending_substitutions:subs,
+   live_driver_offers:0},
+  finance:{gmv:money(total),contribution_margin:money(margin),
+   failed_payouts:payoutFailures},
+  integrations:readinessIntegrations(),
+  runtime:{traffic_sampled:false,websocket_active:false},
+  canary_percent:Math.max(0,Math.min(100,Number(stageSetting?.value??0)||0))});
+});
