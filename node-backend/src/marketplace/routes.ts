@@ -124,6 +124,71 @@ async function ownRestaurant(req:Request) {
   if(!row) return notFound('No tienes un restaurante asignado');
   return {account,row};
 }
+// Python owner.py analytics contract: total all-status orders, only delivered
+// orders contribute gross_sales, and stock<10 counts ALL menu rows regardless
+// of is_available. Never calculate merchant gross from unconfirmed orders.
+ownerRouter.get('/analytics',async(req,res)=>{
+  const {row}=await ownRestaurant(req);
+  const [all,delivered,inventoryLow]=await db.$transaction([
+    db.marketOrder.count({where:{restaurantId:row.id}}),
+    db.marketOrder.aggregate({
+      where:{restaurantId:row.id,status:'delivered'},
+      _count:{_all:true},_sum:{total:true},
+    }),
+    db.marketplaceMenuItem.count({where:{restaurantId:row.id,stock:{lt:10}}}),
+  ]);
+  const done=delivered._count._all;
+  const gross=Number(delivered._sum.total??0);
+  res.setHeader('Cache-Control','private, no-store');
+  res.json({orders:all,delivered:done,gross_sales:gross,
+    avg_ticket:done?gross/done:0,inventory_low:inventoryLow});
+});
+// Python owner.py employee access: only registered accounts can be added.
+// A restaurant_employees membership is NOT a global auth role or a new
+// source of API privileges; owner-only checks remain unchanged.
+function employeeView(e:{
+  id:number;userId:number;role:string;user:{name:string;email:string};
+}){
+  return {id:e.id,user_id:e.userId,name:e.user.name,
+    email:e.user.email,role:e.role};
+}
+ownerRouter.get('/employees',async(req,res)=>{
+  const {row}=await ownRestaurant(req);
+  const staff=await db.marketplaceRestaurantEmployee.findMany({
+    where:{restaurantId:row.id},include:{user:{select:{name:true,email:true}}},
+    orderBy:{id:'asc'},
+  });
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(staff.map(employeeView));
+});
+const employeeQuery=z.strictObject({
+  email:z.string().trim().min(1).max(255),
+  role:z.enum(['manager','cashier','kitchen']).default('cashier'),
+});
+ownerRouter.post('/employees',async(req,res)=>{
+  const {row}=await ownRestaurant(req);
+  // FastAPI parameters are QUERY arguments, not request JSON.
+  const query=employeeQuery.safeParse(req.query);
+  if(!query.success){
+    const role=req.query.role;
+    if(typeof role==='string'&&!['manager','cashier','kitchen'].includes(role))
+      throw new RouteError(400,'Rol inválido');
+    throw new RouteError(422,'Email y rol inválidos');
+  }
+  const email=query.data.email.toLowerCase();
+  const employee=await db.authUser.findUnique({where:{email}});
+  if(!employee)return notFound('Primero crea la cuenta del empleado');
+  // Unique membership prevents duplicate rows under concurrent requests.
+  const membership=await db.marketplaceRestaurantEmployee.upsert({
+    where:{restaurantId_userId:{restaurantId:row.id,userId:employee.id}},
+    update:{role:query.data.role},
+    create:{restaurantId:row.id,userId:employee.id,role:query.data.role},
+    include:{user:{select:{name:true,email:true}}},
+  });
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(employeeView(membership));
+});
+
 ownerRouter.get('/restaurant',async(req,res)=>{
   const {row}=await ownRestaurant(req);
   const detail=await db.marketplaceRestaurant.findUnique({
