@@ -110,8 +110,10 @@ export async function cancelCashPickupStage(
     const ingredients=new Map<number,bigint>();
     for(const [rawId,value] of Object.entries(reservations)){
       const id=Number(rawId);
-      if(!Number.isSafeInteger(id)||id<=0||typeof value!=='string')
-        fail(503,'Snapshot de ingrediente inválido');
+      if(!Number.isSafeInteger(id)||id<=0)
+        return fail(503,'Snapshot de ingrediente inválido');
+      if(typeof value!=='string')
+        return fail(503,'Snapshot de ingrediente inválido');
       const amount=milli(value);
       if(amount<=0n)fail(503,'Snapshot de ingrediente inválido');
       ingredients.set(id,amount);
