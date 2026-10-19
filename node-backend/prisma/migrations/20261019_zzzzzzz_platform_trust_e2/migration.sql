@@ -1,0 +1,43 @@
+-- E2: customer-facing Python review/chat/support partial replication.
+-- Execute exclusively against ephemeral PostgreSQL15; never Python LIVE/Kali.
+CREATE TABLE "reviews"(
+  "id" SERIAL PRIMARY KEY,
+  "order_id" INTEGER NOT NULL REFERENCES "orders"("id"),
+  "user_id" INTEGER NOT NULL REFERENCES "users"("id"),
+  "restaurant_id" INTEGER NOT NULL REFERENCES "restaurants"("id"),
+  "driver_id" INTEGER REFERENCES "users"("id"),
+  "restaurant_rating" INTEGER NOT NULL CHECK ("restaurant_rating" BETWEEN 1 AND 5),
+  "driver_rating" INTEGER CHECK ("driver_rating" BETWEEN 1 AND 5),
+  "comment" TEXT NOT NULL DEFAULT '',
+  "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "uq_review_customer_order" UNIQUE("order_id","user_id")
+);
+CREATE INDEX "reviews_user_id_idx" ON "reviews"("user_id");
+CREATE INDEX "reviews_restaurant_id_idx" ON "reviews"("restaurant_id");
+CREATE TABLE "chat_messages"(
+  "id" SERIAL PRIMARY KEY,
+  "order_id" INTEGER NOT NULL REFERENCES "orders"("id"),
+  "sender_id" INTEGER NOT NULL REFERENCES "users"("id"),
+  "message" VARCHAR(1000) NOT NULL DEFAULT '',
+  "message_type" VARCHAR(30) NOT NULL DEFAULT 'text',
+  "media_url" VARCHAR(600) NOT NULL DEFAULT '',
+  "lat" DOUBLE PRECISION,
+  "lng" DOUBLE PRECISION,
+  "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "chat_message_type_valid" CHECK ("message_type" IN ('text','photo','location','quick')),
+  CONSTRAINT "chat_lat_valid" CHECK ("lat" IS NULL OR ("lat" BETWEEN -90 AND 90)),
+  CONSTRAINT "chat_lng_valid" CHECK ("lng" IS NULL OR ("lng" BETWEEN -180 AND 180))
+);
+CREATE INDEX "chat_messages_order_id_created_at_idx" ON "chat_messages"("order_id","created_at");
+CREATE INDEX "chat_messages_sender_id_idx" ON "chat_messages"("sender_id");
+CREATE TABLE "support_tickets"(
+  "id" SERIAL PRIMARY KEY,
+  "user_id" INTEGER NOT NULL REFERENCES "users"("id"),
+  "order_id" INTEGER REFERENCES "orders"("id"),
+  "category" VARCHAR(80) NOT NULL,
+  "message" TEXT NOT NULL CHECK (LENGTH(message) BETWEEN 5 AND 3000),
+  "status" VARCHAR(30) NOT NULL DEFAULT 'open',
+  "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX "support_tickets_user_id_created_at_idx" ON "support_tickets"("user_id","created_at");
+CREATE INDEX "support_tickets_order_id_idx" ON "support_tickets"("order_id");
