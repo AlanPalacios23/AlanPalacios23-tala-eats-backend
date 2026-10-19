@@ -23,6 +23,8 @@ app.use(express.json({ limit: '128kb' }));
 // Opt-in only after dedicated stage auth migration and tested secret provisioning.
 if (config.AUTH_V02_ENABLED === 'true') app.use('/api/v1/auth', authRouter);
 if (config.MARKETPLACE_B_ENABLED === 'true') {
+  // Specific parity endpoints must precede generic /orders/:orderId routes.
+  app.use('/api/v1', parityRouter);
   app.use('/api/v1/restaurants', marketplaceRouter);
   app.use('/api/v1/owner', ownerRouter);
   app.use('/api/v1/orders', stageOrdersRouter);
@@ -34,7 +36,6 @@ if (config.MARKETPLACE_B_ENABLED === 'true') {
   app.use('/api/v1/v10', v10Router);
   app.use('/api/v1/v11', v11Router);
   app.use('/api/v1/resilience', resilienceRouter);
-  app.use('/api/v1', parityRouter);
   app.use(parityErrors);
   app.use(resilienceErrors);
   app.use(opsErrors);
