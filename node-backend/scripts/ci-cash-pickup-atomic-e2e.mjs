@@ -84,7 +84,7 @@ assert.equal(Number(first.json.service_fee),1.79);
 assert.equal(Number(first.json.restaurant_payout),22.67);
 assert.equal(Number(first.json.platform_revenue),5.62);
 assert.equal(Number(first.json.total),28.29);
-assert.equal(first.json.items[0].unit_price,'25.50');
+assert.equal(Number(first.json.items[0].unit_price),25.50);
 assert.match(first.json.delivery_pin,/^\d{4}$/);
 const retryResults=await Promise.all(Array.from({length:4},
   ()=>create(a,payload('checkout-uniq'))));
