@@ -88,6 +88,8 @@ model AuthUser {
   sessions              AuthDeviceSession[]
   loyalty               AuthLoyaltyAccount?
   notifications         AuthNotification[]
+  customerAddresses     PlatformAddress[]
+  restaurantFavorites   PlatformFavorite[]
   audits                AuthAuditEvent[]
   resets                AuthPasswordResetToken[]
   marketRestaurants     MarketplaceRestaurant[]
@@ -226,6 +228,7 @@ model MarketplaceRestaurant {
   createdAt         DateTime @default(now()) @map("created_at")
   owner             AuthUser? @relation(fields:[ownerId],references:[id],onDelete:SetNull)
   menuItems         MarketplaceMenuItem[]
+  favoritedBy       PlatformFavorite[]
   employees         MarketplaceRestaurantEmployee[]
   orders            MarketOrder[]
   @@index([ownerId])
@@ -492,4 +495,31 @@ model MarketplaceRestaurantEmployee {
   @@index([restaurantId])
   @@index([userId])
   @@map("restaurant_employees")
+}
+
+  
+// E1: functional customer platform contracts from Python platform.py.
+// Staging-only data. Partial unique index on default addresses lives in SQL.
+model PlatformAddress {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  label     String   @default("Casa") @db.VarChar(60)
+  address   String   @db.VarChar(300)
+  lat       Float?
+  lng       Float?
+  isDefault Boolean  @default(false) @map("is_default")
+  user      AuthUser @relation(fields:[userId],references:[id],onDelete:Cascade)
+  @@index([userId])
+  @@map("addresses")
+}
+model PlatformFavorite {
+  id           Int       @id @default(autoincrement())
+  userId       Int       @map("user_id")
+  restaurantId Int       @map("restaurant_id")
+  user         AuthUser  @relation(fields:[userId],references:[id],onDelete:Cascade)
+  restaurant   MarketplaceRestaurant @relation(fields:[restaurantId],references:[id],onDelete:Cascade)
+  @@unique([userId,restaurantId],map:"uq_favorite")
+  @@index([userId])
+  @@index([restaurantId])
+  @@map("favorites")
 }
