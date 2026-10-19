@@ -992,7 +992,7 @@ model StageSystemAlert {
 }
 model StagePaymentReconciliation {
  id Int @id @default(autoincrement())
- provider String @default("mercadopago") @db.VarChar(40)
+ provider String @default("stripe") @db.VarChar(40)
  orderId Int? @map("order_id")
  providerPaymentId String @default("") @map("provider_payment_id") @db.VarChar(160)
  localStatus String @default("") @map("local_status") @db.VarChar(40)
