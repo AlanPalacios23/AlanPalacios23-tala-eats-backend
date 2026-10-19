@@ -84,6 +84,7 @@ const updated=await call('/owner/menu/'+mid,opts(owner.token,'PATCH',{stock:0,is
 assert.equal(updated.status,200);
 assert.equal(updated.body.stock,0);
 assert.equal(updated.body.is_available,false);
+assert.equal(Number(updated.body.price),28.5); // PATCH never resets price.
 const detail=await call('/restaurants/'+rid);
 assert.equal(detail.status,200);
 assert.equal(detail.body.menu_items.length,1);
@@ -148,6 +149,19 @@ const driverMine=await call('/driver/mine',opts(driver.token));
 assert.equal(driverMine.status,200);
 assert.equal(driverMine.body.length,1);
 assert.equal(Object.hasOwn(driverMine.body[0],'delivery_pin'),false);
+const cart=await call('/orders/'+oid+'/reorder',opts(buyer.token,'POST'));
+assert.equal(cart.status,200);
+assert.deepEqual(cart.body,{restaurant_id:rid,items:[{menu_item_id:mid,quantity:1}]});
+assert.equal((await call('/orders/'+oid+'/reorder',opts(owner.token,'POST'))).status,403);
+const kds=await call('/owner/kds',opts(owner.token));
+assert.equal(kds.status,200,JSON.stringify(kds.body));
+assert.equal(kds.body.assigned?.length,1);
+assert.equal(Object.hasOwn(kds.body.assigned[0],'delivery_pin'),false);
+assert.equal((await call('/owner/kds',opts(buyer.token))).status,403);
+const driverAvailable=await call('/driver/available',opts(driver.token));
+assert.equal(driverAvailable.status,200);
+assert.deepEqual(driverAvailable.body,[]); // Driver is offline and has active work.
+assert.equal((await call('/driver/available',opts(buyer.token))).status,403);
 const checkout=await call('/orders',opts(buyer.token,'POST',{
  restaurant_id:rid,items:[{menu_item_id:mid,quantity:1}],address:'Centro'
 }));
