@@ -57,8 +57,8 @@ def local_pg_status():
     # stdout/stderr discarded, and no DB names/values forwarded to ChatGPT.
     # 'psql' is read-only and SELECT 1 does not touch application data.
     command='''set -eu
-    test -n "\${POSTGRES_USER:-}"
-    test -n "\${POSTGRES_DB:-}"
+    test -n "${POSTGRES_USER:-}"
+    test -n "${POSTGRES_DB:-}"
     psql -X -q -t -A -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c 'SELECT 1'
     '''
     p=run(["docker","exec",DB,"sh","-c",command],timeout=13)
@@ -73,10 +73,11 @@ def pg_env_consistency(api,worker,db):
         name=unquote(parsed.path.lstrip("/"))
     except (ValueError,TypeError):
         user=name=""
+        parsed=None
     # No names emitted. These are only comparisons of declared settings.
     print("WORKER_DATABASE_URL_HAS_USER","yes" if user else "no")
     print("WORKER_DATABASE_URL_HAS_DB","yes" if name else "no")
-    print("WORKER_DATABASE_URL_HAS_PASSWORD","yes" if parsed.password else "no")
+    print("WORKER_DATABASE_URL_HAS_PASSWORD","yes" if parsed is not None and parsed.password else "no")
     print("API_WORKER_URL_EQUAL","yes" if api.get("DATABASE_URL") and api.get("DATABASE_URL")==url else "no-or-missing")
     if db.get("POSTGRES_USER"):
         print("WORKER_USER_MATCH_DB_DECLARED","yes" if user and user==db["POSTGRES_USER"] else "no")
