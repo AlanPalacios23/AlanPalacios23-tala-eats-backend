@@ -403,8 +403,8 @@ platformRouter.post('/support',async(req,res)=>{
 // E4: Python platform.py read-only Wallet, recommendations, group orders,
 // referral. No checkout credits, gift redemption, Plus charge or payouts.
 function walletTransactionPublic(v:{
-  id:number;kind:string;amount:{toString():string};
-  balanceAfter:{toString():string};referenceType:string;
+  id:number;kind:string;amount:{toFixed:(digits:number)=>string};
+  balanceAfter:{toFixed:(digits:number)=>string};referenceType:string;
   referenceId:string;description:string;createdAt:Date;
 }){
   return {id:v.id,kind:v.kind,amount:v.amount.toFixed(2),
