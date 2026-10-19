@@ -97,6 +97,8 @@ model AuthUser {
   assignedOrders        MarketOrder[] @relation("DriverOrders")
   driverProfile         MarketplaceDriverProfile?
   restaurantEmployment  MarketplaceRestaurantEmployee[]
+  authoredReviews       PlatformReview[] @relation("ReviewAuthor")
+  driverReviews         PlatformReview[] @relation("ReviewDriver")
   @@index([role])
   @@map("users")
 }
@@ -229,6 +231,8 @@ model MarketplaceRestaurant {
   owner             AuthUser? @relation(fields:[ownerId],references:[id],onDelete:SetNull)
   menuItems         MarketplaceMenuItem[]
   favoritedBy       PlatformFavorite[]
+  promotions        PlatformPromotion[]
+  reviews           PlatformReview[]
   employees         MarketplaceRestaurantEmployee[]
   orders            MarketOrder[]
   @@index([ownerId])
@@ -336,6 +340,7 @@ model MarketOrder {
   driver                 AuthUser? @relation("DriverOrders",fields:[driverId],references:[id])
   restaurant             MarketplaceRestaurant @relation(fields:[restaurantId],references:[id])
   items                  MarketOrderItem[]
+  reviews                PlatformReview[]
   @@unique([userId,clientReference],name:"uq_order_user_client_reference")
   @@index([userId,createdAt])
   @@index([restaurantId,status])
@@ -522,4 +527,49 @@ model PlatformFavorite {
   @@index([userId])
   @@index([restaurantId])
   @@map("favorites")
+}
+
+// E2 read-only coupons/promotions plus reviews for delivered own orders.
+// Review unique(order_id,user_id) hardens Python check-then-insert race.
+model PlatformPromotion {
+  id               Int     @id @default(autoincrement())
+  restaurantId     Int?    @map("restaurant_id")
+  title            String  @db.VarChar(150)
+  description      String  @default("") @db.VarChar(300)
+  discountPercent  Int     @default(10) @map("discount_percent")
+  active           Boolean @default(true)
+  sponsored        Boolean @default(false)
+  restaurant       MarketplaceRestaurant? @relation(fields:[restaurantId],references:[id],onDelete:SetNull)
+  @@index([restaurantId])
+  @@map("promotions")
+}
+model PlatformCoupon {
+  id            Int     @id @default(autoincrement())
+  code          String  @unique @db.VarChar(50)
+  discountType  String  @default("percent") @map("discount_type") @db.VarChar(20)
+  value         Decimal @default(10) @db.Decimal(10,2)
+  minOrder      Decimal @default(0) @map("min_order") @db.Decimal(10,2)
+  active        Boolean @default(true)
+  description   String  @default("") @db.VarChar(200)
+  @@map("coupons")
+}
+model PlatformReview {
+  id                Int      @id @default(autoincrement())
+  orderId           Int      @map("order_id")
+  userId            Int      @map("user_id")
+  restaurantId      Int      @map("restaurant_id")
+  driverId          Int?     @map("driver_id")
+  restaurantRating  Int      @map("restaurant_rating")
+  driverRating      Int?     @map("driver_rating")
+  comment           String   @default("")
+  createdAt         DateTime @default(now()) @map("created_at")
+  order             MarketOrder @relation(fields:[orderId],references:[id],onDelete:Cascade)
+  user              AuthUser @relation("ReviewAuthor",fields:[userId],references:[id],onDelete:Cascade)
+  driver            AuthUser? @relation("ReviewDriver",fields:[driverId],references:[id],onDelete:SetNull)
+  restaurant        MarketplaceRestaurant @relation(fields:[restaurantId],references:[id],onDelete:Cascade)
+  @@unique([orderId,userId],map:"uq_review_order_customer")
+  @@index([orderId])
+  @@index([userId])
+  @@index([restaurantId])
+  @@map("reviews")
 }
