@@ -7,6 +7,8 @@ if(process.env.GITHUB_ACTIONS!=='true'||!pgUrl.includes('127.0.0.1:15435/tala_no
  !ru.includes('127.0.0.1:16379/0'))throw Error('G1_CI_ONLY');
 const redis=new Redis(ru);let c='0';do{const [n,keys]=await redis.scan(c,'MATCH','tala:node:v02:auth:rate:*','COUNT',100);if(keys.length)await redis.del(...keys);c=n;}while(c!=='0');redis.disconnect();
 const db=new pg.Client({connectionString:pgUrl});await db.connect();
+const beforePayouts=(await db.query('SELECT count(*)::int n FROM payouts')).rows[0].n;
+const beforeLedger=(await db.query('SELECT count(*)::int n FROM financial_ledger_entries')).rows[0].n;
 const pwd='G1-Operations-Test-Only!';
 async function call(path,{token,method='GET',body}={}){
  const res=await fetch('http://127.0.0.1:18190/api/v1'+path,{method,
@@ -170,7 +172,7 @@ for(const path of ['/admin/fraud/'+fid+'/resolved','/admin/drivers/'+driver.id+'
  assert.equal((await req(alice,path,'PATCH')).status,403);
 const payouts=(await db.query('SELECT count(*)::int n FROM payouts')).rows[0].n;
 const ledger=(await db.query('SELECT count(*)::int n FROM financial_ledger_entries')).rows[0].n;
-assert.equal(payouts,0);assert.equal(ledger,0);
+assert.equal(payouts,beforePayouts);assert.equal(ledger,beforeLedger);
 console.log('NODE_G1_ONBOARDING_ATOMIC_RBAC_AND_APPROVAL=PASS');
 console.log('NODE_G1_ZONES_SETTINGS_FEATURE_FLAGS_STRICT_STAGE=PASS');
 console.log('NODE_G1_DISPUTES_NO_REFUND_AND_CAMPAIGN_OWNER_ISOLATION=PASS');
