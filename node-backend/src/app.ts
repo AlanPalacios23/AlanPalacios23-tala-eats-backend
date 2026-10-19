@@ -1,6 +1,6 @@
 import express from 'express';
 import helmet from 'helmet';
-import IORedis from 'ioredis';
+import { Redis } from 'ioredis';
 import { db } from './db.js';
 import { config } from './config.js';
 import { stripeWebhook } from './webhook.js';
@@ -16,7 +16,7 @@ app.get('/api/v1/health', (_req, res) => {
   res.json({ status: 'ok', version: '0.1.0-node-stage', production: false });
 });
 app.get('/api/v1/ready', async (_req, res) => {
-  const redis = new IORedis(config.REDIS_URL, {
+  const redis = new Redis(config.REDIS_URL, {
     lazyConnect: true, connectTimeout: 2000,
     maxRetriesPerRequest: 1, retryStrategy: () => null,
   });

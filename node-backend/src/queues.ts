@@ -1,7 +1,7 @@
 import { Queue } from 'bullmq';
-import IORedis from 'ioredis';
+import { Redis } from 'ioredis';
 import { config } from './config.js';
-const connection = new IORedis(config.REDIS_URL, {
+const connection = new Redis(config.REDIS_URL, {
   maxRetriesPerRequest: null,
 });
 export const webhookQueue = new Queue('tala-node-staging-webhooks', {

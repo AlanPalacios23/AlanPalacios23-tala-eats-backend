@@ -1,10 +1,10 @@
 import { Worker } from 'bullmq';
-import IORedis from 'ioredis';
+import { Redis } from 'ioredis';
 import { config } from './config.js';
 import { db } from './db.js';
 
 // Nunca cobra ni transfiere dinero; únicamente marca un evento test verificado.
-const connection = new IORedis(config.REDIS_URL, { maxRetriesPerRequest: null });
+const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 const worker = new Worker('tala-node-staging-webhooks', async (job) => {
   if (job.name !== 'receipt' || typeof job.data?.eventId !== 'string') {
     throw new Error('INVALID_RECEIPT_JOB');
