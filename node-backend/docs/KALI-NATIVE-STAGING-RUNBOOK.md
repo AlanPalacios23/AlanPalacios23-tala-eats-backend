@@ -145,3 +145,27 @@ bash scripts/kali-staging-deploy.sh --preflight
 
 La PR #80 utiliza servicios efímeros de GitHub-hosted runners (que NO se despliegan en Kali) para validar PostgreSQL 15, Prisma 7, Redis, API y worker. La suite E2E verifica webhook Stripe firmado exclusivamente de TEST, rechazo de firma inválida, registro persistente y ausencia de movimientos financieros. Además, un segundo workflow prueba la API/Redis y las migraciones en la DB de CI. Los checks no equivalen a instalación en Kali.
 
+
+## 10. Kali Rolling no ofrece `postgresql-15` por APT (evidencia del host)
+
+Inventario real del servidor, 2026-10-19 UTC:
+- Redis 8.0.6-2 ya instalado; binarios `redis-server`/`redis-cli` presentes. NO reinstalar ni reemplazar el servicio existente.
+- `node`, `npm`, `pm2` ausentes. Se preparó el instalador no root `kali-install-node24-user.sh` para el usuario staging.
+- Puertos staging `15435`, `16379`, `18190` libres.
+- Comandos `pg_createcluster`, `pg_ctlcluster`, `pg_conftool` presentes, pero `apt-cache policy postgresql-15 postgresql-client-15` informa `Unable to locate package`.
+- Usuario `tala-node-stage` y cluster PostgreSQL15 dedicado aún inexistentes.
+
+**NO ejecutar** `kali-provision-native-stage.sh --apply` todavía: su diseño inicial exige el paquete binario PostgreSQL15, ausente en este Kali. Nunca mezclar repositorios Debian `trixie`, `forky` o `sid` con los de Kali para eludir ese gate.
+
+**Ruta de contingencia elegida:** compilar PostgreSQL 15.19 desde el tarball oficial en un prefijo y data dir exclusivos del usuario staging, con `configure --prefix` + `make` + `make install`, sin añadir repositorios APT ajenos. La versión y SHA256 se tomarán exclusivamente de `https://www.postgresql.org/ftp/source/v15.19/` / `https://ftp.postgresql.org/pub/source/v15.19/`. Los comandos de instalación del cluster y unidad native PostgreSQL requieren un script alternativo que compruebe identidad/puertos; **el aprovisionador APT actual NO soporta directamente este layout**.
+
+**Paso inmediato seguro (read-only):**
+```bash
+cd ~/talaeats-node-stage-prep
+git pull --ff-only
+bash node-backend/scripts/kali-pg15-native-source-preflight.sh
+```
+
+El script enumera compilador `gcc`, `make`, dependencias de compilación, espacio y clusters/puertos sin tocar servicios. Si faltan compilador/librerías se revisará exclusivamente el paquete Kali nativo en una simulación APT `apt-get -s install ...` ANTES de pedir cambios. En el host Kali anterior se observó 2 CPU y ~6.7 GiB RAM; compilaciones futuras usarán concurrencia limitada y no se mezclarán con la base Docker productiva.
+
+**No desplegado:** esta evaluación no equivale a PostgreSQL instalado, ni PM2 iniciado. Mantener PR #80 DRAFT hasta verificación real en Kali.
