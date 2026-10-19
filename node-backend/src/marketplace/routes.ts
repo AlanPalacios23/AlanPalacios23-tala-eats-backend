@@ -4,6 +4,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import { db } from '../db.js';
+import { config } from '../config.js';
 import { current } from '../auth/routes.js';
 import type { AuthUser, MarketplaceRestaurant, MarketplaceMenuItem,
   MarketplaceDriverProfile, MarketOrder, MarketOrderItem } from '../generated/prisma/client.js';
@@ -263,6 +264,20 @@ stageOrdersRouter.get('/mine',async(req,res)=>{
   });
   res.json(orders.map(o=>orderView(o,true)));
 });
+// Python orders.py reorder is a non-mutating cart reconstruction, not a charge.
+stageOrdersRouter.post('/:orderId/reorder',async(req,res)=>{
+  const account=await user(req,['customer']);
+  const order=await db.marketOrder.findFirst({
+    where:{id:idParam(req,'orderId'),userId:account.id},include:{items:true},
+  });
+  if(!order) return notFound('Pedido no encontrado');
+  res.json({
+    restaurant_id:order.restaurantId,
+    items:order.items.filter(x=>x.menuItemId!==null).map(x=>({
+      menu_item_id:x.menuItemId,quantity:x.quantity,
+    })),
+  });
+});
 stageOrdersRouter.get('/:orderId',async(req,res)=>{
   const account=await user(req);
   const order=await db.marketOrder.findUnique({
@@ -296,6 +311,31 @@ ownerRouter.get('/orders',async(req,res)=>{
   res.json(rows.map(x=>orderView(x,false)));
 });
 
+// Python owner.py KDS read-only. Delivery status changes/dispatch are NOT enabled.
+ownerRouter.get('/kds',async(req,res)=>{
+  const {row}=await ownRestaurant(req);
+  const lanes=['received','confirmed','preparing','ready',...(
+    config.MERCHANT_MANAGED_DELIVERY==='true'?
+      ['on_the_way']:['assigned','picked_up','on_the_way']
+  )];
+  const horizon=new Date(Date.now()+config.SCHEDULE_PREP_LEAD_MINUTES*60_000);
+  const orders=await db.marketOrder.findMany({
+    where:{
+      restaurantId:row.id,
+      status:{in:lanes},
+      OR:[{paymentMethod:'cash'},{paymentStatus:'paid'}],
+    },
+    include:orderInclude,orderBy:[{createdAt:'asc'},{id:'asc'}],take:500,
+  });
+  const result:Record<string,unknown[]>={};
+  for(const lane of lanes) result[lane]=[];
+  for(const item of orders) {
+    if(item.scheduledFor!==null&&item.scheduledFor>horizon) continue;
+    result[item.status]?.push(orderView(item,false));
+  }
+  res.json(result);
+});
+
 // Python driver.py: profile and private assigned-order read surface.
 // Availability/dispatch/GPS mutation blocked until atomic assignment and
 // Redis live-location parity is implemented.
@@ -306,6 +346,29 @@ const driverFields=[
 async function driverAccount(req:Request) {
   return user(req,['driver']);
 }
+stageDriverRouter.use((_req,res,next)=>{
+  if(config.MERCHANT_MANAGED_DELIVERY==='true') {
+    res.status(410).json({detail:'Tala Eats Repartidor no está activo porque MERCHANT_MANAGED_DELIVERY=true'});
+    return;
+  }
+  next();
+});
+stageDriverRouter.get('/available',async(req,res)=>{
+  const account=await driverAccount(req);
+  const limit=z.coerce.number().int().min(1).max(100).safeParse(req.query.limit??25);
+  if(!limit.success) throw new RouteError(422,'Límite inválido');
+  const profile=await db.marketplaceDriverProfile.findUnique({where:{userId:account.id}});
+  if(!profile?.isOnline){res.json([]);return;}
+  const active=await db.marketOrder.count({
+    where:{driverId:account.id,status:{in:['assigned','picked_up','on_the_way']}},
+  });
+  if(active>0){res.json([]);return;}
+  const orders=await db.marketOrder.findMany({
+    where:{status:'ready',driverId:null,orderType:'delivery'},
+    include:orderInclude,orderBy:[{updatedAt:'asc'},{id:'asc'}],take:limit.data,
+  });
+  res.json(orders.map(x=>orderView(x,false)));
+});
 stageDriverRouter.get('/profile',async(req,res)=>{
   const account=await driverAccount(req);
   const profile=await db.marketplaceDriverProfile.upsert({
