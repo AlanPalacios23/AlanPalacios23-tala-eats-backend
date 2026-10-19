@@ -18,17 +18,25 @@
 | Orders | GET /api/v1/orders/by-reference/{ref} | Implemented account-scoped, private/no-store | E2E | Read-only, no order recreation |
 | Orders | GET /api/v1/orders/mine | Implemented paginated | E2E | Exact optional fields, stable ordering |
 | Orders | GET /api/v1/orders/{id} | Implemented RBAC, PIN customer-only | E2E | Complete driver GPS/optional fields |
+| Orders | POST /api/v1/orders/{id}/reorder | Implemented: returns cart items without checkout | E2E | No payment writes; items missing from menu excluded |
+| Owner | GET /api/v1/owner/kds | Implemented read-only, cash/paid gate, scheduled lead time + no PIN | E2E | Status actions and dispatch not yet enabled |
+| Driver | GET /api/v1/driver/available | Implemented read-only: driver online, no active job; no PIN | E2E | Cannot enable online via API until safe assignment parity |
 | Orders | POST /api/v1/orders | **503 deliberate** (fail closed) | E2E | Atomic stock/reservation, invoices, provider state, fees, idempotent paid checkout, gift/wallet and outbox all P0 |
 | Driver | GET /api/v1/driver/profile | Implemented stage read model | E2E | Merchant-managed global 410 mode |
 | Driver | GET /api/v1/driver/mine | Implemented read-only, no PIN | E2E | Dispatch, active delivery flow |
 | Driver | PATCH /api/v1/driver/availability | **503 deliberate** | E2E | Atomic dispatch and active-order gating |
 | Driver | PATCH /api/v1/driver/location | **503 deliberate** | E2E | Redis realtime + geo coalescing, privacy protections |
 
-**Not implemented:** orders cancel/cancellation-preview/reorder, owner analytics/KDS/status/complete/employees, driver dashboard/available/accept/status/complete, full order lifecycle, provider payments, public marketplace markets filter. These remain in master checklist #82.
+**Not implemented:** orders cancel/cancellation-preview, owner analytics/status/complete/employees, driver dashboard/accept/status/complete, full order lifecycle, provider payments, public marketplace markets filter. These remain in master checklist #82.
 
 ## Data model
 
 `20261019_marketplace_phase_b` creates only **new** isolated staging PostgreSQL15 tables `restaurants`, `menu_items`, `driver_profiles`, `orders`, `order_items` after Phase A Auth migration. Numeric IDs and `DECIMAL(10,2)` financial snapshots reflect Python. `orders` uses composite uniqueness `(user_id,client_reference)`. No checkout logic or ledger mutations, no payouts. Existing Python tables/databases are never touched.
+
+## GitHub Actions evidence
+
+- Phase B after adding non-mutating reorder/KDS/available reads: commit `b28f98be37f37f5b3a4f5b6b3d3fb6d16ad1bd37` — [push PG15/Redis8 E2E SUCCESS](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/actions/runs/39204941482), [PR PG15/Redis8 E2E SUCCESS](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/actions/runs/39204945877). No Kali or LIVE deployment.
+- Any subsequent commit needs its **own** passing SHA before acceptance; previous PASS never transfers automatically.
 
 ## Security gates and staging
 
