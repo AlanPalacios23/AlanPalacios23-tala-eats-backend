@@ -1,0 +1,25 @@
+name: TALA EATS | V3 recovery decision gate offline
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/kali_v3_restore_gate_readonly.py'
+      - 'scripts/test_kali_v3_restore_gate_readonly.py'
+      - '.github/workflows/kali-v3-restore-gate-qa.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contract:
+    name: V3 recovery go-no-go, 18 security fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m py_compile scripts/kali_v3_restore_gate_readonly.py scripts/test_kali_v3_restore_gate_readonly.py
+      - run: python scripts/test_kali_v3_restore_gate_readonly.py
