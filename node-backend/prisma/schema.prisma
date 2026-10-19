@@ -317,6 +317,8 @@ model MarketOrder {
   invoiceRequested       Boolean  @default(false) @map("invoice_requested")
   invoiceTaxId           String   @default("") @map("invoice_tax_id") @db.VarChar(40)
   clientReference        String?  @map("client_reference") @db.VarChar(80)
+  inventoryReservedJson  String   @default("{}") @map("inventory_reserved_json")
+  inventoryRestoredAt    DateTime? @map("inventory_restored_at")
   acceptedAt             DateTime? @map("accepted_at")
   preparingAt            DateTime? @map("preparing_at")
   readyAt                DateTime? @map("ready_at")
