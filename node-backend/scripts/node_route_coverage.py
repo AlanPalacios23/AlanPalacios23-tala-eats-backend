@@ -22,9 +22,14 @@ NODE_ROUTERS = {
     "stageOrdersRouter": (ROOT / "node-backend/src/marketplace/routes.ts", "/api/v1/orders"),
     "stageDriverRouter": (ROOT / "node-backend/src/marketplace/routes.ts", "/api/v1/driver"),
     "platformRouter": (ROOT / "node-backend/src/platform/routes.ts", "/api/v1/platform"),
+    "adminRouter": (ROOT / "node-backend/src/operational/routes.ts", "/api/v1/admin"),
+    "operationsRouter": (ROOT / "node-backend/src/operational/routes.ts", "/api/v1/operations"),
+    "v9Router": (ROOT / "node-backend/src/versions/routes.ts", "/api/v1/v9"),
+    "v10Router": (ROOT / "node-backend/src/versions/routes.ts", "/api/v1/v10"),
+    "v11Router": (ROOT / "node-backend/src/versions/routes.ts", "/api/v1/v11"),
 }
 ROUTE_RE = re.compile(
-    r"""\b(?P<router>authRouter|marketplaceRouter|ownerRouter|stageOrdersRouter|stageDriverRouter|platformRouter)"""
+    r"""\b(?P<router>authRouter|marketplaceRouter|ownerRouter|stageOrdersRouter|stageDriverRouter|platformRouter|adminRouter|operationsRouter|v9Router|v10Router|v11Router)"""
     r"""\.(?P<method>get|post|put|patch|delete|head|options)"""
     r"""\(\s*['"](?P<path>/[^'"]*)['"]""",
     re.MULTILINE,
