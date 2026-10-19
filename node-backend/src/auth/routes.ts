@@ -105,7 +105,7 @@ async function rateLimit(req: Request, op: string): Promise<void> {
     throw new HttpFailure(503, 'Límite de autenticación no disponible');
   }
 }
-async function current(req: Request) {
+export async function current(req: Request) {
   const token = suppliedToken(req);
   if (!token) throw new HttpFailure(401, 'Sesión requerida');
   const claims = verifyToken(token, secret());
