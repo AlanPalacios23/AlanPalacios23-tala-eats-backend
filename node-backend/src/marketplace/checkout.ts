@@ -39,7 +39,7 @@ const toMinor=(raw:string):bigint=>{
   if(!/^(?:0|[1-9]\d{0,7})(?:\.\d{1,2})?$/.test(raw))
     throw new CheckoutError(422,'Importe inválido');
   const [a,b='']=raw.split('.');
-  return BigInt(a)*100n+BigInt((b+'00').slice(0,2));
+  return BigInt(a!)*100n+BigInt((b+'00').slice(0,2));
 };
 const fromMinor=(c:bigint):string=>{
   if(c<0n||c>999_999_999_999n)throw new CheckoutError(422,'Importe fuera de límite');
@@ -49,7 +49,7 @@ const toMilli=(s:string):bigint=>{
   if(!/^(?:0|[1-9]\d{0,9})(?:\.\d{1,3})?$/.test(s))
     throw new CheckoutError(503,'Receta fuera de contrato de staging');
   const [a,b='']=s.split('.');
-  return BigInt(a)*1000n+BigInt((b+'000').slice(0,3));
+  return BigInt(a!)*1000n+BigInt((b+'000').slice(0,3));
 };
 const fromMilli=(n:bigint)=> (n/1000n).toString()+'.'+(n%1000n).toString().padStart(3,'0');
 const roundRate=(c:bigint,basisPoints:bigint)=>(c*basisPoints+5000n)/10000n;
