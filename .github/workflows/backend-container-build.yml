@@ -5,16 +5,12 @@ on:
   push:
     branches: [main]
     paths:
-      - 'backend/Dockerfile'
-      - 'backend/requirements.txt'
-      - 'backend/entrypoint.sh'
+      - 'backend/**'
       - '.github/workflows/backend-container-build.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'backend/Dockerfile'
-      - 'backend/requirements.txt'
-      - 'backend/entrypoint.sh'
+      - 'backend/**'
       - '.github/workflows/backend-container-build.yml'
 
 permissions:
