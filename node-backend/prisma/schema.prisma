@@ -94,6 +94,7 @@ model AuthUser {
   marketOrders          MarketOrder[] @relation("CustomerOrders")
   assignedOrders        MarketOrder[] @relation("DriverOrders")
   driverProfile         MarketplaceDriverProfile?
+  restaurantEmployment  MarketplaceRestaurantEmployee[]
   @@index([role])
   @@map("users")
 }
@@ -225,6 +226,7 @@ model MarketplaceRestaurant {
   createdAt         DateTime @default(now()) @map("created_at")
   owner             AuthUser? @relation(fields:[ownerId],references:[id],onDelete:SetNull)
   menuItems         MarketplaceMenuItem[]
+  employees         MarketplaceRestaurantEmployee[]
   orders            MarketOrder[]
   @@index([ownerId])
   @@index([marketCode])
@@ -475,4 +477,19 @@ model StageSystemSetting {
   updatedByUserId Int?     @map("updated_by_user_id")
   updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
   @@map("system_settings")
+}
+
+// D1: Python RestaurantEmployee model with deterministic unique membership.
+// Membership does not change the global AuthUser role or grant KDS access.
+model MarketplaceRestaurantEmployee {
+  id           Int      @id @default(autoincrement())
+  restaurantId Int      @map("restaurant_id")
+  userId       Int      @map("user_id")
+  role         String   @default("cashier") @db.VarChar(30)
+  restaurant   MarketplaceRestaurant @relation(fields:[restaurantId],references:[id],onDelete:Cascade)
+  user         AuthUser @relation(fields:[userId],references:[id],onDelete:Cascade)
+  @@unique([restaurantId,userId],map:"uq_restaurant_employee_membership")
+  @@index([restaurantId])
+  @@index([userId])
+  @@map("restaurant_employees")
 }
