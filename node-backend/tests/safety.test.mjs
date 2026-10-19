@@ -11,7 +11,7 @@ test('PM2 only staging processes', () => {
 });
 test('hard isolation of database, Redis, port and Stripe', () => {
   const cfg=read('src/config.ts');
-  for(const s of ['15435','16379','18190','sk_test_','TALA_STAGING_POSTGRES_ISOLATION_REQUIRED']) {
+  for(const s of ['15435','16379','18190','sk_test_','STAGING_POSTGRES_ISOLATION_REQUIRED']) {
     assert.ok((cfg+read('.env.example')).includes(s),s);
   }
 });
