@@ -11,6 +11,7 @@ const schema = z.object({
   STRIPE_FINANCIAL_WRITES_ENABLED: z.literal('false'),
   AUTH_V02_ENABLED: z.enum(['false', 'true']).default('false'),
   MARKETPLACE_B_ENABLED: z.enum(['false','true']).default('false'),
+  STAGE_PICKUP_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
   MERCHANT_MANAGED_DELIVERY: z.enum(['false','true']).default('false'),
   SCHEDULE_PREP_LEAD_MINUTES: z.coerce.number().int().min(5).max(360).default(45),
   AUTH_JWT_SECRET: z.string().min(40).optional(),
@@ -42,4 +43,10 @@ if (config.AUTH_V02_ENABLED === 'true' && !config.AUTH_JWT_SECRET) {
 
 if (config.MARKETPLACE_B_ENABLED === 'true' && config.AUTH_V02_ENABLED !== 'true') {
   throw new Error('MARKETPLACE_STAGE_REQUIRES_AUTH_V02');
+}
+
+if (config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED === 'true' &&
+    (config.MARKETPLACE_B_ENABLED !== 'true' ||
+      config.AUTH_V02_ENABLED !== 'true')) {
+  throw new Error('STAGE_PICKUP_CHECKOUT_REQUIRES_MARKETPLACE_AND_AUTH');
 }

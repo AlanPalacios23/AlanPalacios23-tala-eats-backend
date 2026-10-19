@@ -5,6 +5,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import { db } from '../db.js';
 import { config } from '../config.js';
+import { createCashPickupOnly, isCashPickupIntent } from './checkout.js';
 import { current } from '../auth/routes.js';
 import type { AuthUser, MarketplaceRestaurant, MarketplaceMenuItem,
   MarketplaceDriverProfile, MarketOrder, MarketOrderItem } from '../generated/prisma/client.js';
@@ -291,8 +292,19 @@ stageOrdersRouter.get('/:orderId',async(req,res)=>{
   res.setHeader('Cache-Control','private, no-store');
   res.json(orderView(order,isOwner));
 });
-stageOrdersRouter.post('/',async(_req,res)=>{
-  res.status(503).json({detail:'Checkout Node staging bloqueado hasta paridad de inventario, tarifas, contabilidad y PSP TEST'});
+stageOrdersRouter.post('/',async(req,res)=>{
+  if(config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true'||!isCashPickupIntent(req.body)){
+    res.status(503).json({detail:'Checkout Node staging disponible sólo para pickup/cash sintético con feature flag explícita'});
+    return;
+  }
+  const account=await user(req,['customer','admin']);
+  const orderId=await createCashPickupOnly(req.body,account);
+  const created=await db.marketOrder.findUnique({
+    where:{id:orderId},include:orderInclude,
+  });
+  if(!created)throw new RouteError(503,'Pedido transaccional no encontrado');
+  res.setHeader('Cache-Control','private, no-store');
+  res.status(201).json(orderView(created,true));
 });
 ownerRouter.get('/orders',async(req,res)=>{
   const account=await user(req,['restaurant','admin']);
