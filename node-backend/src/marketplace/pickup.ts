@@ -75,7 +75,7 @@ export async function completeCashPickupStage(
     select:{orderType:true,paymentMethod:true,
       restaurant:{select:{ownerId:true}}},
   });
-  if(!candidate)reject(404,'Pedido no encontrado');
+  if(!candidate)return reject(404,'Pedido no encontrado');
   if(actor.role!=='admin'&&candidate.restaurant.ownerId!==actor.id)
     reject(403,'Ese pedido no pertenece a tu restaurante');
   if(candidate.orderType!=='pickup'||candidate.paymentMethod!=='cash')
