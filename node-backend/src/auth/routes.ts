@@ -1,4 +1,4 @@
-import { randomInt } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { Redis } from 'ioredis';
 import { z } from 'zod';
@@ -25,6 +25,17 @@ const profileSchema = z.strictObject({
   avatar_url: z.string().trim().max(600).nullable().optional(),
   birth_date: z.string().trim().max(10).optional(),
 });
+// Python schemas.PasswordForgotRequest and PasswordResetConfirm.
+const forgotSchema = z.strictObject({ email: z.email().max(255) });
+const resetSchema = z.strictObject({
+  token: z.string().min(20).max(300),
+  password: z.string().min(8).max(128),
+});
+const RESET_GENERIC_REPLY = 'Si el correo está registrado, enviaremos instrucciones para restablecer la contraseña.';
+const RESET_INVALID_REPLY = 'El enlace de recuperación es inválido o expiró';
+const RESET_MINUTES = 30; // backend/app/config.py default; staging-only.
+const RESET_STAGE_FRONTEND = 'http://127.0.0.1:5173'; // Not delivered without SMTP.
+
 const DUMMY_HASH = 'pbkdf2_sha256$600000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 const AUTH_COOKIE = 'talaeats_session';
 const TOKEN_LIFE_SECONDS = 480 * 60;
@@ -289,8 +300,86 @@ authRouter.get('/google/config', (_req,res)=>{
 authRouter.post('/google', (_req,res)=>{
   res.status(503).json({detail:'Google Sign-In aún no está configurado en staging'});
 });
-// Password forgot/reset remain deliberately unexposed until a real SMTP/outbox
-// sender and complete all-device revocation can be verified. No fake success.
+// Stage-only: durable outbox means QUEUED, never "email sent" or human receipt.
+// No real SMTP transport is enabled; do not expose staging recovery to customers.
+authRouter.post('/password/forgot', async (req,res) => {
+  await rateLimit(req,'password-forgot');
+  const parsed = forgotSchema.safeParse(req.body);
+  if (!parsed.success) throw new HttpFailure(422, 'Correo inválido');
+  const email = normalizedEmail(parsed.data.email);
+  const user = await db.authUser.findUnique({where:{email}});
+  if (user?.isActive && user.passwordHash) {
+    const raw = randomBytes(40).toString('base64url');
+    const expiresAt = new Date(Date.now() + RESET_MINUTES*60_000);
+    // Token is never stored in plaintext outside the pending email envelope.
+    // A reset request never changes a password or revokes an existing session.
+    await db.$transaction(async tx => {
+      await tx.authPasswordResetToken.create({
+        data:{userId:user.id,tokenHash:sha256Hex(raw),expiresAt},
+      });
+      await tx.authEmailOutbox.create({
+        data:{
+          toEmail:user.email,subject:'Restablece tu contraseña de Tala Eats',
+          textBody:'Hola '+user.name+',\\n\\nRecibimos una solicitud para cambiar tu contraseña. '+
+            'Abre este enlace antes de '+RESET_MINUTES+' minutos:\\n\\n'+
+            RESET_STAGE_FRONTEND+'/restablecer?token='+raw+
+            '\\n\\nSi no fuiste tú, ignora este mensaje.',
+        },
+      });
+      await tx.authAuditEvent.create({
+        data:{userId:user.id,action:'password.reset.request',
+          entityType:'user',entityId:String(user.id)},
+      });
+    });
+  }
+  // Identical response for existing/unknown/disabled/Google-only accounts.
+  res.status(202).json({message:RESET_GENERIC_REPLY});
+});
+authRouter.post('/password/reset', async (req,res) => {
+  await rateLimit(req,'password-reset');
+  const parsed = resetSchema.safeParse(req.body);
+  if (!parsed.success) throw new HttpFailure(422, 'Datos de recuperación inválidos');
+  const tokenHash = sha256Hex(parsed.data.token);
+  const now = new Date();
+  const hashedPassword = await hashPassword(parsed.data.password);
+  await db.$transaction(async tx => {
+    const record = await tx.authPasswordResetToken.findUnique({where:{tokenHash}});
+    if (!record || record.usedAt !== null || record.expiresAt <= now) {
+      throw new HttpFailure(400, RESET_INVALID_REPLY);
+    }
+    // Conditional UPDATE obtains a row lock: only one racing reset succeeds.
+    const consumed = await tx.authPasswordResetToken.updateMany({
+      where:{id:record.id,usedAt:null,expiresAt:{gt:now}},
+      data:{usedAt:now},
+    });
+    if (consumed.count !== 1) throw new HttpFailure(400, RESET_INVALID_REPLY);
+    const user = await tx.authUser.findUnique({where:{id:record.userId}});
+    if (!user?.isActive) throw new HttpFailure(400, 'La cuenta ya no está disponible');
+    await tx.authUser.update({
+      where:{id:user.id},
+      data:{
+        passwordHash:hashedPassword,
+        ...(user.authProvider === 'google' ? {authProvider:'local+google'} : {}),
+      },
+    });
+    // Prevent stolen older links and any previously issued JWT from working.
+    await tx.authPasswordResetToken.updateMany({
+      where:{userId:user.id,usedAt:null},data:{usedAt:now},
+    });
+    await tx.authDeviceSession.updateMany({
+      where:{userId:user.id,active:true},data:{active:false,trusted:false},
+    });
+    await tx.authAuditEvent.create({
+      data:{userId:user.id,action:'password.reset.complete',
+        entityType:'user',entityId:String(user.id)},
+    });
+    await tx.authNotification.create({
+      data:{userId:user.id,kind:'security',title:'Contraseña actualizada',
+        message:'Tu contraseña de Tala Eats fue cambiada correctamente.'},
+    });
+  });
+  res.json({message:'Contraseña actualizada. Ya puedes iniciar sesión.'});
+});
 
 authRouter.use((error:unknown, _req:Request, res:Response, _next:NextFunction)=>{
   if (error instanceof HttpFailure) {
