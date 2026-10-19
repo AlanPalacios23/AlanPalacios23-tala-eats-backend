@@ -5,6 +5,7 @@ import { db } from './db.js';
 import { config } from './config.js';
 import { stripeWebhook } from './webhook.js';
 import { authRouter } from './auth/routes.js';
+import { platformRouter, platformErrors } from './platform/routes.js';
 import { marketplaceRouter, ownerRouter, stageOrdersRouter,
   stageDriverRouter, marketplaceErrors } from './marketplace/routes.js';
 
@@ -22,6 +23,8 @@ if (config.MARKETPLACE_B_ENABLED === 'true') {
   app.use('/api/v1/owner', ownerRouter);
   app.use('/api/v1/orders', stageOrdersRouter);
   app.use('/api/v1/driver', stageDriverRouter);
+  app.use('/api/v1/platform', platformRouter);
+  app.use(platformErrors);
   app.use(marketplaceErrors);
 }
 app.get('/api/v1/health', (_req, res) => {
