@@ -7,7 +7,6 @@ bind a public interface, migrate the database, or start Node/PM2.
 """
 from __future__ import annotations
 
-import argparse
 import getpass
 import os
 from pathlib import Path
@@ -269,8 +268,6 @@ def install() -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["--plan", "--apply"], nargs="?", default="--plan")
     # argparse interprets --plan as an option; map to a plain token.
     raw = sys.argv[1:]
     if raw not in ([], ["--plan"], ["--apply"]):
