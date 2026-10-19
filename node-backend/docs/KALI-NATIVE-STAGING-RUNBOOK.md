@@ -169,3 +169,59 @@ bash node-backend/scripts/kali-pg15-native-source-preflight.sh
 El script enumera compilador `gcc`, `make`, dependencias de compilación, espacio y clusters/puertos sin tocar servicios. Si faltan compilador/librerías se revisará exclusivamente el paquete Kali nativo en una simulación APT `apt-get -s install ...` ANTES de pedir cambios. En el host Kali anterior se observó 2 CPU y ~6.7 GiB RAM; compilaciones futuras usarán concurrencia limitada y no se mezclarán con la base Docker productiva.
 
 **No desplegado:** esta evaluación no equivale a PostgreSQL instalado, ni PM2 iniciado. Mantener PR #80 DRAFT hasta verificación real en Kali.
+
+## 11. Resultado real del preflight PG15 de Kali (2026-10-19)
+
+El operador ejecutó `kali-pg15-native-source-preflight.sh` en Kali Rolling:
+- `gcc`, `make`, `tar`, `curl`, `sha256sum`, `zlib1g-dev` disponibles.
+- `libreadline-dev` y `libssl-dev` **no instalados**; tampoco son obligatorios si PostgreSQL15 se compila para **localhost sin Readline/SSL**. PostgreSQL15 soporta explícitamente `--without-readline`; OpenSSL es opcional para TLS remoto, que staging no usa.
+- Cluster nativo existente `18/main` DOWN puerto 5432: no iniciar, actualizar, limpiar ni reutilizar.
+- Puertos `15435/16379/18190` libres. Arquitectura soportada y al menos 1 GiB disponible.
+- Compilación PostgreSQL15 desde código fuente oficial verificado por SHA256, SIN paquetes nuevos de Kali y SIN Docker. Use un solo job de compilación para no sobrecargar el host.
+
+**ATENCIÓN:** `kali-provision-native-stage.sh` viejo asume PostgreSQL15 empaquetado en `/usr/lib/postgresql/15/bin/`; NO sirve para la ruta source y NO debe ejecutarse con `--apply`.
+
+### 11A. Crear usuario staging aislado (primer cambio autorizado al host)
+
+Plan no mutante, ejecutado como `alan`:
+
+```bash
+cd ~/talaeats-node-stage-prep
+git pull --ff-only
+bash node-backend/scripts/kali-stage-create-user.sh --plan
+```
+
+Después de comprobar `STAGE_ACCOUNT=not_created` y `STAGE_HOME=not_created`, aprobar explícitamente crear **únicamente** el usuario sin privilegios:
+
+```bash
+sudo env TALA_STAGE_USER_APPROVAL=I_APPROVE_NEW_STAGE_USER_ONLY \
+  bash node-backend/scripts/kali-stage-create-user.sh --apply
+```
+
+Esto crea `tala-node-stage` con `/home/tala-node-stage` privado (0700); sin grupos Docker/sudo, sin paquetes y sin tocar producción.
+
+### 11B. Compilar PostgreSQL 15.19 oficialmente bajo el usuario staging
+
+El directorio HOME de `alan` no puede ser leído por el nuevo usuario: clonar otra copia limpia de la rama DRAFT dentro del HOME del usuario staging. El clonado **no activa** el código.
+
+```bash
+sudo -iu tala-node-stage
+git clone --single-branch \
+  --branch feat/node24-pm2-native-staging-20261019 \
+  https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend.git \
+  "$HOME/talaeats-node-source"
+cd "$HOME/talaeats-node-source"
+bash node-backend/scripts/kali-stage-build-postgres15.sh --plan
+```
+
+Si el plan confirma que el directorio destino es nuevo, faltan cero herramientas y hay espacio, ejecutar voluntariamente:
+
+```bash
+TALA_PG15_SOURCE_APPROVAL=I_APPROVE_STAGE_HOME_BUILD_ONLY \
+  bash node-backend/scripts/kali-stage-build-postgres15.sh --apply
+```
+
+El script toma el tarball **PostgreSQL 15.19** y su SHA256 de `https://ftp.postgresql.org/pub/source/v15.19/`, verifica el checksum, configura con `--without-readline`, `make -j1`, `make install` bajo `$HOME/.local/postgresql-15.19` y verifica `postgres --version`. No crea una base, no arranca PostgreSQL/Redis/PM2 y no añade binarios a PATH global. Compilar no equivale a habilitar TLS; mantener el futuro Postgres exclusivamente en loopback y usar SCRAM.
+
+**No usar `pg_createcluster` contra PG18 ni cambiar el puerto 5432.** Tras éxito del compilador, el siguiente paso será preparar el cluster PG15 bajo el mismo usuario staging, su unidad systemd separada, Redis 8 en 16379 y los secretos staging. Se verificará su identidad antes de cualquier migración Prisma y despliegue PM2.
+
