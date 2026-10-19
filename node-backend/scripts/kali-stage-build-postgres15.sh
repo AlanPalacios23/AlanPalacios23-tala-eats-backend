@@ -76,22 +76,31 @@ cd "postgresql-$VERSION"
 # OpenSSL is opt-in, so absent libssl-dev is fine for LOCAL loopback staging.
 # zlib1g-dev remains present and pg_dump custom archive stays supported.
 if ! ./configure --prefix="$PREFIX" --without-readline >../configure.log 2>&1; then
-  echo 'PG15_CONFIGURE=FAIL_LOG_PRIVATE'; exit 1
+  echo 'PG15_CONFIGURE=FAIL'; exit 1
 fi
 echo 'PG15_CONFIGURE=PASS'
 # Low CPU pressure: Kali also hosts existing Docker production services.
 if ! make -j1 >../build.log 2>&1; then
-  echo 'PG15_MAKE=FAIL_LOG_PRIVATE'; exit 1
+  echo 'PG15_MAKE=FAIL'; exit 1
 fi
 echo 'PG15_MAKE=PASS'
 if ! make install >../install.log 2>&1; then
-  echo 'PG15_INSTALL=FAIL_LOG_PRIVATE'; exit 1
+  echo 'PG15_INSTALL=FAIL'; exit 1
 fi
 if [ ! -x "$PREFIX/bin/postgres" ] || [ ! -x "$PREFIX/bin/initdb" ] ||
    [ ! -x "$PREFIX/bin/pg_ctl" ] || [ ! -x "$PREFIX/bin/psql" ]; then
   echo 'PG15_BINARIES=FAIL'; exit 1
 fi
-if "$PREFIX/bin/postgres" --version | grep -Fq 'PostgreSQL 15.19'; then
+if "$PREFIX/bin/postgres" --version | grep -Eq '^postgres .+ 15[.]19; then
+  echo 'PG15_BINARIES=PASS'
+else
+  echo 'PG15_WRONG_VERSION'; exit 1
+fi
+echo 'PG15_STAGED_HOME_INSTALL=PASS'
+echo 'POSTGRES_CLUSTER_NOT_CREATED=yes'
+echo 'NO_DOCKER_PG18_REDIS_OR_STRIPE_CHANGES=yes'
+echo 'TALA_NATIVE_PG15_BUILD_END'
+; then
   echo 'PG15_BINARIES=PASS'
 else
   echo 'PG15_WRONG_VERSION'; exit 1
