@@ -285,6 +285,377 @@ adminRouter.get('/wallet/:userId',async(req,res)=>{
    reference_id:x.referenceId,description:x.description,
    created_at:x.createdAt.toISOString()}))});
 });
+
+// G1 operational write/list parity. All DB mutations target CI/stage private
+// containers; payout generation, real refunds and LIVE billing are not mounted.
+const payload=<T extends z.ZodTypeAny>(s:T,b:unknown):z.output<T>=>{
+ const result=s.safeParse(b);
+ if(!result.success)return bad(422,'Datos inválidos');
+ return result.data;
+};
+const centsDecimal=z.union([z.string(),z.number()]).transform(String)
+ .refine(v=>/^\d{1,8}(?:\.\d{1,2})?$/.test(v));
+const boardUser=async(who:number,fn:(tx:any)=>Promise<any>)=>db.$transaction(async tx=>{
+ const rows=await tx.$queryRawUnsafe('SELECT id FROM users WHERE id=$1 FOR UPDATE',who);
+ if(!Array.isArray(rows)||!rows.length)return bad(404,'Cuenta no disponible');
+ return fn(tx);
+},{maxWait:10000,timeout:20000});
+const stageSafe=(key:string)=>key.startsWith('stage.')||key==='v11.canary_percent';
+const onboardPublic=(o:any)=>({id:o.id,user_id:o.userId,entity_type:o.entityType,
+ business_name:o.businessName,tax_id:o.taxId,vehicle:o.vehicle,
+ payout_account_ref:o.payoutAccountRef,status:o.status,notes:o.notes,
+ created_at:o.createdAt.toISOString(),updated_at:o.updatedAt.toISOString()});
+const onboardingSchema=z.strictObject({
+ entity_type:z.enum(['restaurant','driver']),
+ business_name:z.string().max(160).default(''),
+ tax_id:z.string().max(60).default(''),
+ vehicle:z.string().max(100).default(''),
+ payout_account_ref:z.string().max(180).default(''),
+ documents:z.array(z.string().max(250)).max(15).default([]),
+});
+operationsRouter.post('/onboarding',async(req,res)=>{
+ const who=await account(req);
+ const p=payload(onboardingSchema,req.body);
+ if(p.documents.some(x=>!/^uploads\/[a-zA-Z0-9_./-]{1,180}$/.test(x)||
+  x.includes('..')||x.includes('//')))return bad(422,'Documento no seguro');
+ const result=await boardUser(who.id,async tx=>{
+  const old=await tx.opsOnboarding.findFirst({where:{
+   userId:who.id,entityType:p.entity_type,
+   status:{in:['pending','needs_info','approved']},
+  },orderBy:{createdAt:'desc'}});
+  if(old?.status==='approved')return bad(409,'Solicitud aprobada previamente');
+  const data={businessName:p.business_name,taxId:p.tax_id,vehicle:p.vehicle,
+   payoutAccountRef:p.payout_account_ref,documentsJson:JSON.stringify(p.documents),
+   status:'pending'};
+  const row=old?await tx.opsOnboarding.update({where:{id:old.id},data}):
+   await tx.opsOnboarding.create({data:{...data,userId:who.id,entityType:p.entity_type}});
+  await tx.authAuditEvent.create({data:{userId:who.id,action:'onboarding.submit',
+   entityType:p.entity_type,entityId:String(row.id),
+   detail:'Submission pending administrative review'}});
+  return row;
+ });
+ res.setHeader('Cache-Control','private, no-store');
+ res.status(201).json(onboardPublic(result));
+});
+operationsRouter.get('/onboarding/mine',async(req,res)=>{
+ const who=await account(req);
+ const rows=await db.opsOnboarding.findMany({where:{userId:who.id},
+  orderBy:{createdAt:'desc'},take:200});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(rows.map(onboardPublic));
+});
+operationsRouter.get('/admin/onboarding',async(req,res)=>{
+ await account(req,['admin']);
+ const rows=await db.opsOnboarding.findMany({orderBy:{createdAt:'desc'},take:500});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(rows.map(onboardPublic));
+});
+operationsRouter.patch('/admin/onboarding/:applicationId',async(req,res)=>{
+ const admin=await account(req,['admin']);
+ const id=param(req,'applicationId');
+ const p=payload(z.strictObject({status:z.enum(['approved','rejected','needs_info','suspended']),
+  notes:z.string().max(2000).default('')}),req.body);
+ const row=await db.$transaction(async tx=>{
+  const locks=await tx.$queryRawUnsafe(
+   'SELECT id FROM onboarding_applications WHERE id=$1 FOR UPDATE',id);
+  if(!Array.isArray(locks)||!locks.length)return bad(404,'Solicitud no encontrada');
+  const old=await tx.opsOnboarding.findUnique({where:{id}});
+  if(!old)return bad(404,'Solicitud no encontrada');
+  const account=await tx.authUser.findUnique({where:{id:old.userId}});
+  if(!account)return bad(404,'Cuenta de solicitante no encontrada');
+  if(p.status==='approved'){
+   if(old.entityType==='driver'){
+    await tx.marketplaceDriverProfile.upsert({
+     where:{userId:account.id},
+     create:{userId:account.id,vehicle:old.vehicle||'Motocicleta',isVerified:true},
+     update:{vehicle:old.vehicle||'Motocicleta',isVerified:true}});
+   }else{
+    const existing=await tx.marketplaceRestaurant.findFirst({where:{ownerId:account.id}});
+    if(!existing)await tx.marketplaceRestaurant.create({data:{
+     ownerId:account.id,name:old.businessName||'Restaurante de '+account.name,
+     taxId:old.taxId,isOpen:false,onboardingStatus:'approved',
+     verificationStatus:'verified'}});
+    else await tx.marketplaceRestaurant.update({where:{id:existing.id},
+     data:{onboardingStatus:'approved',verificationStatus:'verified',
+      taxId:old.taxId||existing.taxId}});
+   }
+   await tx.authUser.update({where:{id:account.id},data:{
+    role:old.entityType==='driver'?'driver':'restaurant'}});
+   // Password/session refresh required: role change invalidates existing JWT.
+  }
+  const changed=await tx.opsOnboarding.update({where:{id},
+   data:{status:p.status,notes:p.notes}});
+  await tx.authAuditEvent.create({data:{userId:admin.id,
+   action:'onboarding.decision',entityType:old.entityType,
+   entityId:String(id),detail:p.status}});
+  return changed;
+ },{maxWait:10000,timeout:20000});
+ res.setHeader('Cache-Control','private, no-store');res.json(onboardPublic(row));
+});
+operationsRouter.post('/admin/zones',async(req,res)=>{
+ const who=await account(req,['admin']);
+ const p=payload(z.strictObject({
+  name:z.string().trim().min(2).max(120),
+  center_lat:z.number().finite().min(-90).max(90),
+  center_lng:z.number().finite().min(-180).max(180),
+  radius_km:z.number().finite().gt(0).max(150),
+  surcharge:centsDecimal.default('0'),min_order:centsDecimal.default('0'),
+  active:z.boolean().default(true),
+ }),req.body);
+ const row=await db.$transaction(async tx=>{
+  const old=await tx.opsServiceZone.findUnique({where:{name:p.name}});
+  if(old)return bad(409,'Ya existe una zona con ese nombre');
+  const created=await tx.opsServiceZone.create({data:{name:p.name,centerLat:p.center_lat,
+   centerLng:p.center_lng,radiusKm:p.radius_km,surcharge:p.surcharge,
+   minOrder:p.min_order,active:p.active}});
+  await tx.authAuditEvent.create({data:{userId:who.id,action:'zone.create',
+   entityType:'service_zone',entityId:String(created.id),detail:p.name}});
+  return created;
+ });
+ res.status(201).json(zonePublic(row));
+});
+operationsRouter.put('/admin/settings',async(req,res)=>{
+ const who=await account(req,['admin']);
+ const p=payload(z.strictObject({
+  key:z.string().regex(/^[a-z0-9_.-]{2,100}$/),
+  value:z.string().max(500),value_type:z.enum(['string','decimal','integer','boolean']).default('string'),
+  description:z.string().max(300).default('')}),req.body);
+ if(!stageSafe(p.key))return bad(403,'Configuración productiva fuera del laboratorio');
+ const row=await db.$transaction(async tx=>{
+  const updated=await tx.stageSystemSetting.upsert({where:{key:p.key},
+   create:{key:p.key,value:p.value,valueType:p.value_type,
+    description:p.description,updatedByUserId:who.id},
+   update:{value:p.value,valueType:p.value_type,
+    description:p.description,updatedByUserId:who.id}});
+  await tx.authAuditEvent.create({data:{userId:who.id,
+   action:'setting.write',entityType:'setting',entityId:p.key,detail:p.value}});
+  return updated;
+ });
+ res.json({id:row.id,key:row.key,value:row.value,value_type:row.valueType,
+  description:row.description,updated_by_user_id:row.updatedByUserId,
+  updated_at:row.updatedAt.toISOString()});
+});
+operationsRouter.put('/admin/flags',async(req,res)=>{
+ const who=await account(req,['admin']);
+ const p=payload(z.strictObject({
+  key:z.string().regex(/^[a-z0-9_.-]{2,100}$/),
+  description:z.string().max(300).default(''),
+  enabled:z.boolean().default(false),rollout_percent:z.number().int().min(0).max(100).default(100),
+  audience_role:z.enum(['all','customer','restaurant','driver','admin']).default('all'),
+ }),req.body);
+ // Never enable payment, payout, auth or other privileged feature via the
+ // Python-compatibility flag table. Staging experimental keys only.
+ if(!p.key.startsWith('stage.'))return bad(403,'Sólo banderas stage.*');
+ const row=await db.$transaction(async tx=>{
+  const updated=await tx.opsFeatureFlag.upsert({where:{key:p.key},
+   create:{key:p.key,description:p.description,enabled:p.enabled,
+    rolloutPercent:p.rollout_percent,audienceRole:p.audience_role},
+   update:{description:p.description,enabled:p.enabled,
+    rolloutPercent:p.rollout_percent,audienceRole:p.audience_role}});
+  await tx.authAuditEvent.create({data:{userId:who.id,
+   action:'feature_flag.write',entityType:'feature_flag',entityId:p.key,
+   detail:String(p.enabled)}});
+  return updated;
+ });
+ res.json(flagPublic(row));
+});
+const disputePublic=(o:any)=>({
+ id:o.id,order_id:o.orderId,opened_by_user_id:o.openedByUserId,
+ category:o.category,description:o.description,status:o.status,
+ resolution:o.resolution,refund_amount:money(o.refundAmount),
+ assigned_to_user_id:o.assignedToUserId,
+ created_at:o.createdAt.toISOString(),resolved_at:o.resolvedAt?.toISOString()??null});
+operationsRouter.post('/disputes',async(req,res)=>{
+ const who=await account(req);
+ const p=payload(z.strictObject({order_id:z.number().int().positive(),
+  category:z.string().min(3).max(80),
+  description:z.string().min(5).max(3000)}),req.body);
+ const order=await db.marketOrder.findUnique({
+  where:{id:p.order_id},include:{restaurant:true}});
+ if(!order)return bad(404,'Pedido no encontrado');
+ if(who.role!=='admin'&&order.userId!==who.id&&order.driverId!==who.id&&
+  !(who.role==='restaurant'&&order.restaurant.ownerId===who.id))
+  return bad(403,'Sin acceso a ese pedido');
+ const row=await db.$transaction(async tx=>{
+  const created=await tx.opsDispute.create({data:{orderId:order.id,
+   openedByUserId:who.id,category:p.category,description:p.description}});
+  await tx.authAuditEvent.create({data:{userId:who.id,action:'dispute.open',
+   entityType:'order',entityId:String(order.id),detail:p.category}});
+  return created;
+ });
+ res.status(201).json(disputePublic(row));
+});
+operationsRouter.get('/disputes',async(req,res)=>{
+ const who=await account(req);
+ const rows=await db.opsDispute.findMany({
+  where:who.role==='admin'?{}:{openedByUserId:who.id},
+  orderBy:{createdAt:'desc'},take:300});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(rows.map(disputePublic));
+});
+operationsRouter.patch('/admin/disputes/:disputeId',async(req,res)=>{
+ const who=await account(req,['admin']);
+ const p=payload(z.strictObject({
+  status:z.enum(['resolved','rejected','needs_info']),
+  resolution:z.string().min(3).max(3000),
+  refund_amount:centsDecimal.default('0')}),req.body);
+ // Prevent a "resolved" request from creating phantom Wallet balances.
+ if(Number(p.refund_amount)>0)return bad(503,'Reembolso pendiente de ledger transaccional TEST');
+ const id=param(req,'disputeId');
+ const row=await db.$transaction(async tx=>{
+  const exist=await tx.opsDispute.findUnique({where:{id}});
+  if(!exist)return bad(404,'Disputa no encontrada');
+  const done=await tx.opsDispute.update({where:{id},
+   data:{status:p.status,resolution:p.resolution,refundAmount:'0',
+    assignedToUserId:who.id,resolvedAt:p.status==='needs_info'?null:new Date()}});
+  await tx.authAuditEvent.create({data:{userId:who.id,
+   action:'dispute.resolve',entityType:'dispute',entityId:String(id),
+   detail:p.status}});
+  return done;
+ });
+ res.json(disputePublic(row));
+});
+const campaignPublic=(c:any)=>({id:c.id,restaurant_id:c.restaurantId,
+ name:c.name,daily_budget:money(c.dailyBudget),spent:money(c.spent),
+ impressions:c.impressions,clicks:c.clicks,attributed_orders:c.attributedOrders,
+ active:c.active,starts_at:c.startsAt.toISOString(),
+ ends_at:c.endsAt?.toISOString()??null});
+async function ownedShop(who:{id:number;role:string}){
+ const shop=await db.marketplaceRestaurant.findFirst({where:{ownerId:who.id}});
+ if(!shop)return bad(404,'No tienes un restaurante asignado');
+ return shop;
+}
+operationsRouter.get('/owner/campaigns',async(req,res)=>{
+ const who=await account(req,['restaurant','admin']);
+ const shop=await ownedShop(who);
+ const rows=await db.opsSponsoredCampaign.findMany({
+  where:{restaurantId:shop.id},orderBy:{startsAt:'desc'},take:200});
+ res.json(rows.map(campaignPublic));
+});
+operationsRouter.post('/owner/campaigns',async(req,res)=>{
+ const who=await account(req,['restaurant','admin']);
+ const shop=await ownedShop(who);
+ const p=payload(z.strictObject({restaurant_id:z.number().int().positive(),
+  name:z.string().min(2).max(150),daily_budget:centsDecimal,
+  active:z.boolean().default(true)}),req.body);
+ if(p.restaurant_id!==shop.id)return bad(403,'Sólo puedes anunciar tu restaurante');
+ if(Number(p.daily_budget)<=0||Number(p.daily_budget)>100000)return bad(422,'Presupuesto inválido');
+ const row=await db.$transaction(async tx=>{
+  const created=await tx.opsSponsoredCampaign.create({data:{
+   restaurantId:shop.id,name:p.name,dailyBudget:p.daily_budget,
+   active:p.active}});
+  await tx.authAuditEvent.create({data:{userId:who.id,
+   action:'ads.campaign.create',entityType:'restaurant',entityId:String(shop.id),
+   detail:'Campaign pending ad-delivery engine'}});
+  return created;
+ });
+ res.status(201).json(campaignPublic(row));
+});
+const scenario=z.strictObject({scenario:z.enum([
+ 'happy_path','cash_delivery','cancel_before_prep','no_driver']).default('happy_path')});
+const steps=['customer_order','restaurant_confirm','preparing','ready',
+ 'driver_assigned','picked_up','on_the_way','delivered','settled'];
+const simPublic=(x:any)=>({id:x.id,created_by_user_id:x.createdByUserId,
+ scenario:x.scenario,status:x.status,current_step:x.currentStep,
+ state_json:x.stateJson,created_at:x.createdAt.toISOString(),updated_at:x.updatedAt.toISOString()});
+operationsRouter.post('/admin/simulations',async(req,res)=>{
+ const who=await account(req,['admin']);
+ const p=payload(scenario,req.body);
+ const state={steps:[],money_real:false,inventory_real:false,
+  description:'Simulación aislada; no cobra, no descuenta stock, no genera pagos.'};
+ const x=await db.opsSimulation.create({data:{scenario:p.scenario,
+  createdByUserId:who.id,stateJson:JSON.stringify(state)}});
+ res.status(201).json(simPublic(x));
+});
+operationsRouter.get('/admin/simulations',async(req,res)=>{
+ await account(req,['admin']);
+ const x=await db.opsSimulation.findMany({orderBy:{createdAt:'desc'},take:100});
+ res.json(x.map(simPublic));
+});
+const advance=async(id:number,all:boolean)=>{
+ return db.$transaction(async tx=>{
+  const locks=await tx.$queryRawUnsafe(
+   'SELECT id FROM simulation_runs WHERE id=$1 FOR UPDATE',id);
+  if(!Array.isArray(locks)||!locks.length)return bad(404,'Simulación no encontrada');
+  const row=await tx.opsSimulation.findUnique({where:{id}});
+  if(!row)return bad(404,'Simulación no encontrada');
+  if(row.status==='completed')return row;
+  const state=JSON.parse(row.stateJson) as {steps:{step:string;at:string}[];result?:string};
+  const idx=steps.indexOf(row.currentStep),finish=all||idx>=steps.length-1;
+  if(all){state.steps=steps.map(step=>({step,at:new Date().toISOString()}));}
+  else state.steps.push({step:row.currentStep,at:new Date().toISOString()});
+  let next=steps[Math.min(Math.max(idx,0)+1,steps.length-1)]!,
+   status='created';
+  if(row.scenario==='cancel_before_prep'&&(all||row.currentStep==='restaurant_confirm')){
+   next='cancelled';status='completed';state.result='cancelled_without_real_charge';
+  }else if(row.scenario==='no_driver'&&(all||row.currentStep==='ready')){
+   next='dispatch_alert';status='completed';state.result='manual_dispatch_required';
+  }else if(finish){
+   next='settled';status='completed';state.result='success';
+  }
+  return tx.opsSimulation.update({where:{id},data:{
+   currentStep:next,status,stateJson:JSON.stringify(state)}});
+ },{maxWait:10000,timeout:20000});
+};
+operationsRouter.post('/admin/simulations/:simulationId/advance',async(req,res)=>{
+ await account(req,['admin']);
+ const x=await advance(param(req,'simulationId'),false);
+ res.json(simPublic(x));
+});
+operationsRouter.post('/admin/simulations/:simulationId/run-all',async(req,res)=>{
+ await account(req,['admin']);
+ const x=await advance(param(req,'simulationId'),true);
+ res.json(simPublic(x));
+});
+operationsRouter.get('/admin/payouts',async(req,res)=>{
+ await account(req,['admin']);
+ const rows=await db.opsPayout.findMany({orderBy:{createdAt:'desc'},take:500});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(rows.map(x=>({id:x.id,payee_type:x.payeeType,payee_id:x.payeeId,
+  amount:money(x.amount),currency:x.currency,period_start:x.periodStart.toISOString(),
+  period_end:x.periodEnd.toISOString(),status:x.status,provider_ref:x.providerRef,
+  provider:x.provider,attempts:x.attempts,failure_reason:x.failureReason,
+  created_at:x.createdAt.toISOString(),paid_at:x.paidAt?.toISOString()??null})));
+});
+operationsRouter.get('/admin/cash-settlements',async(req,res)=>{
+ await account(req,['admin']);
+ const rows=await db.opsCashSettlement.findMany({orderBy:{createdAt:'desc'},take:500});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(rows.map(x=>({id:x.id,driver_id:x.driverId,period_label:x.periodLabel,
+  cash_collected:money(x.cashCollected),driver_earnings:money(x.driverEarnings),
+  amount_due_platform:money(x.amountDuePlatform),status:x.status,notes:x.notes,
+  created_at:x.createdAt.toISOString(),settled_at:x.settledAt?.toISOString()??null})));
+});
+operationsRouter.get('/owner/finance',async(req,res)=>{
+ const who=await account(req,['restaurant','admin']),shop=await ownedShop(who);
+ const orders=await db.marketOrder.findMany({where:{
+  restaurantId:shop.id,status:'delivered'},select:{
+   subtotal:true,platformCommission:true,restaurantPayout:true}});
+ const totals=(key:'subtotal'|'platformCommission'|'restaurantPayout')=>cash(
+  orders.reduce((s,q)=>s+cents(q[key]),0n));
+ const payouts=await db.opsPayout.findMany({where:{
+  payeeType:'restaurant',payeeId:shop.id},orderBy:{createdAt:'desc'},take:20});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({restaurant_id:shop.id,commercial_plan:shop.commercialPlan,
+  commission_rate:shop.commissionRate.toFixed(4),
+  gross_food_sales:totals('subtotal'),commission:totals('platformCommission'),
+  net_payable:totals('restaurantPayout'),orders:orders.length,
+  payouts:payouts.map(p=>({id:p.id,amount:money(p.amount),status:p.status,
+   period_start:p.periodStart.toISOString(),period_end:p.periodEnd.toISOString()}))});
+});
+operationsRouter.get('/driver/finance',async(req,res)=>{
+ const who=await account(req,['driver']);
+ const orders=await db.marketOrder.findMany({where:{driverId:who.id,status:'delivered'},
+  select:{driverEarning:true,tip:true,cashCollected:true,paymentMethod:true}});
+ const payouts=await db.opsPayout.findMany({where:{payeeType:'driver',payeeId:who.id},
+  orderBy:{createdAt:'desc'},take:20});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({driver_id:who.id,deliveries:orders.length,
+  gross_earnings:cash(orders.reduce((s,x)=>s+cents(x.driverEarning)+cents(x.tip),0n)),
+  cash_collected:cash(orders.reduce((s,x)=>s+(x.paymentMethod==='cash'?cents(x.cashCollected):0n),0n)),
+  payouts:payouts.map(p=>({id:p.id,amount:money(p.amount),status:p.status}))});
+});
+
 export function opsErrors(err:unknown,_req:Request,res:Response,next:NextFunction){
  if(err instanceof OpsError){res.status(err.code).json({detail:err.message});return;}
  next(err);
