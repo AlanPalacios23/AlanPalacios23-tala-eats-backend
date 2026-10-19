@@ -351,3 +351,472 @@ v9Router.get('/admin/system-status',async(req,res)=>{
  res.json({status:dbStatus==='error'||!p.ok?'degraded':'ok',
   checks,open_incidents:open,generated_at:iso()});
 });
+
+
+// G2: 20 additional Python V9 functional contracts: consumer discovery,
+// inventory, operational incidents and loyalty missions. Stage PG15 only.
+const valid=<T extends z.ZodTypeAny>(schema:T,data:unknown):z.output<T>=>{
+ const s=schema.safeParse(data);
+ if(!s.success)return bad(422,'Parámetros inválidos');
+ return s.data;
+};
+const dec3=z.union([z.number(),z.string()]).transform(String)
+ .refine(s=>/^-?\d{1,9}(?:\.\d{1,3})?$/.test(s));
+const uiTime=()=>new Date().toISOString();
+async function store(who:{id:number;role:string}){
+ const shop=await db.marketplaceRestaurant.findFirst({where:{ownerId:who.id}});
+ if(!shop)return bad(404,'No tienes un restaurante asignado');
+ return shop;
+}
+v9Router.post('/events',async(req,res)=>{
+ const p=valid(z.strictObject({
+  event_name:z.string().min(2).max(100),
+  session_id:z.string().max(80).default(''),
+  route:z.string().max(240).default(''),
+  properties:z.record(z.string(),z.unknown()).default({}),
+ }),req.body);
+ const js=JSON.stringify(p.properties);
+ if(js.length>8000)return bad(422,'Propiedades excesivas');
+ // Pre-login analytics are deliberately anonymous even with a bearer token.
+ await db.stageProductEvent.create({data:{eventName:p.event_name,
+  sessionId:p.session_id,route:p.route,propertiesJson:js}});
+ res.status(202).json({accepted:true});
+});
+v9Router.get('/search',async(req,res)=>{
+ const q=typeof req.query.q==='string'?req.query.q.trim().slice(0,160):'';
+ const limitArg=req.query.limit;
+ const limit=limitArg===undefined?20:Number(limitArg);
+ if(!Number.isInteger(limit)||limit<1||limit>50)
+  return bad(422,'Límite de búsqueda inválido');
+ const maxPrice=req.query.max_price===undefined?null:Number(req.query.max_price);
+ if(maxPrice!==null&&(!Number.isFinite(maxPrice)||maxPrice<0||maxPrice>1000000))
+  return bad(422,'Precio inválido');
+ const query=q.toLowerCase().replaceAll(',',' ');
+ const terms=query.split(/\s+/).filter(x=>x.length>1),has=(patterns:string[])=>
+  patterns.some(x=>query.includes(x));
+ const intent={healthy:has(['saludable','healthy','light','ensalada','proteina']),
+  cheap:has(['barato','económico','economico','menos de','budget']),
+  breakfast:has(['desayuno','breakfast','café','cafe']),
+  family:has(['familia','4 personas','compartir','grupo']),
+  max_price:maxPrice};
+ const shops=await db.marketplaceRestaurant.findMany({
+  where:{isOpen:true},orderBy:[{sponsored:'desc'},{rating:'desc'},{id:'asc'}],
+  take:100});
+ const menu=await db.marketplaceMenuItem.findMany({where:{
+  restaurantId:{in:shops.map(x=>x.id)},isAvailable:true,
+  ...(maxPrice!==null?{price:{lte:String(maxPrice)}}:{})},
+  orderBy:[{restaurantId:'asc'},{id:'asc'}]});
+ const map=new Map<number,typeof menu>();
+ for(const item of menu){const rows=map.get(item.restaurantId)??[];rows.push(item);map.set(item.restaurantId,rows);}
+ const results=shops.flatMap(r=>{
+  const hayR=(r.name+' '+r.cuisine).toLowerCase();
+  const matched=(map.get(r.id)??[]).map(i=>{
+   const hay=(i.name+' '+i.description+' '+i.category+' '+i.dietaryTags).toLowerCase();
+   let score=terms.reduce((v,t)=>v+(hay.includes(t)?4:0)+(hayR.includes(t)?2:0),0);
+   if(intent.healthy&&['veg','ensalada','pollo','protein','salud'].some(x=>hay.includes(x)))score+=5;
+   if(intent.breakfast&&['café','cafe','huevo','desayuno','pan'].some(x=>hay.includes(x)))score+=5;
+   if(intent.family&&(i.isCombo||hay.includes('combo')||hay.includes('familiar')))score+=5;
+   if(intent.cheap&&Number(i.price)<=180)score+=3;
+   return {i,score};
+  }).filter(v=>v.score>0||!terms.length)
+   .sort((a,b)=>b.score-a.score||Number(a.i.price)-Number(b.i.price)).slice(0,6);
+  return matched.length?[{restaurant:{id:r.id,name:r.name,cuisine:r.cuisine,
+   rating:Number(r.rating),eta_min:r.etaMin,delivery_fee:Number(r.deliveryFee)},
+   items:matched.map(x=>({id:x.i.id,name:x.i.name,price:Number(x.i.price),
+    category:x.i.category,score:x.score})),
+   score:matched.reduce((v,x)=>v+x.score,Number(r.rating))}]:[];
+ }).sort((a,b)=>b.score-a.score).slice(0,limit);
+ res.json({query:q,intent,results});
+});
+v9Router.get('/recommendations',async(req,res)=>{
+ const who=await account(req);
+ const [orders,favs,shops]=await Promise.all([
+  db.marketOrder.findMany({where:{userId:who.id,status:'delivered'},
+   orderBy:{createdAt:'desc'},take:30,select:{restaurantId:true,total:true,createdAt:true}}),
+  db.platformFavorite.findMany({where:{userId:who.id},select:{restaurantId:true}}),
+  db.marketplaceRestaurant.findMany({where:{isOpen:true},
+   orderBy:[{sponsored:'desc'},{rating:'desc'},{id:'asc'}],take:100}),
+ ]);
+ const counts=new Map<number,number>();
+ for(const order of orders)counts.set(order.restaurantId,(counts.get(order.restaurantId)??0)+1);
+ const favorites=new Set(favs.map(x=>x.restaurantId)),hour=new Date().getUTCHours();
+ const ranked=shops.map(x=>{
+  let score=Number(x.rating)*2+(counts.get(x.id)??0)*5+
+   (favorites.has(x.id)?6:0)+(x.sponsored?2:0);
+  if(hour<11&&['cafe','café','desayuno'].some(k=>x.cuisine.toLowerCase().includes(k)))score+=4;
+  return {id:x.id,name:x.name,cuisine:x.cuisine,rating:Number(x.rating),
+   eta_min:x.etaMin,delivery_fee:Number(x.deliveryFee),
+   reason:counts.has(x.id)?'Tus hábitos':favorites.has(x.id)?'Favorito':'Popular cerca',
+   score:round(score)};
+ }).sort((a,b)=>b.score-a.score).slice(0,12);
+ const total=orders.reduce((s,o)=>s+Number(o.total),0);
+ const segment=orders.length===0?'new':orders.length>=20||total>=8000?'vip':
+  orders.length>=5?'regular':'occasional';
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({segment:{segment,delivered_orders:orders.length,total_spend:total.toFixed(2)},restaurants:ranked});
+});
+v9Router.get('/admin/heatmap',async(req,res)=>{
+ await account(req,['admin']);
+ const hours=numberArg(req,'hours',24,1,168),cutoff=new Date(Date.now()-hours*3600000);
+ const rows=await db.marketOrder.findMany({where:{createdAt:{gte:cutoff}},
+  include:{restaurant:true},orderBy:{createdAt:'desc'},take:100000});
+ const online=await db.marketplaceDriverProfile.count({where:{isOnline:true}});
+ const cells=new Map<string,{lat:number;lng:number;orders:number;active_orders:number;gmv:number}>();
+ for(const o of rows){
+  const lat=round(o.deliveryLat??o.restaurant.lat),lng=round(o.deliveryLng??o.restaurant.lng);
+  const key=lat+':'+lng;
+  const cell=cells.get(key)??{lat,lng,orders:0,active_orders:0,gmv:0};
+  cell.orders++;cell.gmv+=Number(o.total);
+  if(!['delivered','cancelled'].includes(o.status))cell.active_orders++;
+  cells.set(key,cell);
+ }
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({hours,online_drivers:online,points:Array.from(cells.values())
+  .sort((a,b)=>b.orders-a.orders).slice(0,100)
+  .map(c=>({...c,gmv:c.gmv.toFixed(2),
+   pressure:round(c.active_orders/Math.max(1,online))}))});
+});
+v9Router.get('/admin/demand-forecast',async(req,res)=>{
+ await account(req,['admin']);
+ const hours=numberArg(req,'hours',24,1,72),start=new Date(),cutoff=new Date(start.getTime()-56*86400000);
+ const timestamps=await db.marketOrder.findMany({where:{createdAt:{gte:cutoff}},
+  select:{createdAt:true},orderBy:{createdAt:'desc'},take:100000});
+ const byHour=new Map<number,Map<string,number>>(),recent=new Map<number,number>();
+ for(const {createdAt:t} of timestamps){
+  const h=t.getUTCHours(),d=t.toISOString().slice(0,10);
+  const m=byHour.get(h)??new Map<string,number>();m.set(d,(m.get(d)??0)+1);byHour.set(h,m);
+  if(t.getTime()>=start.getTime()-7*86400000)recent.set(h,(recent.get(h)??0)+1);
+ }
+ const stamp=new Date(start);stamp.setUTCMinutes(0,0,0);
+ const forecast=Array.from({length:hours},(_,i)=>{
+  const at=new Date(stamp.getTime()+i*3600000),h=at.getUTCHours();
+  const vals=Array.from((byHour.get(h)??new Map()).values());
+  const avg=vals.length?vals.reduce((p,x)=>p+x,0)/vals.length:0;
+  const predicted=round(avg*.65+(recent.get(h)??0)/7*.35,1);
+  return {at:at.toISOString(),predicted_orders:predicted,
+   recommended_online_drivers:Math.max(1,Math.ceil(predicted/2.2)),
+   confidence:vals.length>=7?'medium':'low'};
+ });
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({method:'56d-hourly-moving-average',sample_orders:timestamps.length,forecast});
+});
+v9Router.post('/admin/incidents/detect',async(req,res)=>{
+ await account(req,['admin']);
+ const orders=await db.marketOrder.findMany({where:{status:{in:ACTIVE}},
+  orderBy:{updatedAt:'asc'},take:5000});
+ let count=0;
+ for(const o of orders){
+  const age=(Date.now()-o.updatedAt.getTime())/60000;
+  const checks:[string,string,string,string][]=[];
+  if(['received','confirmed','preparing'].includes(o.status)&&age>35)
+   checks.push(['restaurant_delay','high','Pedido retrasado en cocina','Contactar restaurante']);
+  if(['ready','assigned'].includes(o.status)&&o.driverId==null&&age>8)
+   checks.push(['no_driver','high','Pedido sin repartidor','Ejecutar auto-dispatch']);
+  if(['assigned','picked_up','on_the_way'].includes(o.status)&&age>25)
+   checks.push(['driver_stalled','medium','Entrega sin movimiento','Contactar repartidor']);
+  for(const [kind,severity,title,action] of checks){
+   const prior=await db.opsIncident.findFirst({where:{orderId:o.id,incidentType:kind,status:'open'}});
+   if(prior)continue;
+   await db.opsIncident.create({data:{orderId:o.id,incidentType:kind,severity,title,
+    detail:'Pedido #'+o.id+', '+Math.floor(age)+' min sin cambio',
+    recommendedAction:action}});
+   count++;
+  }
+ }
+ res.json({created:count,active_orders:orders.length});
+});
+v9Router.get('/admin/incidents',async(req,res)=>{
+ await account(req,['admin']);
+ const status=typeof req.query.status==='string'?req.query.status:'open';
+ if(status.length>30)return bad(422,'Estado inválido');
+ const rows=await db.opsIncident.findMany({where:{status},
+  orderBy:{createdAt:'desc'},take:300});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(rows.map(x=>({id:x.id,order_id:x.orderId,type:x.incidentType,
+  severity:x.severity,title:x.title,detail:x.detail,
+  recommended_action:x.recommendedAction,status:x.status,
+  created_at:x.createdAt.toISOString()})));
+});
+v9Router.patch('/admin/incidents/:incidentId',async(req,res)=>{
+ await account(req,['admin']);
+ const id=param(req,'incidentId'),p=valid(z.strictObject({
+  status:z.enum(['resolved','dismissed']).default('resolved'),
+  note:z.string().max(500).default('')}),req.body);
+ const old=await db.opsIncident.findUnique({where:{id}});
+ if(!old)return bad(404,'Incidente no encontrado');
+ const updated=await db.opsIncident.update({where:{id},data:{
+  status:p.status,resolvedAt:new Date(),
+  detail:[old.detail,p.note].filter(Boolean).join('\n')}});
+ res.json({id:updated.id,status:updated.status});
+});
+v9Router.get('/driver/score',async(req,res)=>{
+ const who=await account(req,['driver']);
+ const [p,orders]=await Promise.all([
+  db.marketplaceDriverProfile.findUnique({where:{userId:who.id}}),
+  db.marketOrder.findMany({where:{driverId:who.id},
+   select:{status:true,createdAt:true,deliveredAt:true,estimatedMinutes:true}}),
+ ]);
+ const delivered=orders.filter(x=>x.status==='delivered'),
+  cancelled=orders.filter(x=>x.status==='cancelled').length;
+ const ontime=delivered.filter(x=>x.deliveredAt&&minutesBetween(
+  x.createdAt,x.deliveredAt)<=Math.max(60,(x.estimatedMinutes||30)+20)).length;
+ const punctuality=round(100*ontime/Math.max(1,delivered.length),1),
+  completion=round(100*delivered.length/Math.max(1,orders.length),1),
+  rating=Number(p?.rating??5);
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({score:round(punctuality*.35+completion*.35+rating/5*30,1),
+  rating,punctuality,completion,deliveries:delivered.length,cancelled,
+  use:'Calidad y coaching; no genera sanciones automáticas.'});
+});
+
+
+v9Router.get('/merchant/intelligence',async(req,res)=>{
+ const who=await account(req,['restaurant']),shop=await store(who);
+ const [rows,low]=await Promise.all([
+  db.marketOrder.findMany({where:{restaurantId:shop.id},
+   orderBy:{createdAt:'desc'},take:1000,include:{items:true}}),
+  db.stageIngredientStock.findMany({where:{restaurantId:shop.id},
+   orderBy:{quantity:'asc'},take:200}),
+ ]);
+ const delivered=rows.filter(x=>x.status==='delivered'),
+  itemMap=new Map<string,{units:number;revenue:number}>(),
+  hours=new Map<number,number>(),customers=new Map<number,number>();
+ for(const o of delivered){
+  const hour=o.createdAt.getUTCHours();
+  hours.set(hour,(hours.get(hour)??0)+1);
+  customers.set(o.userId,(customers.get(o.userId)??0)+1);
+  for(const i of o.items){
+   const value=itemMap.get(i.nameSnapshot)??{units:0,revenue:0};
+   value.units+=i.quantity;
+   value.revenue+=Number(i.unitPrice)*i.quantity;
+   itemMap.set(i.nameSnapshot,value);
+  }
+ }
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({restaurant_id:shop.id,orders:rows.length,delivered:delivered.length,
+  repeat_customers:Array.from(customers.values()).filter(x=>x>=2).length,
+  peak_hours:Array.from(hours,([hour,orders])=>({hour,orders})).sort((a,b)=>b.orders-a.orders).slice(0,5),
+  top_products:Array.from(itemMap,([name,x])=>({name,units:x.units,
+   revenue:x.revenue.toFixed(2)})).sort((a,b)=>b.units-a.units).slice(0,10),
+  low_ingredients:low.filter(x=>Number(x.quantity)<=Number(x.reorderLevel))
+   .map(x=>({id:x.id,name:x.name,quantity:x.quantity.toFixed(3),
+    reorder_level:x.reorderLevel.toFixed(3)})),
+  suggestions:['Crea combos con tus productos más vendidos',
+   'Activa campaña en horas de baja demanda',
+   'Repón ingredientes por debajo del mínimo']});
+});
+v9Router.get('/merchant/kitchen-forecast',async(req,res)=>{
+ const who=await account(req,['restaurant']),shop=await store(who);
+ const hours=numberArg(req,'hours',6,1,24);
+ const cutoff=new Date(Date.now()-42*86400000);
+ const [rows,active]=await Promise.all([
+  db.marketOrder.findMany({where:{restaurantId:shop.id,
+   createdAt:{gte:cutoff}},select:{createdAt:true},
+   orderBy:{createdAt:'desc'},take:50000}),
+  db.marketOrder.count({where:{restaurantId:shop.id,status:{in:['received','confirmed','preparing']}}}),
+ ]);
+ const counts=new Map<number,number>(),
+  days=new Set(rows.map(x=>x.createdAt.toISOString().slice(0,10)));
+ for(const r of rows){const hour=r.createdAt.getUTCHours();
+  counts.set(hour,(counts.get(hour)??0)+1);}
+ const stamp=new Date();stamp.setUTCMinutes(0,0,0);
+ const forecast=Array.from({length:hours},(_,i)=>{
+  const at=new Date(stamp.getTime()+i*3600000),
+   predicted=round((counts.get(at.getUTCHours())??0)/Math.max(1,days.size),1);
+  return {at:at.toISOString(),predicted_orders:predicted,
+   recommended_prep_capacity:Math.max(1,Math.ceil(predicted*1.2)),
+   status:predicted>=5?'high':'normal'};
+ });
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({active_kitchen_orders:active,forecast,
+  delay_risk:active>=8?'high':active>=4?'medium':'low'});
+});
+const ingredientPublic=(x:any)=>({id:x.id,name:x.name,unit:x.unit,
+ quantity:x.quantity.toFixed(3),reorder_level:x.reorderLevel.toFixed(3),
+ unit_cost:x.unitCost.toFixed(2),
+ low:Number(x.quantity)<=Number(x.reorderLevel)});
+v9Router.get('/merchant/ingredients',async(req,res)=>{
+ const who=await account(req,['restaurant']),shop=await store(who);
+ const rows=await db.stageIngredientStock.findMany({where:{restaurantId:shop.id},
+  orderBy:{name:'asc'}});
+ res.setHeader('Cache-Control','private, no-store');res.json(rows.map(ingredientPublic));
+});
+v9Router.post('/merchant/ingredients',async(req,res)=>{
+ const who=await account(req,['restaurant']),shop=await store(who);
+ const p=valid(z.strictObject({
+  name:z.string().trim().min(2).max(140),unit:z.string().max(30).default('unit'),
+  quantity:dec3.default('0'),reorder_level:dec3.default('0'),
+  unit_cost:z.union([z.number(),z.string()]).transform(String)
+   .refine(s=>/^\d{1,8}(?:\.\d{1,2})?$/.test(s)).default('0'),
+ }),req.body);
+ if(Number(p.quantity)<0||Number(p.reorder_level)<0)return bad(422,'Cantidad no válida');
+ const x=await db.stageIngredientStock.create({data:{restaurantId:shop.id,
+  name:p.name,unit:p.unit,quantity:p.quantity,reorderLevel:p.reorder_level,
+  unitCost:p.unit_cost}});
+ res.status(201).json({id:x.id,name:x.name,quantity:x.quantity.toFixed(3)});
+});
+v9Router.patch('/merchant/ingredients/:ingredientId',async(req,res)=>{
+ const who=await account(req,['restaurant']),shop=await store(who);
+ const id=param(req,'ingredientId');
+ const p=valid(z.strictObject({
+  quantity_delta:dec3,reason:z.string().max(180).default('adjustment'),
+ }),req.body);
+ const quantity=await db.$transaction(async tx=>{
+  const locked=await tx.$queryRawUnsafe(
+   'SELECT id FROM ingredient_stocks WHERE id=$1 AND restaurant_id=$2 FOR UPDATE',
+   id,shop.id);
+  if(!Array.isArray(locked)||!locked.length)return bad(404,'Ingrediente no encontrado');
+  await tx.$executeRawUnsafe(
+   'UPDATE ingredient_stocks SET quantity=GREATEST(0,quantity+$1::numeric),updated_at=NOW() WHERE id=$2',
+   p.quantity_delta,id);
+  const row=await tx.stageIngredientStock.findUnique({where:{id}});
+  if(!row)return bad(404,'Ingrediente no encontrado');
+  return row.quantity.toFixed(3);
+ });
+ res.json({id,quantity,reason:p.reason});
+});
+v9Router.post('/merchant/recipes',async(req,res)=>{
+ const who=await account(req,['restaurant']),shop=await store(who);
+ const p=valid(z.strictObject({
+  menu_item_id:z.number().int().positive(),
+  ingredient_id:z.number().int().positive(),
+  quantity_required:dec3,
+ }),req.body);
+ if(Number(p.quantity_required)<=0)return bad(422,'Cantidad requerida inválida');
+ const [item,ingredient]=await Promise.all([
+  db.marketplaceMenuItem.findUnique({where:{id:p.menu_item_id}}),
+  db.stageIngredientStock.findUnique({where:{id:p.ingredient_id}}),
+ ]);
+ if(item?.restaurantId!==shop.id||ingredient?.restaurantId!==shop.id)
+  return bad(404,'Producto o ingrediente no encontrado');
+ const x=await db.stageMenuRecipe.upsert({
+  where:{uq_recipe_component:{menuItemId:item.id,ingredientId:ingredient.id}},
+  create:{menuItemId:item.id,ingredientId:ingredient.id,
+   quantityRequired:p.quantity_required},
+  update:{quantityRequired:p.quantity_required},
+ });
+ res.status(201).json({menu_item_id:x.menuItemId,ingredient_id:x.ingredientId,
+  quantity_required:x.quantityRequired.toFixed(3)});
+});
+v9Router.post('/merchant/waste',async(req,res)=>{
+ const who=await account(req,['restaurant']),shop=await store(who);
+ const p=valid(z.strictObject({
+  ingredient_id:z.number().int().positive().nullable().default(null),
+  quantity:dec3,
+  reason:z.string().min(2).max(180),
+ }),req.body);
+ if(Number(p.quantity)<=0)return bad(422,'Cantidad de merma inválida');
+ const created=await db.$transaction(async tx=>{
+  let cost='0.00';
+  if(p.ingredient_id!==null){
+   const locked=await tx.$queryRawUnsafe(
+    'SELECT id FROM ingredient_stocks WHERE id=$1 AND restaurant_id=$2 FOR UPDATE',
+    p.ingredient_id,shop.id);
+   if(!Array.isArray(locked)||!locked.length)return bad(404,'Ingrediente no encontrado');
+   const row=await tx.$queryRawUnsafe(
+    'SELECT (unit_cost*$1::numeric)::numeric(12,2) AS cost FROM ingredient_stocks WHERE id=$2',
+    p.quantity,p.ingredient_id);
+   cost=String((row as {cost:string}[])[0]?.cost??'0.00');
+   await tx.$executeRawUnsafe(
+    'UPDATE ingredient_stocks SET quantity=GREATEST(0,quantity-$1::numeric), updated_at=NOW() WHERE id=$2',
+    p.quantity,p.ingredient_id);
+  }
+  return tx.stageWasteRecord.create({data:{restaurantId:shop.id,
+   ingredientId:p.ingredient_id,quantity:p.quantity,reason:p.reason,estimatedCost:cost}});
+ });
+ res.status(201).json({id:created.id,estimated_cost:created.estimatedCost.toFixed(2)});
+});
+v9Router.get('/merchant/upsell/:menuItemId',async(req,res)=>{
+ const who=await account(req,['restaurant']),shop=await store(who);
+ const id=param(req,'menuItemId');
+ const item=await db.marketplaceMenuItem.findUnique({where:{id}});
+ if(!item||item.restaurantId!==shop.id)return bad(404,'Producto no encontrado');
+ const choices=await db.marketplaceMenuItem.findMany({where:{
+  restaurantId:shop.id,id:{not:id},isAvailable:true}});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({base:{id:item.id,name:item.name},
+  suggestions:choices.sort((a,b)=>
+   Math.abs(Number(a.price)-Number(item.price))-Math.abs(Number(b.price)-Number(item.price)))
+   .slice(0,4).map(x=>({id:x.id,name:x.name,price:Number(x.price),
+    reason:'Complemento/upsell sugerido por rango de precio'}))});
+});
+v9Router.get('/admin/trust/risk',async(req,res)=>{
+ await account(req,['admin']);
+ const customers=await db.authUser.findMany({where:{role:'customer'},
+  select:{id:true,name:true,email:true},orderBy:{id:'asc'},take:10000});
+ const orders=await db.marketOrder.groupBy({by:['userId','status'],
+  where:{userId:{in:customers.map(x=>x.id)}},_count:{_all:true}});
+ const disputes=await db.opsDispute.groupBy({by:['openedByUserId'],
+  where:{openedByUserId:{in:customers.map(x=>x.id)},refundAmount:{gt:0}},
+  _count:{_all:true}});
+ const refunded=new Map(disputes.map(x=>[x.openedByUserId,x._count._all]));
+ const counts=new Map<number,{total:number;cancelled:number}>();
+ for(const x of orders){
+  const row=counts.get(x.userId)??{total:0,cancelled:0};
+  row.total+=x._count._all;if(x.status==='cancelled')row.cancelled+=x._count._all;
+  counts.set(x.userId,row);
+ }
+ const result=customers.flatMap(who=>{
+  const row=counts.get(who.id)??{total:0,cancelled:0},signals=[];
+  if((refunded.get(who.id)??0)>=3)signals.push('multiple_refunds');
+  if(row.total>=3&&row.cancelled/row.total>.45)signals.push('high_cancellation_rate');
+  if(who.email.includes('+'))signals.push('email_alias');
+  return signals.length?[{user_id:who.id,name:who.name,email:who.email,
+   signals,risk_score:Math.min(100,signals.length*30)}]:[];
+ }).sort((a,b)=>b.risk_score-a.risk_score);
+ res.setHeader('Cache-Control','private, no-store');res.json(result);
+});
+async function missionStatus(id:number){
+ const date=new Date(),month=new Date(Date.UTC(date.getUTCFullYear(),date.getUTCMonth(),1));
+ const rows=await db.marketOrder.findMany({where:{userId:id,status:'delivered',
+  deliveredAt:{gte:month}},select:{restaurantId:true}});
+ const orderCount=rows.length,restaurantCount=new Set(rows.map(x=>x.restaurantId)).size;
+ const refs=['three_orders','two_restaurants'].map(k=>k+':'+month.toISOString().slice(0,7));
+ const claimed=await db.stageWalletTransaction.findMany({where:{userId:id,
+  kind:'mission_reward',referenceId:{in:refs}},select:{referenceId:true}});
+ const set=new Set(claimed.map(x=>x.referenceId));
+ return [{key:'three_orders',title:'3 pedidos este mes',
+  progress:Math.min(3,orderCount),target:3,reward_points:100},
+  {key:'two_restaurants',title:'Prueba 2 restaurantes',
+   progress:Math.min(2,restaurantCount),target:2,reward_points:80}]
+  .map(m=>({...m,claimed:set.has(m.key+':'+month.toISOString().slice(0,7)),
+   claimable:m.progress>=m.target&&!set.has(m.key+':'+month.toISOString().slice(0,7))}));
+}
+v9Router.get('/loyalty/missions',async(req,res)=>{
+ const who=await account(req);
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(await missionStatus(who.id));
+});
+v9Router.post('/loyalty/missions/:missionKey/claim',async(req,res)=>{
+ const who=await account(req);
+ const key=Array.isArray(req.params.missionKey)?req.params.missionKey[0]:req.params.missionKey;
+ if(!['three_orders','two_restaurants'].includes(String(key)))
+  return bad(404,'Misión no encontrada');
+ const result=await db.$transaction(async tx=>{
+  const locked=await tx.$queryRawUnsafe(
+   'SELECT id FROM loyalty_accounts WHERE user_id=$1 FOR UPDATE',who.id);
+  if(!Array.isArray(locked)||!locked.length)return bad(404,'Cuenta Rewards no encontrada');
+  const account=await tx.authLoyaltyAccount.findUnique({where:{userId:who.id}});
+  if(!account)return bad(404,'Cuenta Rewards no encontrada');
+  const date=new Date(),month=new Date(Date.UTC(date.getUTCFullYear(),date.getUTCMonth(),1));
+  const rows=await tx.marketOrder.findMany({where:{userId:who.id,status:'delivered',
+   deliveredAt:{gte:month}},select:{restaurantId:true}});
+  const done=(String(key)==='three_orders'?rows.length>=3:
+   new Set(rows.map(x=>x.restaurantId)).size>=2);
+  if(!done)return bad(409,'Misión aún no completada');
+  const pts=String(key)==='three_orders'?100:80;
+  const ref=String(key)+':'+month.toISOString().slice(0,7);
+  const duplicate=await tx.stageWalletTransaction.findFirst({
+   where:{userId:who.id,kind:'mission_reward',referenceId:ref}});
+  if(duplicate)return bad(409,'Misión ya reclamada');
+  const points=account.points+pts;
+  if(points>2_000_000_000)return bad(409,'Saldo de puntos fuera de rango');
+  await tx.authLoyaltyAccount.update({where:{userId:who.id},data:{points}});
+  await tx.stageWalletTransaction.create({data:{userId:who.id,
+   kind:'mission_reward',amount:'0',balanceAfter:account.walletBalance,
+   referenceType:'loyalty_mission',referenceId:ref,description:'+'+pts+' puntos',
+   idempotencyKey:'mission:'+who.id+':'+ref}});
+  return {claimed:true,points_added:pts,points};
+ },{maxWait:10000,timeout:20000});
+ res.json(result);
+});

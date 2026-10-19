@@ -787,3 +787,17 @@ model OpsCashSettlement {
  @@index([status])
  @@map("cash_settlements")
 }
+
+
+model StageWasteRecord {
+ id Int @id @default(autoincrement())
+ restaurantId Int @map("restaurant_id")
+ ingredientId Int? @map("ingredient_id")
+ quantity Decimal @db.Decimal(12,3)
+ reason String @db.VarChar(180)
+ estimatedCost Decimal @map("estimated_cost") @default(0) @db.Decimal(12,2)
+ createdAt DateTime @default(now()) @map("created_at")
+ @@index([restaurantId])
+ @@index([ingredientId])
+ @@map("waste_records")
+}
