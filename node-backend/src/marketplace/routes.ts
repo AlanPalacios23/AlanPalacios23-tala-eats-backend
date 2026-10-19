@@ -178,15 +178,18 @@ ownerRouter.post('/employees',async(req,res)=>{
   const email=query.data.email.toLowerCase();
   const employee=await db.authUser.findUnique({where:{email}});
   if(!employee)return notFound('Primero crea la cuenta del empleado');
-  // Unique membership prevents duplicate rows under concurrent requests.
-  const membership=await db.marketplaceRestaurantEmployee.upsert({
-    where:{restaurantId_userId:{restaurantId:row.id,userId:employee.id}},
-    update:{role:query.data.role},
-    create:{restaurantId:row.id,userId:employee.id,role:query.data.role},
-    include:{user:{select:{name:true,email:true}}},
-  });
+  // Single PostgreSQL statement guarantees one row for concurrent invites;
+  // Prisma's read+create upsert with nested include can surface a P2002 race.
+  const saved=await db.$queryRaw<{id:number;user_id:number;role:string}[]>`
+    INSERT INTO restaurant_employees(restaurant_id,user_id,role)
+    VALUES (${row.id},${employee.id},${query.data.role})
+    ON CONFLICT (restaurant_id,user_id) DO UPDATE SET role=EXCLUDED.role
+    RETURNING id,user_id,role
+  `;
+  if(saved.length!==1)throw new RouteError(503,'No se pudo asignar el empleado');
   res.setHeader('Cache-Control','private, no-store');
-  res.json(employeeView(membership));
+  res.json({id:saved[0]!.id,user_id:saved[0]!.user_id,
+    name:employee.name,email:employee.email,role:saved[0]!.role});
 });
 
 ownerRouter.get('/restaurant',async(req,res)=>{
