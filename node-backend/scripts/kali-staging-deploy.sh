@@ -38,7 +38,7 @@ if ! node --env-file="$secretfile" -e '
 ' >/dev/null 2>&1; then echo ABORT_STAGING_GUARDS; exit 1; fi
 echo STAGING_PREFLIGHT=PASS
 if [[ "$mode" == "--preflight" ]]; then echo NO_MUTATIONS; exit 0; fi
-if [[ "$TALA_STAGE_MIGRATIONS_APPLIED" != "approved-and-verified" ]]; then
+if [[ "$(printenv TALA_STAGE_MIGRATIONS_APPLIED 2>/dev/null || true)" != "approved-and-verified" ]]; then
   echo ABORT_MIGRATIONS_NOT_VERIFIED; exit 1
 fi
 npm ci --no-audit --no-fund
