@@ -76,3 +76,72 @@ Para cualquier cambio con `--apply`: aprobación explícita, commit/CI verificad
 ## 7. Autosync futuro
 
 La PR #79 fue diseñada para FastAPI/Python: **NO FUSIONAR** para Node. Agente Node nuevo requerirá SHA exacto, CI verde, mínimo privilegio, sólo staging, y autorización separada para migraciones. Prohibido habilitar reintentos ciegos de retiros; exigir idempotencia + conciliación.
+
+## 8. Herramientas de instalación ahora incluidas en PR #80
+
+Los scripts aplican a un entorno NUEVO staging, sin modificar V3/GREEN:
+- `scripts/kali-provision-native-stage.sh --plan`: inventario nativo de solo lectura; no instala nada.
+- `scripts/kali-provision-native-stage.sh --apply`: **requiere root, binarios PostgreSQL 15/Redis preinstalados y consentimiento administrativo explícito**. Crea usuario `tala-node-stage`, cluster 15 aislado `tala_node_stage` (15435), servicio nativo `tala-node-stage-redis` (16379) y entorno privado 0600 con contraseñas aleatorias. Puede dejar recursos aislados parcialmente creados si falla: no reejecutar a ciegas; revisar estado.
+- `scripts/kali-install-node24-user.sh --plan`: plan para usuario staging no privilegiado.
+- `scripts/kali-install-node24-user.sh --apply`: bajo `tala-node-stage`, instala únicamente en HOME el último Node de serie 24 desde archivos oficiales SHA256 verificados y PM2 6.0.14 en prefijo HOME. No modifica el Node global ni arranca apps.
+- `scripts/kali-stage-migrate.sh --preflight`: verifica por TCP el nombre de DB/rol, puerto y **versión del servidor PostgreSQL 15 real**. No migra.
+- `scripts/kali-stage-migrate.sh --apply`: con aprobación explícita, migra exclusivamente DB staging verificada.
+- `scripts/kali-staging-deploy.sh --preflight`: verifica entorno privado, puertos, lockfile y Node 24.
+- `scripts/kali-staging-deploy.sh --apply`: tras migración, compila con `npm ci`, genera Prisma, valida migraciones aplicadas, inicia API con PM2, espera `/ready` verdadero y **solo entonces** inicia worker PM2.
+
+### Comprobación SIN sudo ni cambios, primer paso concreto en Kali
+
+```bash
+git clone --branch feat/node24-pm2-native-staging-20261019 \
+  https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend.git \
+  "$HOME/talaeats-node-stage-prep"
+
+cd "$HOME/talaeats-node-stage-prep"
+bash node-backend/scripts/kali-native-preflight.sh
+bash node-backend/scripts/kali-provision-native-stage.sh --plan
+apt-cache policy postgresql-15 postgresql-client-15 redis-server
+git rev-parse HEAD
+```
+
+Esas operaciones únicamente crean una copia nueva del código en HOME y consultan inventario/paquetes. No ejecutar `sudo apt install`, `--apply` ni PM2 hasta verificar disponibilidad, estado de puertos y aprobación. Si PostgreSQL 15 no está disponible en el APT de Kali, no añadir PGDG o repositorios Debian de otra versión de forma automática.
+
+### Aprovisionamiento administrativo — solo si preflight y autorización pasan
+
+Desde una copia confiable y tras confirmar paquetes PostgreSQL 15 y Redis nativo ya presentes:
+
+```bash
+sudo env TALA_NATIVE_STAGE_APPROVAL=I_APPROVE_NEW_NATIVE_STAGE_ONLY \
+  bash node-backend/scripts/kali-provision-native-stage.sh --apply
+```
+
+**Esto modifica realmente el host**: crea usuario, PostgreSQL nativo y Redis nativo dedicados. Se exige revisión humana de los posibles conflictos de paquetes y permisos antes de ejecutar.
+
+Bajo el usuario nuevo, clonar esta rama en su HOME y operar PM2 exclusivamente allí:
+
+```bash
+sudo -iu tala-node-stage
+git clone --branch feat/node24-pm2-native-staging-20261019 \
+  https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend.git \
+  "$HOME/talaeats-node-source"
+cd "$HOME/talaeats-node-source"
+bash node-backend/scripts/kali-install-node24-user.sh --plan
+# La instalación real requiere TALA_NODE24_USER_APPROVAL=I_APPROVE_STAGE_USER_ONLY
+```
+
+Tras instalar Node24+PM2, y sólo en DB staging con aprobación por separado:
+
+```bash
+cd "$HOME/talaeats-node-source/node-backend"
+npm ci --no-audit --no-fund
+bash scripts/kali-stage-migrate.sh --preflight
+# Migración real bajo TALA_STAGE_MIGRATE_APPROVAL=I_APPROVE_NEW_STAGE_SCHEMA_ONLY
+bash scripts/kali-staging-deploy.sh --preflight
+# Inicio PM2 real bajo TALA_STAGE_START_APPROVAL=I_APPROVE_LOCAL_STAGE_PM2_ONLY
+```
+
+**No habilitar PM2 startup/systemd ni GitHub autodeploy todavía:** sólo cuando API y worker alcancen readiness, se haya probado rollback, y se confirme que el usuario de staging no tiene permisos Docker, Stripe LIVE ni control de los servicios productivos.
+
+## 9. Pruebas reales en GitHub Actions
+
+La PR #80 utiliza servicios efímeros de GitHub-hosted runners (que NO se despliegan en Kali) para validar PostgreSQL 15, Prisma 7, Redis, API y worker. La suite E2E verifica webhook Stripe firmado exclusivamente de TEST, rechazo de firma inválida, registro persistente y ausencia de movimientos financieros. Además, un segundo workflow prueba la API/Redis y las migraciones en la DB de CI. Los checks no equivalen a instalación en Kali.
+
