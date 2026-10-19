@@ -24,6 +24,8 @@ jobs:
       DATABASE_URL: postgresql://tala_node_stage:ci-only-postgres@127.0.0.1:15435/tala_node_stage
     steps:
       - uses: actions/checkout@v4
+      - name: Python source HTTP route inventory (252-route baseline, AST only)
+        run: python3 scripts/python_route_inventory.py --check
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
