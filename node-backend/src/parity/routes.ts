@@ -66,22 +66,22 @@ parityRouter.get('/platform/features',(_req,res)=>{
   {id:3,name:'Comercio y KDS',area:'merchant',mode:'staging',description:'Acciones con autorización'},
   {id:4,name:'Repartidores',area:'driver',mode:'staging',description:'Despacho limitado a efectivo'},
   {id:5,name:'Wallet y puntos',area:'loyalty',mode:'restricted',description:'Sin pasarela de monetización real'},
-  {id:6,name:'Pagos digitales',area:'payment',mode:'disabled',description:'Stripe/MercadoPago aún no activos'},
+  {id:6,name:'Pagos digitales',area:'payment',mode:'disabled',description:'Stripe TEST pendiente; ningún otro PSP'},
   {id:7,name:'Retiros y conciliación',area:'finance',mode:'disabled',description:'Sin transferencias financieras reales'},
   {id:8,name:'Media',area:'uploads',mode:'staging',description:'Almacenamiento restringido a laboratorio'}]});
 });
 parityRouter.get('/orders/payment-methods',async(req,res)=>{
  await account(req);
- res.json({methods:[
+ res.json({digital_provider:'stripe',cash_available_in_staging:true,methods:[
   {id:'cash',label:'Efectivo',enabled:true,mode:'stage-cash-pickup'},
-  {id:'mercadopago',label:'Mercado Pago',enabled:false,reason:'node-provider-not-configured'},
-  {id:'stripe',label:'Tarjeta',enabled:false,reason:'node-provider-not-configured'},
+  {id:'stripe',label:'Tarjeta (Stripe)',enabled:false,reason:'stripe-test-payments-not-yet-implemented'},
   {id:'wallet',label:'Wallet',enabled:false,reason:'wallet-not-reconciled'}],
   production_ready:false});
 });
 parityRouter.get('/payments/config',(_req,res)=>{
- res.json({provider:'mercadopago',enabled:false,
-  public_key:null,checkout_ready:false,environment:'staging'});
+ res.json({provider:'stripe',digital_providers:['stripe'],enabled:false,
+  publishable_key:null,checkout_ready:false,financial_writes_enabled:false,
+  environment:'staging'});
 });
 parityRouter.get('/payments/stripe/config',(_req,res)=>{
  res.json({provider:'stripe',enabled:false,
@@ -181,17 +181,6 @@ parityRouter.get('/withdrawals/connect/finish',(_req,res)=>{
 // Payments and settlements: explicit fail-closed boundaries. Unlike returning
 // fake 200s, we never acknowledge provider events without PSP signature,
 // reservation, ledger postings, external verification and durable reconcile.
-parityRouter.post('/payments/mercadopago/orders/:orderId/checkout',async(req)=>{
- await account(req);param(req,'orderId');
- return financialUnavailable('mercadopago_checkout');
-});
-parityRouter.post('/payments/mercadopago/webhook',async()=>{
- return financialUnavailable('mercadopago_webhook_signature_and_reconciliation');
-});
-parityRouter.post('/payments/mercadopago/orders/:orderId/refund',async(req)=>{
- await account(req,['admin']);param(req,'orderId');
- return financialUnavailable('mercadopago_refund');
-});
 parityRouter.post('/payments/stripe/orders/:orderId/payment-intent',async(req)=>{
  await account(req);param(req,'orderId');
  return financialUnavailable('stripe_payment_intent');
