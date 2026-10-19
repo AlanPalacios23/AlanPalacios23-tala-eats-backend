@@ -48,6 +48,32 @@ merchant.token=merchantLogin.json.access_token;
 const restaurant=(await db.query(
   "INSERT INTO restaurants(name,address,owner_id,is_open,pickup_enabled) VALUES('C4 Decimal','Tala Centro',$1,true,true) RETURNING id",
   [merchant.id])).rows[0].id;
+// Real Python commercial_value() accepts mutable SystemSetting overrides.
+// Node C1 has no complete configurable policy engine, so a mismatched setting
+// MUST reject with 503 BEFORE reserving inventory or writing order/ledger.
+const gateItem=(await db.query(
+  "INSERT INTO menu_items(restaurant_id,name,price,stock) VALUES($1,'Setting gate',25.50,2) RETURNING id",
+  [restaurant])).rows[0].id;
+const gateIntent=(ref)=>({restaurant_id:restaurant,address:'Recoger en Tala',
+  items:[{menu_item_id:gateItem,quantity:1}],payment_method:'cash',
+  order_type:'pickup',client_reference:ref,tip:'0.00'});
+const failPolicy=async(ref)=>{
+  const res=await call('/orders',{method:'POST',token:customer.token,
+    body:gateIntent(ref)});
+  assert.equal(res.status,503,JSON.stringify(res.json));
+  assert.equal((await db.query('SELECT stock FROM menu_items WHERE id=$1',[gateItem])).rows[0].stock,2);
+  assert.equal((await db.query('SELECT count(*)::int n FROM orders WHERE client_reference=$1',[ref])).rows[0].n,0);
+};
+await db.query(
+  "INSERT INTO system_settings(key,value) VALUES('commercial_v152.restaurant_commission_rate','0.2000')");
+await failPolicy('nondefault-commission');
+await db.query(
+  "UPDATE system_settings SET value='0.1500' WHERE key='commercial_v152.restaurant_commission_rate'");
+await db.query(
+  "INSERT INTO system_settings(key,value) VALUES('commercial_v152.service_fee_rate','0.0900')");
+await failPolicy('nondefault-servicefee');
+await db.query(
+  "UPDATE system_settings SET value='0.0700' WHERE key='commercial_v152.service_fee_rate'");
 // Half-even ties (.05 × .10 = .005 => .00; .15 × .30 = .045 => .04)
 // plus realistic peso and two-decimal MXN quote combinations.
 const vectors=[
@@ -118,6 +144,7 @@ const ledger=await db.query(
   "SELECT count(*)::int n FROM financial_ledger_entries WHERE kind='order_cancellation' AND order_id=ANY($1::int[])",
   [created]);
 assert.equal(ledger.rows[0].n,4*created.length);
+console.log('NODE_STAGE_COMMERCIAL_SYSTEM_SETTING_DRIFT_FAIL_CLOSED=PASS');
 console.log('PYTHON_NODE_DECIMAL_CASH_PICKUP_DIFF_VECTORS='+vectors.length);
 console.log('PYTHON_NODE_CANCEL_HALF_EVEN_TIES=PASS');
 console.log('PYTHON_NODE_CHECKOUT_HALF_UP_PARITY=PASS');
