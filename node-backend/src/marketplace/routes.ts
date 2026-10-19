@@ -329,7 +329,7 @@ stageOrdersRouter.post('/',async(req,res)=>{
 // Python owner.py /orders/{id}/complete: only cash pickup C1 in staging.
 // Driver/merchant delivery completion remains disabled; no external capture.
 const stageCompletePickup=z.strictObject({
-  pin:z.string().regex(/^\\d{4}$/),
+  pin:z.string().regex(/^\d{4}$/),
   photo_url:z.string().max(600).default(''),
   lat:z.number().finite().min(-90).max(90).nullable().optional(),
   lng:z.number().finite().min(-180).max(180).nullable().optional(),
