@@ -6,7 +6,7 @@
 
 | Módulo Python | Prefijo API | Nº de rutas mapeadas | Estado Node |
 |---|---|---:|---|
-| Auth | /api/v1/auth | 12 | IN PROGRESS: primitives de PBKDF2/JWT/TOTP y esquema |
+| Auth | /api/v1/auth | 12 | IN PROGRESS: 8 rutas de identidad implementadas, Google/config stub, OAuth/recuperación pendiente; CI PG15/Redis8 PASS |
 | Restaurants | /api/v1/restaurants | 2 | PENDING |
 | Orders | /api/v1/orders | 8 | PENDING, prioridad client_reference |
 | Owner | /api/v1/owner | 12 | PENDING |
