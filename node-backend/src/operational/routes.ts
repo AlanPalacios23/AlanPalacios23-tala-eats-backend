@@ -195,7 +195,7 @@ operationsRouter.get('/admin/finance/orders/:orderId',async(req,res)=>{
   contribution_margin:'contributionMargin',cash_collected:'cashCollected',
   cancellation_fee:'cancellationFee'} as const;
  for(const [key,field] of Object.entries(fields))
-  output[key]=o[field as keyof typeof o] && (o[field as keyof typeof o] as {toFixed:(n:number)=>string}).toFixed(2);
+  output[key]=(o[field as keyof typeof o] as {toFixed:(n:number)=>string}).toFixed(2);
  res.setHeader('Cache-Control','private, no-store');
  res.json(output);
 });
