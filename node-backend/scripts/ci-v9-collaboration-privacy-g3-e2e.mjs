@@ -1,7 +1,7 @@
 // G3: V9/V11 collaborative, privacy and bounded administrative contracts.
 // Disposable PostgreSQL15 + Redis8 ONLY. Never deploy this seed.
 import assert from 'node:assert/strict';
-import pg from 'pg';
+import pgLib from 'pg';
 import {Redis} from 'ioredis';
 const pgUrl=String(process.env.DATABASE_URL??''),ru=String(process.env.REDIS_URL??'');
 if(process.env.GITHUB_ACTIONS!=='true'||!pgUrl.includes('127.0.0.1:15435/tala_node_stage')||
@@ -10,7 +10,7 @@ const red=new Redis(ru);let cursor='0';do{
  const [next,keys]=await red.scan(cursor,'MATCH','tala:node:v02:auth:rate:*','COUNT',100);
  if(keys.length)await red.del(...keys);cursor=next;
 }while(cursor!=='0');red.disconnect();
-const pg=new pg.Client({connectionString:pgUrl});await pg.connect();
+const pg=new pgLib.Client({connectionString:pgUrl});await pg.connect();
 const password='G3-Stage-Concurrency-Privacy!';
 async function call(path,{token,method='GET',body}={}){
  const res=await fetch('http://127.0.0.1:18190/api/v1'+path,{
