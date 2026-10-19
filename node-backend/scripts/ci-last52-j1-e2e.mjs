@@ -11,7 +11,7 @@ const db=new pgLib.Client({connectionString:url});await db.connect();
 const secret='J1-Disposable-Only-2026!';
 async function request(path,{token,method='GET',body,headers={},binary}={}){
  const isFile=binary instanceof FormData;
- const res=await fetch('http://127.0.0.1:18190/api/v1'+path,{
+ const res=await fetch('http://127.0.0.1:18190'+(path.startsWith('/api/v1/')?path:'/api/v1'+path),{
   method,headers:{'x-talaeats-client':'customer-mobile',
    ...(token?{authorization:'Bearer '+token}:{}),
    ...(isFile?{}:{'content-type':'application/json'}),...headers},
