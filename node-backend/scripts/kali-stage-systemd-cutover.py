@@ -203,10 +203,24 @@ def emergency_restore() -> bool:
     pgdata = STAGE / "postgres15-data"
     pglog = STAGE / "logs/postgres15.log"
     rediscfg = STAGE / "redis-stage.conf"
-    pg_started = good([str(BIN / "pg_ctl"), "-D", str(pgdata),
-                       "-l", str(pglog), "-w", "-t", "30", "start"], timeout=40)
-    redis_started = good(["redis-server", str(rediscfg)], timeout=20)
-    pm_started = good([str(NODE), str(PM2), "resurrect"], timeout=35)
+    # Partial failures can leave some stage processes still running; avoid
+    # treating "already running" as a failed rollback or spawning duplicates.
+    pg_started = good([str(BIN / "pg_ctl"), "-D", str(pgdata), "status"], timeout=8)
+    if not pg_started:
+        pg_started = good([str(BIN / "pg_ctl"), "-D", str(pgdata),
+                           "-l", str(pglog), "-w", "-t", "30", "start"], timeout=40)
+    rsecret = redis_auth()
+    renv = env()
+    if rsecret:
+        renv["REDISCLI_AUTH"] = rsecret
+    redis_started = bool(rsecret and good([
+        "redis-cli", "-h", "127.0.0.1", "-p", "16379", "ping"
+    ], environment=renv, timeout=4))
+    if not redis_started:
+        redis_started = good(["redis-server", str(rediscfg)], timeout=20)
+    pm_started = pm2_stage_only() or good(
+        [str(NODE), str(PM2), "resurrect"], timeout=35
+    )
     if pg_started and redis_started and pm_started:
         for _ in range(25):
             if ready() and pm2_stage_only():
