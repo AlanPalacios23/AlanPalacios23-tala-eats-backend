@@ -619,3 +619,73 @@ model StageWalletTransaction {
   @@index([kind])
   @@map("wallet_transactions")
 }
+
+
+// F1: Operational READ contracts from Python admin/operations.
+// Isolated PG15 staging only: mutation of finance/payments is prohibited.
+model OpsServiceZone {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique @db.VarChar(120)
+  centerLat Float    @map("center_lat")
+  centerLng Float    @map("center_lng")
+  radiusKm  Float    @default(8) @map("radius_km")
+  surcharge Decimal  @default(0) @db.Decimal(10,2)
+  minOrder  Decimal  @default(0) @map("min_order") @db.Decimal(10,2)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  @@index([active])
+  @@map("service_zones")
+}
+model OpsFeatureFlag {
+  id             Int      @id @default(autoincrement())
+  key            String   @unique @db.VarChar(100)
+  description    String   @default("") @db.VarChar(300)
+  enabled        Boolean  @default(false)
+  rolloutPercent Int      @default(100) @map("rollout_percent")
+  audienceRole   String   @default("all") @map("audience_role") @db.VarChar(30)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+  @@index([enabled])
+  @@map("feature_flags")
+}
+model OpsFraudFlag {
+  id        Int       @id @default(autoincrement())
+  userId    Int?      @map("user_id")
+  orderId   Int?      @map("order_id")
+  reason    String    @db.VarChar(300)
+  severity  String    @default("medium") @db.VarChar(20)
+  riskScore Int       @default(0) @map("risk_score")
+  signal    String    @default("rules") @db.VarChar(80)
+  resolved  Boolean   @default(false)
+  createdAt DateTime  @default(now()) @map("created_at")
+  @@index([userId])
+  @@index([orderId])
+  @@index([resolved])
+  @@map("fraud_flags")
+}
+model OpsVerificationRecord {
+  id         Int      @id @default(autoincrement())
+  entityType String   @map("entity_type") @db.VarChar(30)
+  entityId   Int      @map("entity_id")
+  status     String   @default("pending") @db.VarChar(30)
+  notes      String   @default("") @db.VarChar(500)
+  createdAt  DateTime @default(now()) @map("created_at")
+  @@index([entityId])
+  @@map("verification_records")
+}
+model OpsIncident {
+  id                Int       @id @default(autoincrement())
+  orderId           Int?      @map("order_id")
+  incidentType      String    @map("incident_type") @db.VarChar(80)
+  severity          String    @default("medium") @db.VarChar(20)
+  title             String    @db.VarChar(180)
+  detail            String    @default("")
+  recommendedAction String    @default("") @map("recommended_action") @db.VarChar(400)
+  status            String    @default("open") @db.VarChar(30)
+  assignedToUserId  Int?      @map("assigned_to_user_id")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  resolvedAt        DateTime? @map("resolved_at")
+  @@index([orderId])
+  @@index([status])
+  @@map("operational_incidents")
+}
