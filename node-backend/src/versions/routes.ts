@@ -1354,7 +1354,7 @@ v11Router.get('/orders/:orderId/refunds',async(req,res)=>{
 v11Router.get('/merchant/kds-pro',async(req,res)=>{
  const who=await account(req,['restaurant','admin']);
  const shop=await db.marketplaceRestaurant.findFirst({
-  ...(who.role==='admin'?{orderBy:{id:'asc'}}:{where:{ownerId:who.id}})});
+  where:who.role==='admin'?{}:{ownerId:who.id},orderBy:{id:'asc'}});
  if(!shop)return res.json({restaurant:null,lanes:{},stations:{},sla:{}});
  const status=['received','confirmed','preparing','ready'];
  const rows=await db.marketOrder.findMany({where:{restaurantId:shop.id,
