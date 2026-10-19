@@ -16,6 +16,16 @@ do {
 redis.disconnect();
 const client=new pg.Client({connectionString:process.env.DATABASE_URL});
 await client.connect();
+let ready=false;
+for(let i=0;i<50;i++){
+  try{
+    const result=await fetch(base+'/ready');
+    if(result.status===200&&(await result.json()).ready===true){ready=true;break;}
+  }catch{}
+  await new Promise(resolve=>setTimeout(resolve,250));
+}
+if(!ready)throw Error('DRIVER_STAGE_API_NOT_READY');
+
 async function request(path,{token,method='GET',body}={}) {
  const result=await fetch(base+path,{method,
  headers:{'content-type':'application/json','x-talaeats-client':'customer-mobile',
