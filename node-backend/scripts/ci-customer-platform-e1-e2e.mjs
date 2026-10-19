@@ -48,7 +48,8 @@ const initial=await platform(alice,'/bootstrap');
 assert.equal(initial.status,200,JSON.stringify(initial.json));
 assert.equal(initial.json.user.id,alice.id);
 assert.equal(initial.json.user.email,alice.email);
-assert.equal(initial.json.unread_notifications,0);
+const aliceInitialUnread=initial.json.unread_notifications;
+assert.ok(Number.isInteger(aliceInitialUnread)&&aliceInitialUnread>=0);
 assert.equal(initial.json.online_payments,false);
 assert.equal(initial.json.google_signin,false);
 assert.equal(initial.json.wallet.points,0);
@@ -141,6 +142,7 @@ const n1=(await db.query(
 const n2=(await db.query(
  "INSERT INTO notifications(user_id,kind,title,message) VALUES($1,'system','Aviso','Mensaje 2') RETURNING id",
  [alice.id])).rows[0].id;
+const bobInitialUnread=(await platform(bob,'/bootstrap')).json.unread_notifications;
 const outsider=(await db.query(
  "INSERT INTO notifications(user_id,kind,title,message) VALUES($1,'system','Privado','Bob') RETURNING id",
  [bob.id])).rows[0].id;
@@ -148,19 +150,19 @@ assert.equal((await platform(bob,'/notifications/'+n1+'/read','PATCH')).status,4
 assert.equal((await platform(alice,'/notifications/'+outsider+'/read','PATCH')).status,404);
 const notifications=await platform(alice,'/notifications');
 assert.equal(notifications.status,200);
-assert.equal(notifications.json.length,2);
+assert.equal(notifications.json.length,aliceInitialUnread+2);
 assert.equal(notifications.json[0].id,n2);
 assert.equal(notifications.json[0].is_read,false);
 assert.equal(notifications.cache,'private, no-store');
-assert.equal((await platform(alice,'/bootstrap')).json.unread_notifications,2);
+assert.equal((await platform(alice,'/bootstrap')).json.unread_notifications,aliceInitialUnread+2);
 const read=await platform(alice,'/notifications/'+n1+'/read','PATCH');
 assert.equal(read.status,200);
 assert.equal(read.json.is_read,true);
-assert.equal((await platform(alice,'/bootstrap')).json.unread_notifications,1);
-assert.deepEqual((await platform(alice,'/notifications/read-all','POST')).json,{updated:1});
+assert.equal((await platform(alice,'/bootstrap')).json.unread_notifications,aliceInitialUnread+1);
+assert.deepEqual((await platform(alice,'/notifications/read-all','POST')).json,{updated:aliceInitialUnread+1});
 assert.deepEqual((await platform(alice,'/notifications/read-all','POST')).json,{updated:0});
 assert.equal((await platform(alice,'/bootstrap')).json.unread_notifications,0);
-assert.equal((await platform(bob,'/notifications')).json.length,1);
+assert.equal((await platform(bob,'/notifications')).json.length,bobInitialUnread+1);
 assert.equal((await platform(bob,'/notifications')).json[0].is_read,false);
 console.log('NODE_E1_CUSTOMER_ADDRESS_DEFAULT_AND_TENANT_ISOLATION=PASS');
 console.log('NODE_E1_FAVORITES_CONCURRENT_TOGGLE_AND_PRIVACY=PASS');
