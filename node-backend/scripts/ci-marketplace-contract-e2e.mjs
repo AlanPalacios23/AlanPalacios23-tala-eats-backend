@@ -75,7 +75,8 @@ const create=await call('/owner/menu',opts(owner.token,'POST',{
 }));
 assert.equal(create.status,201,JSON.stringify(create.body));
 const mid=create.body.id;
-assert.equal(create.body.price,'28.5'.includes('impossible')?'28.50':'28.50');
+assert.equal(typeof create.body.price,'string');
+assert.equal(Number(create.body.price),28.5);
 assert.equal(create.body.restaurant_id,rid);
 assert.equal((await call('/owner/menu',opts(owner.token,'POST',{name:'A',price:'0.00'}))).status,422);
 assert.equal((await call('/owner/menu/'+mid,opts(buyer.token,'PATCH',{stock:0}))).status,403);
