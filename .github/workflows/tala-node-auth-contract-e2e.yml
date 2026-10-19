@@ -1,0 +1,90 @@
+name: TALA EATS | Auth contract PG15 Redis8 E2E
+on:
+  push:
+    branches: [feat/node-python-parity-auth-v02]
+    paths:
+      - 'node-backend/**'
+      - '.github/workflows/tala-node-auth-contract-e2e.yml'
+  pull_request:
+    branches: [feat/node24-pm2-native-staging-20261019]
+    paths:
+      - 'node-backend/**'
+      - '.github/workflows/tala-node-auth-contract-e2e.yml'
+permissions:
+  contents: read
+jobs:
+  auth-integration:
+    name: Python auth REST parity (PG15 Redis8 isolated)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: tala_node_stage
+          POSTGRES_PASSWORD: stage-ci-pass
+          POSTGRES_DB: tala_node_stage
+        ports:
+          - 15435:5432
+        options: >-
+          --health-cmd "pg_isready -U tala_node_stage -d tala_node_stage"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+      redis:
+        image: redis:8
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      NODE_ENV: staging
+      HOST: 127.0.0.1
+      PORT: '18190'
+      DATABASE_URL: postgresql://tala_node_stage:stage-ci-pass@127.0.0.1:15435/tala_node_stage
+      REDIS_URL: redis://:stage-ci-redis@127.0.0.1:16379/0
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+      AUTH_V02_ENABLED: 'true'
+      AUTH_JWT_SECRET: ci-only-auth-secret-not-shared-with-prod-xxxxxxxxxxxxxxxxxxxxxxxxxx
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Frozen Node dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Authenticate ephemeral Redis with already installed Node dependency
+        run: |
+          node --input-type=module -e '
+            import { Redis } from "ioredis";
+            const r=new Redis("redis://127.0.0.1:16379");
+            await r.config("SET","requirepass","stage-ci-redis");
+            r.disconnect();
+            const secured=new Redis(process.env.REDIS_URL);
+            if(await secured.ping()!=="PONG")process.exitCode=1;
+            secured.disconnect();
+          '
+      - name: Stage-only initial + auth migrations
+        run: |
+          npm run generate
+          npm run db:validate
+          npm run db:migrate:deploy
+          npm run build
+          npm test
+      - name: HTTP + database + revocation + device proof E2E
+        run: |
+          set -euo pipefail
+          node dist/server.js >/tmp/tala-auth-ci-api.log 2>&1 &
+          api_pid=$!
+          node dist/worker.js >/tmp/tala-auth-ci-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'kill "$api_pid" "$worker_pid" 2>/dev/null || true' EXIT
+          node scripts/ci-auth-contract-e2e.mjs
