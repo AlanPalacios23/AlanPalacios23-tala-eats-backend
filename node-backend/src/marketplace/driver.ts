@@ -120,7 +120,7 @@ async function withProfileLock<T>(driverId:number,perform:(tx:any)=>Promise<T>):
     const locked=await tx.$queryRawUnsafe(
       'SELECT id FROM driver_profiles WHERE user_id=$1 FOR UPDATE',driverId,
     );
-    if(!locked.length)return fail(503,'Perfil del repartidor no disponible');
+    if(!Array.isArray(locked)||!locked.length)return fail(503,'Perfil del repartidor no disponible');
     return perform(tx);
   },{maxWait:10000,timeout:20000});
 }
@@ -162,9 +162,9 @@ export async function driverStatus(actor:AuthUser,orderId:number,next:string){
     const locked=await tx.$queryRawUnsafe(
       'SELECT id FROM orders WHERE id=$1 FOR UPDATE',orderId,
     );
-    if(!locked.length)fail(404,'Pedido no encontrado');
+    if(!Array.isArray(locked)||!locked.length)return fail(404,'Pedido no encontrado');
     const o=await tx.marketOrder.findUnique({where:{id:orderId}});
-    if(!o)fail(404,'Pedido no encontrado');
+    if(!o)return fail(404,'Pedido no encontrado');
     if(o.driverId!==actor.id)fail(403,'Pedido no asignado');
     const allowed:{[k:string]:string}={assigned:'picked_up',picked_up:'on_the_way'};
     if(allowed[o.status]!==next)fail(409,'Transición inválida: '+o.status+' → '+next);
@@ -210,7 +210,7 @@ export async function driverGps(actor:AuthUser,lat:number,lng:number){
     await db.marketplaceDriverProfile.update({where:{userId:actor.id},
       data:{currentLat:lat,currentLng:lng}}):
     await db.marketplaceDriverProfile.findUnique({where:{userId:actor.id}});
-  if(!profile)fail(503,'Perfil del repartidor no encontrado');
+  if(!profile)return fail(503,'Perfil del repartidor no encontrado');
   return {...profilePublic(profile),current_lat:lat,current_lng:lng};
 }
 function deliveryPayload(o:any){
@@ -301,7 +301,7 @@ export async function driverComplete(actor:AuthUser,orderId:number,
   const candidate=await db.marketOrder.findUnique({
     where:{id:orderId},select:{driverId:true,orderType:true,paymentMethod:true},
   });
-  if(!candidate)fail(404,'Pedido no encontrado');
+  if(!candidate)return fail(404,'Pedido no encontrado');
   if(candidate.driverId!==actor.id)fail(403,'Pedido no asignado');
   if(candidate.paymentMethod!=='cash'||candidate.orderType!=='delivery')
     fail(503,'Sólo entregas cash sintéticas en staging');
@@ -312,7 +312,7 @@ export async function driverComplete(actor:AuthUser,orderId:number,
     );
     if(!locked.length)fail(404,'Pedido no encontrado');
     const o=await tx.marketOrder.findUnique({where:{id:orderId}});
-    if(!o)fail(404,'Pedido no encontrado');
+    if(!o)return fail(404,'Pedido no encontrado');
     if(o.driverId!==actor.id)fail(403,'Pedido no asignado');
     if(o.status==='delivered'){
       const existing=await tx.stageDeliveryProof.findUnique({where:{orderId}});
