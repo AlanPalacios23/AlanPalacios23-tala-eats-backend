@@ -1153,7 +1153,8 @@ v11Router.post('/push/subscriptions',async(req,res)=>{
  // Endpoints are bearer capabilities; one endpoint can only belong to one
  // current account. Serialize cross-worker moves by PostgreSQL advisory lock.
  const created=await db.$transaction(async tx=>{
-  await tx.$queryRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))',
+  // SELECT a supported integer column: Prisma cannot decode PostgreSQL void.
+  await tx.$queryRawUnsafe('SELECT 1 AS ok FROM pg_advisory_xact_lock(hashtext($1))',
    p.endpoint);
   await tx.stagePushSubscription.updateMany({where:{
    endpoint:p.endpoint,userId:{not:who.id},active:true},data:{active:false}});
