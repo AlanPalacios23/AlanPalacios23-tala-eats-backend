@@ -1424,3 +1424,198 @@ v11Router.get('/admin/command-center',async(req,res)=>{
   runtime:{traffic_sampled:false,websocket_active:false},
   canary_percent:Math.max(0,Math.min(100,Number(stageSetting?.value??0)||0))});
 });
+
+
+// H3 Python V9 growth / partner / corporate parity. Stage only.
+const userExperimentBucket=(value:string)=>parseInt(createHash('sha256')
+ .update(value).digest('hex').slice(0,8),16)%100;
+v9Router.post('/admin/experiments',async(req,res)=>{
+ await account(req,['admin']);
+ const p=valid(z.strictObject({
+  key:z.string().min(2).max(100).regex(/^[a-z0-9_.-]+$/),
+  name:z.string().min(2).max(180),
+  variants:z.array(z.string().min(1).max(60)).min(1).max(10)
+   .default(['control','variant']),
+  audience_role:z.enum(['all','customer','restaurant','driver','admin']).default('customer'),
+  rollout_percent:z.number().int().min(0).max(100).default(100),
+  primary_metric:z.string().min(1).max(100).default('checkout_completed'),
+  status:z.enum(['draft','running','paused','completed']).default('running'),
+ }),req.body);
+ if(new Set(p.variants).size!==p.variants.length)return bad(422,'Variantes repetidas');
+ const existing=await db.stageExperiment.findUnique({where:{key:p.key}});
+ if(existing)return bad(409,'Ya existe ese experimento');
+ const row=await db.stageExperiment.create({data:{
+  key:p.key,name:p.name,variantsJson:JSON.stringify(p.variants),
+  audienceRole:p.audience_role,rolloutPercent:p.rollout_percent,
+  primaryMetric:p.primary_metric,status:p.status}});
+ res.status(201).json({id:row.id,key:row.key,status:row.status});
+});
+v9Router.get('/experiments/active',async(req,res)=>{
+ const who=await account(req);
+ const experiments=await db.stageExperiment.findMany({
+  where:{status:'running',audienceRole:{in:['all',who.role]}},
+  orderBy:{id:'asc'},take:300});
+ const rows=[];
+ for(const exp of experiments){
+  const bucket=userExperimentBucket(exp.key+':'+who.id);
+  if(bucket>=exp.rolloutPercent)continue;
+  const options=JSON.parse(exp.variantsJson) as string[];
+  const variants=options.length?options:['control'];
+  const index=userExperimentBucket('variant:'+exp.key+':'+who.id)%variants.length;
+  const x=await db.stageExperimentAssignment.upsert({where:{
+   uq_experiment_user:{experimentId:exp.id,userId:who.id}},
+   create:{experimentId:exp.id,userId:who.id,variant:variants[index]!},
+   update:{}});
+  rows.push({key:exp.key,variant:x.variant,metric:exp.primaryMetric});
+ }
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(rows);
+});
+v9Router.get('/admin/experiments',async(req,res)=>{
+ await account(req,['admin']);
+ const experiments=await db.stageExperiment.findMany({
+  orderBy:{createdAt:'desc'},take:200,include:{assignments:true}});
+ const metrics=await db.stageProductEvent.findMany({
+  where:{userId:{not:null},eventName:{in:experiments.map(x=>x.primaryMetric)}},
+  select:{eventName:true,userId:true,createdAt:true},take:100000});
+ const data=experiments.map(exp=>{
+  const counts:Record<string,{assigned:number;converted:number;conversion_rate:number}>={};
+  const distribution:Record<string,number>={};
+  for(const a of exp.assignments){
+   distribution[a.variant]=(distribution[a.variant]??0)+1;
+  }
+  for(const [variant,assigned] of Object.entries(distribution)){
+   const users=new Set(exp.assignments.filter(x=>x.variant===variant)
+    .filter(x=>metrics.some(y=>y.userId===x.userId&&
+     y.eventName===exp.primaryMetric&&y.createdAt>=x.createdAt))
+    .map(x=>x.userId));
+   const converted=users.size;
+   counts[variant]={assigned,converted,
+    conversion_rate:round(100*converted/Math.max(1,assigned),2)};
+  }
+  return {id:exp.id,key:exp.key,name:exp.name,status:exp.status,
+   rollout_percent:exp.rolloutPercent,primary_metric:exp.primaryMetric,
+   assignments:distribution,metrics:counts};
+ });
+ res.setHeader('Cache-Control','private, no-store');res.json(data);
+});
+v9Router.get('/admin/corporate/:accountId/statement',async(req,res)=>{
+ await account(req,['admin']);
+ const id=param(req,'accountId');
+ const org=await db.stageCorporateAccount.findUnique({where:{id}});
+ if(!org)return bad(404,'Cuenta empresarial no encontrada');
+ const raw=req.query.month;
+ if(raw!==undefined&&(typeof raw!=='string'||
+   !/^\d{4}-(0[1-9]|1[0-2])$/.test(raw)))return bad(400,'Mes inválido');
+ const now=new Date();
+ const label=typeof raw==='string'?raw:now.toISOString().slice(0,7);
+ const [year,month]=label.split('-').map(Number);
+ const start=new Date(Date.UTC(year!,month!-1,1));
+ const end=new Date(Date.UTC(year!,month!,1));
+ const orders=await db.marketOrder.findMany({
+  where:{corporateAccountId:id,createdAt:{gte:start,lt:end},
+   status:{not:'cancelled'}},
+  select:{id:true,userId:true,total:true,paymentStatus:true,createdAt:true},
+  orderBy:{createdAt:'asc'},take:10000});
+ const amount=orders.reduce((sum,x)=>sum+
+  BigInt(x.total.toFixed(2).replace('.','')),0n);
+ const total=(amount/100n).toString()+'.'+(amount%100n).toString().padStart(2,'0');
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({account_id:id,company:org.name,period:label,
+  orders:orders.map(x=>({id:x.id,user_id:x.userId,
+   total:x.total.toFixed(2),payment_status:x.paymentStatus,
+   created_at:x.createdAt.toISOString()})),
+  total,budget:org.monthlyBudget.toFixed(2)});
+});
+v9Router.post('/admin/partner-keys',async(req,res)=>{
+ const who=await account(req,['admin']);
+ const p=valid(z.strictObject({
+  partner_name:z.string().min(2).max(180),
+  scopes:z.string().max(500).default('catalog:read'),
+ }),req.body);
+ // Never mint LIVE keys or grant order access in this lab.
+ if(p.scopes!=='catalog:read')return bad(403,'Solamente catalog:read en staging');
+ const raw='te_stage_'+randomBytes(30).toString('base64url');
+ const record=await db.$transaction(async tx=>{
+  const created=await tx.stagePartnerApiKey.create({data:{
+   partnerName:p.partner_name,keyHash:createHash('sha256')
+    .update(raw).digest('hex'),scopes:p.scopes}});
+  await tx.authAuditEvent.create({data:{userId:who.id,action:'v9.partner.create',
+   entityType:'partner_api_key',entityId:String(created.id),
+   detail:'Staging, scope=catalog:read; secret shown only at creation'}});
+  return created;
+ });
+ res.setHeader('Cache-Control','no-store');
+ res.status(201).json({id:record.id,partner:record.partnerName,
+  api_key:raw,scopes:record.scopes,warning:'La clave solo se muestra una vez.'});
+});
+v9Router.get('/partner/catalog',async(req,res)=>{
+ const raw=req.header('x-partner-key')??'';
+ if(!/^te_stage_[a-zA-Z0-9_-]{40}$/.test(raw))return bad(401,'Partner key inválida');
+ const digest=createHash('sha256').update(raw).digest('hex');
+ const key=await db.stagePartnerApiKey.findUnique({where:{keyHash:digest}});
+ if(!key?.active||!key.scopes.split(',').includes('catalog:read'))
+  return bad(401,'Partner key inválida');
+ const shops=await db.marketplaceRestaurant.findMany({where:{isOpen:true},
+  select:{id:true,name:true,cuisine:true,branchCode:true,brandName:true},
+  orderBy:{id:'asc'},take:500});
+ await db.stagePartnerApiKey.update({where:{id:key.id},
+  data:{lastUsedAt:new Date()}});
+ res.setHeader('Cache-Control','no-store');
+ res.json({restaurants:shops.map(x=>({id:x.id,name:x.name,cuisine:x.cuisine,
+  branch_code:x.branchCode,brand_name:x.brandName}))});
+});
+v9Router.post('/admin/marketing/:automationId/run',async(req,res)=>{
+ const who=await account(req,['admin']);
+ const id=param(req,'automationId');
+ const result=await db.$transaction(async tx=>{
+  const lock=await tx.$queryRawUnsafe(
+   'SELECT id FROM marketing_automations WHERE id=$1 FOR UPDATE',id);
+  if(!Array.isArray(lock)||!lock.length)return bad(404,'Automatización no disponible');
+  const auto=await tx.stageMarketingAutomation.findUnique({where:{id}});
+  if(!auto?.active)return bad(404,'Automatización no disponible');
+  if(auto.channel!=='in_app')return bad(503,'SMTP worker no configurado en Node');
+  if(auto.lastRunAt&&Date.now()-auto.lastRunAt.getTime()<15*60000)
+   return bad(429,'Ya se ejecutó esta campaña en los últimos 15 minutos');
+  const users=await tx.authUser.findMany({where:{
+   role:'customer',isActive:true,marketingOptIn:true},
+   select:{id:true},take:5000,orderBy:{id:'asc'}});
+  const orders=await tx.marketOrder.findMany({where:{
+   userId:{in:users.map(x=>x.id)}},
+   select:{userId:true,status:true,total:true,createdAt:true}});
+  const stats=new Map<number,{n:number;spend:number;last:number|null}>();
+  for(const o of orders){
+   const x=stats.get(o.userId)??{n:0,spend:0,last:null};
+   if(o.status==='delivered'){x.n++;x.spend+=Number(o.total);}
+   x.last=Math.max(x.last??0,o.createdAt.getTime());stats.set(o.userId,x);
+  }
+  const selected=users.filter(u=>{
+   const s=stats.get(u.id)??{n:0,spend:0,last:null},
+    days=s.last===null?null:Math.floor((Date.now()-s.last)/86400000);
+   const segment=s.n===0?'new':s.n>=20||s.spend>=8000?'vip':
+    days!==null&&days>=30?'inactive':days!==null&&days>=14?'at_risk':
+    s.n>=5?'frequent':'active';
+   if(auto.segment!=='all'&&auto.segment!==segment)return false;
+   if(auto.triggerType==='vip'&&segment!=='vip')return false;
+   if(auto.triggerType==='at_risk'&&segment!=='at_risk')return false;
+   if(auto.triggerType==='first_order'&&s.n!==1)return false;
+   if(auto.triggerType==='inactive_7d'&&(days===null||days<7))return false;
+   if(auto.triggerType==='inactive_30d'&&(days===null||days<30))return false;
+   // Birthday/cart signals are unsupported until consented birth data and
+   // attributed customer events are available. Do not guess recipients.
+   if(['birthday','cart_abandoned'].includes(auto.triggerType))return false;
+   return true;
+  });
+  if(selected.length)await tx.authNotification.createMany({data:
+   selected.map(u=>({userId:u.id,kind:'growth',title:auto.name,
+    message:auto.messageTemplate.replaceAll('{coupon}',auto.couponCode)}))});
+  await tx.stageMarketingAutomation.update({where:{id},
+   data:{lastRunAt:new Date()}});
+  await tx.authAuditEvent.create({data:{userId:who.id,action:'v9.marketing.run',
+   entityType:'marketing_automation',entityId:String(id),
+   detail:'target_count='+selected.length}});
+  return {automation_id:id,targeted_users:selected.length,
+   channel:'in_app',delivery:'in_app',batch_limit:5000};
+ },{maxWait:10000,timeout:20000});
+ res.json(result);
+});
