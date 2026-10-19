@@ -12,6 +12,10 @@ const schema = z.object({
   AUTH_V02_ENABLED: z.enum(['false', 'true']).default('false'),
   MARKETPLACE_B_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_PICKUP_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
+  // Synthetic checkout C1 only models the default Python v1.5.2 policy.
+  // Refuse alternative policies rather than silently computing wrong fees.
+  COMMERCIAL_PRICING_V152_ENABLED: z.literal('true').default('true'),
+  COMMERCIAL_PRICING_V162_ENABLED: z.literal('false').default('false'),
   MERCHANT_MANAGED_DELIVERY: z.enum(['false','true']).default('false'),
   SCHEDULE_PREP_LEAD_MINUTES: z.coerce.number().int().min(5).max(360).default(45),
   AUTH_JWT_SECRET: z.string().min(40).optional(),
