@@ -90,9 +90,9 @@ export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promis
   return db.$transaction(async tx=>{
     // Serialize retries with the same user, BEFORE testing client_reference.
     // Other customers then lock menu rows by ascending ID to avoid deadlocks.
-    const locked=await tx.$queryRaw<{id:number}[]>\`
-      SELECT id FROM users WHERE id=\${account.id} FOR UPDATE
-    \`;
+    const locked=await tx.$queryRaw<{id:number}[]>`
+      SELECT id FROM users WHERE id=${account.id} FOR UPDATE
+    `;
     if(!locked.length)throw new CheckoutError(401,'Cuenta no disponible');
     const previous=await tx.marketOrder.findFirst({
       where:{userId:account.id,clientReference:data.client_reference},select:{id:true},
@@ -107,9 +107,9 @@ export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promis
         throw new CheckoutError(409,'La referencia del pedido ya se uso con una compra diferente');
       return previous.id; // Idempotent retry: no second inventory or ledger mutation.
     }
-    const restaurantLock=await tx.$queryRaw<{id:number}[]>\`
-      SELECT id FROM restaurants WHERE id=\${data.restaurant_id} FOR SHARE
-    \`;
+    const restaurantLock=await tx.$queryRaw<{id:number}[]>`
+      SELECT id FROM restaurants WHERE id=${data.restaurant_id} FOR SHARE
+    `;
     if(!restaurantLock.length)throw new CheckoutError(404,'Restaurante no encontrado');
     const restaurant=await tx.marketplaceRestaurant.findUnique({where:{id:data.restaurant_id}});
     if(!restaurant)throw new CheckoutError(404,'Restaurante no encontrado');
@@ -121,7 +121,7 @@ export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promis
        restaurant.commercialPlan!=='PRO')
       throw new CheckoutError(503,'Política comercial personalizada aún no compatible');
     for(const id of sortedIds){
-      await tx.$queryRaw\`SELECT id FROM menu_items WHERE id=\${id} FOR UPDATE\`;
+      await tx.$queryRaw`SELECT id FROM menu_items WHERE id=${id} FOR UPDATE`;
     }
     const rows=await tx.marketplaceMenuItem.findMany({
       where:{id:{in:sortedIds},restaurantId:restaurant.id},
@@ -155,7 +155,7 @@ export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promis
       ingredientUsage.set(recipe.ingredientId,(ingredientUsage.get(recipe.ingredientId)??0n)+value);
     }
     for(const id of [...ingredientUsage.keys()].sort((a,b)=>a-b)){
-      await tx.$queryRaw\`SELECT id FROM ingredient_stocks WHERE id=\${id} FOR UPDATE\`;
+      await tx.$queryRaw`SELECT id FROM ingredient_stocks WHERE id=${id} FOR UPDATE`;
       const ingredient=await tx.stageIngredientStock.findUnique({where:{id}});
       if(!ingredient||ingredient.restaurantId!==restaurant.id||
           toMilli(ingredient.quantity.toString())<ingredientUsage.get(id)!)
@@ -190,20 +190,20 @@ export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promis
     });
     for(const id of sortedIds){
       const quantity=totals.get(id)!;
-      const changed=await tx.$queryRaw<{id:number}[]>\`
-        UPDATE menu_items SET stock=stock-\${quantity}
-        WHERE id=\${id} AND restaurant_id=\${restaurant.id}
-        AND is_available=true AND stock>=\${quantity} RETURNING id
-      \`;
+      const changed=await tx.$queryRaw<{id:number}[]>`
+        UPDATE menu_items SET stock=stock-${quantity}
+        WHERE id=${id} AND restaurant_id=${restaurant.id}
+        AND is_available=true AND stock>=${quantity} RETURNING id
+      `;
       if(changed.length!==1)throw new CheckoutError(400,'Stock insuficiente');
     }
     for(const id of [...ingredientUsage.keys()].sort((a,b)=>a-b)){
       const needed=fromMilli(ingredientUsage.get(id)!);
-      const changed=await tx.$queryRaw<{id:number}[]>\`
-        UPDATE ingredient_stocks SET quantity=quantity-\${needed}::numeric
-        WHERE id=\${id} AND restaurant_id=\${restaurant.id}
-        AND quantity>=\${needed}::numeric RETURNING id
-      \`;
+      const changed=await tx.$queryRaw<{id:number}[]>`
+        UPDATE ingredient_stocks SET quantity=quantity-${needed}::numeric
+        WHERE id=${id} AND restaurant_id=${restaurant.id}
+        AND quantity>=${needed}::numeric RETURNING id
+      `;
       if(changed.length!==1)throw new CheckoutError(400,'Inventario de ingredientes insuficiente');
     }
     await tx.marketOrderItem.createMany({data:data.items.map(item=>({
