@@ -1,0 +1,84 @@
+name: TALA EATS | Node Marketplace PG15 Redis8 Contracts
+on:
+  push:
+    branches: [feat/node-marketplace-parity-stage-b-20261019]
+  pull_request:
+    branches: [feat/node-python-parity-auth-v02]
+permissions:
+  contents: read
+jobs:
+  phase-b-contracts:
+    name: Python marketplace/owner/orders/driver stage E2E (no financial writes)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: tala_node_stage
+          POSTGRES_PASSWORD: stage-ci-pass
+          POSTGRES_DB: tala_node_stage
+        ports: ['15435:5432']
+        options: >-
+          --health-cmd "pg_isready -U tala_node_stage -d tala_node_stage"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+      redis:
+        image: redis:8
+        ports: ['16379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      NODE_ENV: staging
+      HOST: 127.0.0.1
+      PORT: '18190'
+      DATABASE_URL: postgresql://tala_node_stage:stage-ci-pass@127.0.0.1:15435/tala_node_stage
+      REDIS_URL: redis://:stage-ci-redis@127.0.0.1:16379/0
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+      AUTH_V02_ENABLED: 'true'
+      MARKETPLACE_B_ENABLED: 'true'
+      AUTH_JWT_SECRET: ci-only-auth-secret-not-shared-with-prod-xxxxxxxxxxxxxxxxxxxxxxxxxx
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Validate Python HTTP surface
+        run: python3 scripts/python_route_inventory.py --check
+      - name: Frozen deps, Prisma schema and stage-only migrations
+        run: |
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:validate
+          npm run db:migrate:deploy
+      - name: TypeScript build and unit security regression
+        run: |
+          npm run build
+          npm test
+      - name: Lock down ephemeral Redis
+        run: |
+          node --input-type=module -e '
+            import { Redis } from "ioredis";
+            const r=new Redis("redis://127.0.0.1:16379");
+            await r.config("SET","requirepass","stage-ci-redis");
+            r.disconnect();
+            const secured=new Redis(process.env.REDIS_URL);
+            if(await secured.ping()!=="PONG")process.exitCode=1;
+            secured.disconnect();
+          '
+      - name: Verify real HTTP contracts (synthetic only)
+        run: |
+          set -euo pipefail
+          node dist/server.js > /tmp/node-marketplace-contract.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          node scripts/ci-auth-contract-e2e.mjs
+          node scripts/ci-marketplace-contract-e2e.mjs
+      - name: Fail closed on unintended financial secrets
+        run: |
+          ! grep -ER --include='*.ts' -E 'sk_live_|rk_live_|DATABASE_URL_PRODUCTION' src
