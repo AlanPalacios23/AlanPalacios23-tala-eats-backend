@@ -53,6 +53,16 @@ const toMilli=(s:string):bigint=>{
 };
 const fromMilli=(n:bigint)=> (n/1000n).toString()+'.'+(n%1000n).toString().padStart(3,'0');
 const roundRate=(c:bigint,basisPoints:bigint)=>(c*basisPoints+5000n)/10000n;
+// Python commercial_value reads per-key SystemSetting overrides. The C1
+// synthetic slice is default-v1.5.2-only; reject drift rather than charge a
+// price we cannot reproduce. Compare four-decimal rates as exact integers.
+const rateBasisPoints=(raw:string):bigint=>{
+  const v=raw.trim();
+  if(!/^(?:0|[1-9]\d?)(?:\.\d{1,4})?$/.test(v))
+    throw new CheckoutError(503,'Política comercial personalizada no compatible');
+  const [major,fraction='']=v.split('.');
+  return BigInt(major!)*10000n+BigInt((fraction+'0000').slice(0,4));
+};
 const canonicalize=(o:unknown):string=>{
   if(Array.isArray(o))return '['+o.map(canonicalize).join(',')+']';
   if(o!==null&&typeof o==='object')return '{'+Object.entries(o as Record<string,unknown>)
@@ -115,6 +125,19 @@ export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promis
     if(!restaurant)throw new CheckoutError(404,'Restaurante no encontrado');
     if(!restaurant.isOpen)throw new CheckoutError(400,'El restaurante está cerrado');
     if(!restaurant.pickupEnabled)throw new CheckoutError(400,'Este restaurante no permite recoger');
+    const policyRows=await tx.$queryRaw<{key:string,value:string}[]>`
+      SELECT key,value FROM system_settings
+      WHERE key IN (
+        'commercial_v152.restaurant_commission_rate',
+        'commercial_v152.service_fee_rate'
+      ) FOR SHARE
+    `;
+    for(const row of policyRows){
+      const expected=row.key==='commercial_v152.restaurant_commission_rate'?
+        1500n:row.key==='commercial_v152.service_fee_rate'?700n:null;
+      if(expected===null||rateBasisPoints(row.value)!==expected)
+        throw new CheckoutError(503,'Tarifas configuradas distintas al checkout C1 de staging');
+    }
     // Fail closed if the runtime has nondefault commercial policies. These
     // rates are Python commercial v1.5.2 DEFAULTS, not full SystemSetting parity.
     if(restaurant.commercialPlan!=='START'&&restaurant.commercialPlan!=='DELIVERY'&&

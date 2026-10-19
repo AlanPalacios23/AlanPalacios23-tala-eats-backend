@@ -81,6 +81,11 @@ assert.equal((await complete(first.id,first.delivery_pin)).status,409); // not r
 await ready(first.id);
 assert.equal((await complete(first.id,first.delivery_pin,customer.token)).status,403);
 assert.equal((await complete(first.id,first.delivery_pin,otherMerchant.token)).status,403);
+const pinBudgetRedis=new Redis(process.env.REDIS_URL);
+assert.equal(await pinBudgetRedis.get('tala:node:stage:pickup:pin:order:'+first.id),'1');
+// Only the one preceding legitimate but early READY attempt counts.
+// The other merchant's 403 must NOT consume the owner's shared PIN budget.
+pinBudgetRedis.disconnect();
 assert.equal((await complete(first.id,'00000')).status,422);
 const wrong=first.delivery_pin==='0000'?'0001':'0000';
 assert.equal((await complete(first.id,wrong)).status,400);
@@ -143,10 +148,38 @@ assert.equal(untouched.rows[0].status,'ready');
 assert.equal(untouched.rows[0].payment_status,'pending');
 assert.equal(untouched.rows[0].cash_collected,'0.00');
 assert.equal((await db.query('SELECT count(*)::int n FROM delivery_proofs WHERE order_id=$1',[rateLimitOrder.id])).rows[0].n,0);
+// Attackers with multiple authorized identities must not multiply the
+// guessing budget of the 4-digit PIN (order-wide ceiling 12 attempts).
+const adminOne=await register('adminone');
+const adminTwo=await register('admintwo');
+await promote(adminOne,'admin');
+await promote(adminTwo,'admin');
+const shared=await order();
+await ready(shared.id);
+const wrongShared=shared.delivery_pin==='0000'?'0001':'0000';
+for(let i=0;i<5;i++){
+  const attempt=await complete(shared.id,wrongShared,owner.token);
+  assert.equal(attempt.status,400,JSON.stringify(attempt.json));
+}
+for(let i=0;i<5;i++){
+  const attempt=await complete(shared.id,wrongShared,adminOne.token);
+  assert.equal(attempt.status,400,JSON.stringify(attempt.json));
+}
+for(let i=0;i<2;i++){
+  const attempt=await complete(shared.id,wrongShared,adminTwo.token);
+  assert.equal(attempt.status,400,JSON.stringify(attempt.json));
+}
+const distributed=await complete(shared.id,shared.delivery_pin,adminTwo.token);
+assert.equal(distributed.status,429,JSON.stringify(distributed.json));
+const protectedOrder=await db.query('SELECT status,payment_status FROM orders WHERE id=$1',[shared.id]);
+assert.equal(protectedOrder.rows[0].status,'ready');
+assert.equal(protectedOrder.rows[0].payment_status,'pending');
+assert.equal((await db.query('SELECT count(*)::int n FROM delivery_proofs WHERE order_id=$1',[shared.id])).rows[0].n,0);
 const finalLoyalty=await loyalty();
 assert.equal(finalLoyalty.points,8);
 console.log('NODE_C3_PICKUP_PIN_PROOF_AND_RBAC=PASS');
 console.log('NODE_C3_DOUBLE_COMPLETE_POINTS_STREAK_ONCE=PASS');
 console.log('NODE_C3_BRUTE_FORCE_PIN_LIMIT_429_FAILCLOSED=PASS');
+console.log('NODE_C4_PIN_CROSS_TENANT_BUDGET_ISOLATION_AND_DISTRIBUTED_LIMIT=PASS');
 console.log('NODE_C3_OUTBOX_METRICS_ORDER_PAYMENT_SYNTHETIC=PASS');
 await db.end();

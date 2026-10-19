@@ -29,6 +29,18 @@ const milli=(v:string):bigint=>{
   return BigInt(a!)*1000n+BigInt((b+'000').slice(0,3));
 };
 const fromMilli=(n:bigint):string=>(n/1000n).toString()+'.'+(n%1000n).toString().padStart(3,'0');
+// Python orders.py cancellation uses Decimal.quantize(Decimal("0.01"))
+// WITHOUT an explicit rounding override: Python's default ROUND_HALF_EVEN.
+// This differs from monetization.money() which explicitly uses HALF_UP.
+// Use exact integer arithmetic to preserve ties-to-even, including 0.005 MXN.
+const roundHalfEvenBasisPoints=(minor:bigint,rate:bigint):bigint=>{
+  if(minor<0n||rate<0n)throw new LifecycleError(503,'Base de cancelación inválida');
+  const whole=minor*rate/10000n;
+  const remainder=minor*rate%10000n;
+  if(remainder>5000n||(remainder===5000n&&whole%2n!==0n))
+    return whole+1n;
+  return whole;
+};
 const feeRates:{[key:string]:bigint}={received:0n,confirmed:1000n,preparing:3000n};
 const cashOnly=(o:MarketOrder):void=>{
   if(o.orderType!=='pickup'||o.paymentMethod!=='cash'||o.paymentStatus!=='pending')
@@ -47,8 +59,8 @@ export async function previewCancelStage(orderId:number,actor:AuthUser) {
     return {cancellable:false,reason:'Requiere revisión de soporte',fee:'0.00'};
   if(!(order.status in feeRates))fail(503,'Cancelación administrativa posterior pendiente');
   const rate=actor.role==='admin'?0n:feeRates[order.status]!;
-  const fee=(cents(order.subtotal.toString())-cents(order.discount.toString()))*rate;
-  const rounded=(fee+5000n)/10000n;
+  const rounded=roundHalfEvenBasisPoints(
+    cents(order.subtotal.toString())-cents(order.discount.toString()),rate);
   const total=cents(order.total.toString());
   return {cancellable:true,status:order.status,fee:dollars(rounded),
     refund_estimate:dollars(total>rounded?total-rounded:0n),
@@ -125,8 +137,8 @@ export async function cancelCashPickupStage(
     if(!expected.every(a=>ledger.some(e=>e.account===a)))
       fail(503,'Ledger de checkout incompleto; no se puede cancelar');
     const feeRate=actor.role==='customer'?feeRates[order.status]!:0n;
-    const amount=(cents(order.subtotal.toString())-cents(order.discount.toString()))*feeRate;
-    const cancellationFee=(amount+5000n)/10000n;
+    const cancellationFee=roundHalfEvenBasisPoints(
+      cents(order.subtotal.toString())-cents(order.discount.toString()),feeRate);
 
     for(const id of [...itemTotals.keys()].sort((a,b)=>a-b)){
       const qty=itemTotals.get(id)!;

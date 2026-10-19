@@ -464,3 +464,15 @@ model StageProductEvent {
   @@index([createdAt])
   @@map("product_events")
 }
+
+
+model StageSystemSetting {
+  id              Int      @id @default(autoincrement())
+  key             String   @unique @db.VarChar(100)
+  value           String   @default("") @db.VarChar(500)
+  valueType       String   @default("string") @map("value_type") @db.VarChar(30)
+  description     String   @default("") @db.VarChar(300)
+  updatedByUserId Int?     @map("updated_by_user_id")
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
+  @@map("system_settings")
+}
