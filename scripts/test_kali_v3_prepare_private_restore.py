@@ -62,5 +62,20 @@ class Test(unittest.TestCase):
         self.assertIn("os.chmod(OUT,0o600)",src)
     def test_18_never_authorizes_production(self):
         self.assertIn("REQUIRES_BACKUP_AND_EXPLICIT_PRODUCTION_AUTHORIZATION",p.read_text())
+    def test_19_redis_v3_alias(self):
+        self.assertTrue(m.redis_alias_is_v3(
+            "redis://redis:6379/1",
+            {"tala_v3_net":{}},
+            {"tala_v3_net":{"Aliases":["redis","talaeats-v3-redis-1"]}}))
+    def test_20_redis_wrong_network(self):
+        self.assertFalse(m.redis_alias_is_v3(
+            "redis://redis:6379/1",
+            {"other_net":{}},
+            {"tala_v3_net":{"Aliases":["redis"]}}))
+    def test_21_redis_green_refused(self):
+        self.assertFalse(m.redis_alias_is_v3(
+            "redis://talaeats-green-redis-1:6379/1",
+            {"tala_v3_net":{}},
+            {"tala_v3_net":{"Aliases":["redis","talaeats-v3-redis-1"]}}))
 if __name__=="__main__":
     unittest.main(verbosity=2)
