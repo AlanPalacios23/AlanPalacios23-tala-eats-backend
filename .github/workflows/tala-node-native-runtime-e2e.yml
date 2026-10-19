@@ -1,0 +1,91 @@
+name: TALA EATS | Node native staging runtime E2E
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'node-backend/**'
+      - '.github/workflows/tala-node-native-runtime-e2e.yml'
+  push:
+    branches: [feat/node24-pm2-native-staging-20261019, main]
+    paths:
+      - 'node-backend/**'
+      - '.github/workflows/tala-node-native-runtime-e2e.yml'
+permissions:
+  contents: read
+jobs:
+  staging-runtime:
+    name: Node24 + PostgreSQL15 + Redis8 + webhook test E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: tala_node_stage
+          POSTGRES_PASSWORD: ci_local_database_only
+          POSTGRES_DB: tala_node_stage
+        ports:
+          - 15435:5432
+        options: >-
+          --health-cmd "pg_isready -U tala_node_stage -d tala_node_stage"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: staging
+      HOST: '127.0.0.1'
+      PORT: '18190'
+      DATABASE_URL: postgresql://tala_node_stage:ci_local_database_only@127.0.0.1:15435/tala_node_stage
+      REDIS_URL: redis://:ci_local_redis_only@127.0.0.1:16379/0
+      STRIPE_SECRET_KEY: sk_test_ci_local_only
+      STRIPE_WEBHOOK_SECRET: whsec_ci_integration_dummy
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+    defaults:
+      run:
+        working-directory: node-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Require Redis password on ephemeral CI container
+        run: |
+          redis_id="$(docker ps --filter 'ancestor=redis:8-alpine' --format '{{.ID}}' | head -n 1)"
+          test -n "$redis_id"
+          docker exec "$redis_id" redis-cli CONFIG SET requirepass ci_local_redis_only >/dev/null
+          echo REDIS_EPHEMERAL_AUTH_ENABLED=PASS
+      - name: Install pinned dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Generate Prisma and compile Node
+        run: |
+          npm run generate
+          npm run db:validate
+          npm run build
+      - name: Apply initial migration to CI-only PostgreSQL 15
+        run: |
+          npm run db:migrate:deploy
+          echo POSTGRES_15_CI_MIGRATION=PASS
+      - name: Start native Node processes and test full signed receipt
+        run: |
+          set -euo pipefail
+          node dist/worker.js >/tmp/tala-stage-ci-worker.log 2>&1 &
+          worker_pid=$!
+          node dist/server.js >/tmp/tala-stage-ci-api.log 2>&1 &
+          api_pid=$!
+          cleanup() {
+            kill "$api_pid" "$worker_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          node scripts/ci-integration.mjs
+          echo NATIVE_RUNTIME_E2E=PASS
