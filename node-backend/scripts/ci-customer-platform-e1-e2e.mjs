@@ -150,9 +150,12 @@ const read=await api(a,'/notifications/'+notifications[0].rows[0].id+'/read','PA
 assert.equal(read.status,200);
 assert.equal(read.json.is_read,true);
 assert.ok(read.json.created_at.includes('T'));
+const unreadBefore=(await db.query(
+ 'SELECT count(*)::int n FROM notifications WHERE user_id=$1 AND is_read=false',[a.id]
+)).rows[0].n;
 const all=await api(a,'/notifications/read-all','POST');
 assert.equal(all.status,200);
-assert.equal(all.json.updated,51);
+assert.equal(all.json.updated,unreadBefore); // Includes any register/welcome notices.
 assert.equal((await api(a,'/notifications/read-all','POST')).json.updated,0);
 assert.equal((await api(b,'/notifications')).json.length,1);
 assert.equal((await api(b,'/notifications')).json[0].is_read,false);
