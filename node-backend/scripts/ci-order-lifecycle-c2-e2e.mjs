@@ -2,6 +2,7 @@
 // Do not run against Kali or any real financial database.
 import assert from 'node:assert/strict';
 import pg from 'pg';
+import { Redis } from 'ioredis';
 const base='http://127.0.0.1:18190/api/v1';
 const headers={'content-type':'application/json','x-talaeats-client':'customer-mobile'};
 const password='Stage-Cancel-Test-Only-2026!';
@@ -25,6 +26,19 @@ async function promote(u,role){
   assert.equal(res.status,200,JSON.stringify(res.json));
   u.token=res.json.access_token;
 }
+// Earlier integration suites share disposable Redis and consumed >12
+// register attempts. Clear ONLY CI-local throttle keys, never sessions/data.
+if(process.env.GITHUB_ACTIONS!=='true' ||
+   !String(process.env.REDIS_URL).includes('127.0.0.1:16379/0'))
+  throw Error('CI_LOCAL_REDIS_GUARD_REQUIRED');
+const redis=new Redis(process.env.REDIS_URL);
+let cursor='0';
+do{
+  const [next,keys]=await redis.scan(cursor,'MATCH','tala:node:v02:auth:rate:*','COUNT',100);
+  if(keys.length)await redis.del(...keys);
+  cursor=next;
+}while(cursor!=='0');
+redis.disconnect();
 const owner=await register('owner');
 const buyer=await register('buyer');
 const stranger=await register('stranger');
