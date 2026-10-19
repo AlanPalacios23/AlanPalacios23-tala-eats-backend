@@ -1,0 +1,37 @@
+name: TALA EATS | Kali limpieza selectiva QA sin SSH
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/kali_tala_only_retire_containers.py
+      - .github/workflows/kali-tala-only-cleanup-ci.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  no-touch-qa:
+    name: Confirmar controles que impiden borrar TALA EATS
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sintaxis Python
+        run: python3 -m py_compile scripts/kali_tala_only_retire_containers.py
+      - name: Prueba de clasificación de contenedores
+        run: python3 scripts/kali_tala_only_retire_containers.py --self-test
+      - name: Restricciones del procedimiento
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          content = Path('scripts/kali_tala_only_retire_containers.py').read_text()
+          assert 'talaeats-v3' in content and 'talaeats-admin' in content and 'talaeats-green' in content
+          assert '"docker", "rm", "-f"' in content
+          assert 'GREEN_LOCAL_READY_' in content
+          assert 'RETIRAR_SOLO_CONTENEDORES_AJENOS_A_TALA' in content
+          for command in ('docker system prune', 'docker volume prune', 'docker compose down', 'docker volume rm', 'shutil.rmtree', 'rm -rf'):
+              assert command not in content, 'Destructive primitive: ' + command
+          print('TALA_ONLY_CLEANUP_CI_PASS')
+          PY
