@@ -59,7 +59,7 @@ assert.equal(find.status,200,JSON.stringify(find.json));
 assert.equal(find.json.intent.healthy,true);
 assert.ok(find.json.results.some(x=>x.restaurant.id===store&&
  x.items.some(y=>y.id===menu)));
-assert.equal((await go(null,'/search?limit=55')).status,200); // clamp Python max? if bound not 422?
+assert.equal((await go(null,'/search?limit=55')).status,422); // Python Query le=50
 const unmatched=await go(null,'/search?q=ensalada&max_price=10');
 assert.equal(unmatched.status,200);
 assert.ok(!unmatched.json.results.some(x=>x.items.some(y=>y.id===menu)));
