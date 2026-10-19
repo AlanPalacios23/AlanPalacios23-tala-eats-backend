@@ -43,6 +43,11 @@ jobs:
           python3 -m py_compile node-backend/scripts/kali-stage-init-native-services.py
           python3 -m py_compile node-backend/scripts/test_kali_stage_init_native_services.py
           python3 node-backend/scripts/test_kali_stage_init_native_services.py
+          python3 -m py_compile node-backend/scripts/kali-stage-boot-persistence.py
+          python3 -m py_compile node-backend/scripts/kali-stage-startup-check.py
+          python3 -m py_compile node-backend/scripts/test_kali_stage_boot_persistence.py
+          python3 node-backend/scripts/test_kali_stage_boot_persistence.py
+          echo STAGE_USER_SYSTEMD_BOOT_GUARDS=PASS
           echo PG15_NATIVE_PYTHON_SAFETY=PASS
       - name: Validate separation controls statically
         run: |
