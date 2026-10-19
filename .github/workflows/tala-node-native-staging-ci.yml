@@ -27,6 +27,19 @@ jobs:
           node-version: '24'
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
+      - name: Kali native scripts shell syntax and no-approval checks
+        run: |
+          bash -n scripts/kali-native-preflight.sh
+          bash -n scripts/kali-staging-deploy.sh
+          bash -n scripts/kali-provision-native-stage.sh
+          bash -n scripts/kali-install-node24-user.sh
+          bash -n scripts/kali-stage-migrate.sh
+          bash scripts/kali-provision-native-stage.sh --plan | grep PLAN_ONLY_NO_MUTATIONS
+          if bash scripts/kali-provision-native-stage.sh --apply; then
+            echo "FAIL_UNAPPROVED_NATIVE_STAGE_APPLY"
+            exit 1
+          fi
+          echo "NATIVE_KALI_INSTALLER_GUARDS=PASS"
       - name: Generate Prisma client
         run: npm run generate
         env:
