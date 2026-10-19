@@ -981,3 +981,139 @@ v9Router.delete('/security/devices/:deviceId',async(req,res)=>{
  if(!result.count)return bad(404,'Sesión no encontrada');
  res.status(204).end();
 });
+
+
+// G3 follow-on: administrative CRM and restricted operational controls.
+v9Router.get('/admin/segments',async(req,res)=>{
+ await account(req,['admin']);
+ const users=await db.authUser.findMany({where:{role:'customer',isActive:true},
+  select:{id:true,name:true,email:true},orderBy:{id:'asc'},take:5000});
+ const stats=await db.marketOrder.findMany({where:{
+  userId:{in:users.map(x=>x.id)}},select:{
+   userId:true,status:true,total:true,createdAt:true}});
+ const byId=new Map<number,{n:number;spend:number;last:number|null}>();
+ for(const o of stats){
+  const a=byId.get(o.userId)??{n:0,spend:0,last:null};
+  if(o.status==='delivered'){a.n++;a.spend+=Number(o.total);}
+  const stamp=o.createdAt.getTime();a.last=Math.max(a.last??0,stamp);
+  byId.set(o.userId,a);
+ }
+ const now=Date.now(),counts:Record<string,number>={};
+ const profiles=users.map(u=>{
+  const s=byId.get(u.id)??{n:0,spend:0,last:null};
+  const days=s.last===null?null:Math.max(0,Math.floor((now-s.last)/86400000));
+  const segment=s.n===0?'new':s.n>=20||s.spend>=8000?'vip':
+   days!==null&&days>=30?'inactive':days!==null&&days>=14?'at_risk':
+   s.n>=5?'frequent':'active';
+  counts[segment]=(counts[segment]??0)+1;
+  return {user_id:u.id,name:u.name,email:u.email,segment,
+   orders:s.n,lifetime_value:s.spend.toFixed(2),days_since_last_order:days};
+ });
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({counts,customers:profiles.slice(0,500)});
+});
+v9Router.post('/admin/marketing',async(req,res)=>{
+ await account(req,['admin']);
+ const p=valid(z.strictObject({
+  name:z.string().min(2).max(180),
+  trigger_type:z.enum(['inactive_7d','inactive_30d','birthday',
+   'cart_abandoned','first_order','vip','at_risk']),
+  segment:z.string().max(80).default('all'),
+  channel:z.enum(['in_app','email']).default('in_app'),
+  coupon_code:z.string().max(50).default(''),
+  message_template:z.string().min(3).max(1000),
+  active:z.boolean().default(true)}),req.body);
+ const x=await db.stageMarketingAutomation.create({data:{
+  name:p.name,triggerType:p.trigger_type,segment:p.segment,channel:p.channel,
+  couponCode:p.coupon_code,messageTemplate:p.message_template,active:p.active}});
+ res.status(201).json({id:x.id,name:x.name,trigger_type:x.triggerType,active:x.active});
+});
+v9Router.get('/admin/marketing',async(req,res)=>{
+ await account(req,['admin']);
+ const rows=await db.stageMarketingAutomation.findMany({
+  orderBy:{createdAt:'desc'},take:500});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(rows.map(x=>({id:x.id,name:x.name,trigger_type:x.triggerType,
+  segment:x.segment,channel:x.channel,coupon_code:x.couponCode,
+  active:x.active,last_run_at:x.lastRunAt?.toISOString()??null})));
+});
+v9Router.post('/admin/incentives',async(req,res)=>{
+ await account(req,['admin']);
+ const moneyField=z.union([z.number(),z.string()]).transform(String)
+  .refine(v=>/^\d{1,8}(?:\.\d{1,2})?$/.test(v));
+ const p=valid(z.strictObject({
+  zone_name:z.string().max(120).default('General'),
+  title:z.string().min(2).max(180),
+  bonus_per_delivery:moneyField.default('0'),
+  multiplier:moneyField.default('1'),
+  starts_at:z.iso.datetime().nullable().default(null),
+  ends_at:z.iso.datetime().nullable().default(null),
+ }),req.body);
+ if(Number(p.multiplier)<1||Number(p.multiplier)>5)return bad(422,'Multiplicador inválido');
+ const now=new Date(),start=p.starts_at?new Date(p.starts_at):now,
+  end=p.ends_at?new Date(p.ends_at):null;
+ if(end&&end<start)return bad(422,'La fecha final precede a la inicial');
+ const x=await db.stageDriverIncentive.create({data:{
+  zoneName:p.zone_name,title:p.title,bonusPerDelivery:p.bonus_per_delivery,
+  multiplier:p.multiplier,startsAt:start,endsAt:end}});
+ res.status(201).json({id:x.id,zone_name:x.zoneName,title:x.title,
+  bonus_per_delivery:x.bonusPerDelivery.toFixed(2),multiplier:x.multiplier.toFixed(2),
+  active:x.active});
+});
+v9Router.get('/driver/incentives',async(req,res)=>{
+ await account(req,['driver']);
+ const now=new Date(),rows=await db.stageDriverIncentive.findMany({
+  where:{active:true,startsAt:{lte:now},OR:[{endsAt:null},{endsAt:{gte:now}}]}});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(rows.map(x=>({id:x.id,zone_name:x.zoneName,title:x.title,
+  bonus_per_delivery:x.bonusPerDelivery.toFixed(2),
+  multiplier:x.multiplier.toFixed(2),
+  ends_at:x.endsAt?.toISOString()??null})));
+});
+v9Router.get('/admin/dispatch/batches',async(req,res)=>{
+ await account(req,['admin']);
+ // Python deliberately disables batching: one active delivery per driver.
+ res.json([]);
+});
+v9Router.post('/admin/dispatch/batch-assign',async(req,res)=>{
+ await account(req,['admin']);
+ return bad(409,'La asignación múltiple está deshabilitada: cada repartidor puede tener solo una entrega activa');
+});
+v9Router.patch('/admin/restaurants/:restaurantId/market',async(req,res)=>{
+ await account(req,['admin']);const id=param(req,'restaurantId');
+ const market=typeof req.query.market_code==='string'?
+  req.query.market_code.trim().toUpperCase().slice(0,40):'';
+ if(!market||!/^[A-Z0-9_-]{2,40}$/.test(market))
+  return bad(422,'Mercado inválido');
+ const name=typeof req.query.brand_name==='string'?
+  req.query.brand_name.trim().slice(0,150):'';
+ const branch=typeof req.query.branch_code==='string'?
+  req.query.branch_code.trim().toUpperCase().slice(0,40):'MAIN';
+ const found=await db.marketplaceRestaurant.findUnique({where:{id}});
+ if(!found)return bad(404,'Restaurante no encontrado');
+ const updated=await db.marketplaceRestaurant.update({where:{id},
+  data:{marketCode:market,brandName:name,branchCode:branch}});
+ res.json({id:updated.id,market_code:updated.marketCode,
+  brand_name:updated.brandName,branch_code:updated.branchCode});
+});
+v11Router.put('/privacy/preferences',async(req,res)=>{
+ const who=await account(req);
+ const p=valid(z.strictObject({
+  marketing_opt_in:z.boolean().nullable().default(null),
+  analytics_opt_in:z.boolean().nullable().default(null),
+  personalization_opt_in:z.boolean().nullable().default(null)}),req.body);
+ const updated=await db.$transaction(async tx=>{
+  const row=await tx.authUser.update({where:{id:who.id},data:{
+   ...(p.marketing_opt_in!==null?{marketingOptIn:p.marketing_opt_in}:{}),
+   ...(p.analytics_opt_in!==null?{analyticsOptIn:p.analytics_opt_in}:{}),
+   ...(p.personalization_opt_in!==null?{personalizationOptIn:p.personalization_opt_in}:{})}});
+  await tx.authAuditEvent.create({data:{userId:who.id,
+   action:'v11.privacy.preferences',entityType:'user',entityId:String(who.id),
+   detail:JSON.stringify(p)}});
+  return row;
+ });
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({marketing_opt_in:updated.marketingOptIn,
+  analytics_opt_in:updated.analyticsOptIn,
+  personalization_opt_in:updated.personalizationOptIn});
+});
