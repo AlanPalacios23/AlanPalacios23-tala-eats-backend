@@ -61,10 +61,17 @@ jobs:
           cache-dependency-path: node-backend/package-lock.json
       - name: Frozen Node dependencies
         run: npm ci --no-audit --no-fund
-      - name: Authenticate ephemeral Redis
+      - name: Authenticate ephemeral Redis with already installed Node dependency
         run: |
-          redis-cli -h 127.0.0.1 -p 16379 CONFIG SET requirepass stage-ci-redis
-          redis-cli -h 127.0.0.1 -p 16379 -a stage-ci-redis ping
+          node --input-type=module -e '
+            import { Redis } from "ioredis";
+            const r=new Redis("redis://127.0.0.1:16379");
+            await r.config("SET","requirepass","stage-ci-redis");
+            r.disconnect();
+            const secured=new Redis(process.env.REDIS_URL);
+            if(await secured.ping()!=="PONG")process.exitCode=1;
+            secured.disconnect();
+          '
       - name: Stage-only initial + auth migrations
         run: |
           npm run generate
