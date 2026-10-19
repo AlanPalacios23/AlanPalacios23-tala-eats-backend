@@ -11,6 +11,7 @@ const schema = z.object({
   STRIPE_FINANCIAL_WRITES_ENABLED: z.literal('false'),
   AUTH_V02_ENABLED: z.enum(['false', 'true']).default('false'),
   MARKETPLACE_B_ENABLED: z.enum(['false','true']).default('false'),
+  STAGE_SUPPORT_EMAIL: z.email().optional(),
   STAGE_DRIVER_DELIVERY_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_PICKUP_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
   // Synthetic checkout C1 only models the default Python v1.5.2 policy.

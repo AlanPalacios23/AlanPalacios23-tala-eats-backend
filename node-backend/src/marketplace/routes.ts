@@ -76,7 +76,7 @@ const orderFields=[
   'preparingAt','readyAt','pickedUpAt','deliveredAt',
 ] as const;
 function menuPublic(i:MarketplaceMenuItem) {return jsonFields(i,menuFields);}
-function restaurantPublic(r:MarketplaceRestaurant) {return jsonFields(r,restaurantFields);}
+export function restaurantPublic(r:MarketplaceRestaurant) {return jsonFields(r,restaurantFields);}
 function restaurantDetail(r:MarketplaceRestaurant & {menuItems:MarketplaceMenuItem[]}) {
   return {...restaurantPublic(r),menu_items:r.menuItems.sort((a,b)=>
     a.category.localeCompare(b.category)||a.name.localeCompare(b.name)).map(menuPublic)};

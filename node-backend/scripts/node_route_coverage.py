@@ -21,9 +21,10 @@ NODE_ROUTERS = {
     "ownerRouter": (ROOT / "node-backend/src/marketplace/routes.ts", "/api/v1/owner"),
     "stageOrdersRouter": (ROOT / "node-backend/src/marketplace/routes.ts", "/api/v1/orders"),
     "stageDriverRouter": (ROOT / "node-backend/src/marketplace/routes.ts", "/api/v1/driver"),
+    "platformRouter": (ROOT / "node-backend/src/platform/routes.ts", "/api/v1/platform"),
 }
 ROUTE_RE = re.compile(
-    r"""\b(?P<router>authRouter|marketplaceRouter|ownerRouter|stageOrdersRouter|stageDriverRouter)"""
+    r"""\b(?P<router>authRouter|marketplaceRouter|ownerRouter|stageOrdersRouter|stageDriverRouter|platformRouter)"""
     r"""\.(?P<method>get|post|put|patch|delete|head|options)"""
     r"""\(\s*['"](?P<path>/[^'"]*)['"]""",
     re.MULTILINE,
