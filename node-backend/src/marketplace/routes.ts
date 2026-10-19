@@ -8,6 +8,8 @@ import { config } from '../config.js';
 import { createCashPickupOnly, isCashPickupIntent } from './checkout.js';
 import { previewCancelStage, cancelCashPickupStage, moveCashPickupOwnerStage } from './lifecycle.js';
 import { completeCashPickupStage } from './pickup.js';
+import { driverAvailability, driverAccept, driverStatus, driverGps,
+  driverDashboard, driverComplete } from './driver.js';
 import { current } from '../auth/routes.js';
 import type { AuthUser, MarketplaceRestaurant, MarketplaceMenuItem,
   MarketplaceDriverProfile, MarketOrder, MarketOrderItem } from '../generated/prisma/client.js';
@@ -488,8 +490,15 @@ stageDriverRouter.use((_req,res,next)=>{
   }
   next();
 });
+stageDriverRouter.get('/dashboard',async(req,res)=>{
+  const account=await driverAccount(req);
+  const result=await driverDashboard(account);
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(result);
+});
 stageDriverRouter.get('/available',async(req,res)=>{
   const account=await driverAccount(req);
+  if(config.STAGE_DRIVER_DELIVERY_ENABLED!=='true'){res.json([]);return;}
   const limit=z.coerce.number().int().min(1).max(100).safeParse(req.query.limit??25);
   if(!limit.success) throw new RouteError(422,'Límite inválido');
   const profile=await db.marketplaceDriverProfile.findUnique({where:{userId:account.id}});
@@ -499,10 +508,18 @@ stageDriverRouter.get('/available',async(req,res)=>{
   });
   if(active>0){res.json([]);return;}
   const orders=await db.marketOrder.findMany({
-    where:{status:'ready',driverId:null,orderType:'delivery'},
+    where:{status:'ready',driverId:null,orderType:'delivery',paymentMethod:'cash',
+      paymentStatus:'pending'},
     include:orderInclude,orderBy:[{updatedAt:'asc'},{id:'asc'}],take:limit.data,
   });
-  res.json(orders.map(x=>orderView(x,false)));
+  const events=await db.stageOrderEvent.findMany({
+    where:{orderId:{in:orders.map(x=>x.id)},status:'received'},
+    select:{orderId:true,metadataJson:true},
+  });
+  const fixtureOrders=new Set(events.filter(e=>{
+    try{return JSON.parse(e.metadataJson).stage_driver_fixture===true;}catch{return false;}
+  }).map(e=>e.orderId));
+  res.json(orders.filter(x=>fixtureOrders.has(x.id)).map(x=>orderView(x,false)));
 });
 stageDriverRouter.get('/profile',async(req,res)=>{
   const account=await driverAccount(req);
@@ -521,11 +538,59 @@ stageDriverRouter.get('/mine',async(req,res)=>{
   });
   res.json(rows.map(x=>orderView(x,false)));
 });
-stageDriverRouter.patch('/availability',async(_req,res)=>{
-  res.status(503).json({detail:'Disponibilidad y asignación no habilitadas: falta paridad de dispatch concurrente'});
+const driverAvailabilityInput=z.strictObject({is_online:z.boolean()});
+const driverGpsInput=z.strictObject({
+  lat:z.number().finite().min(-90).max(90),
+  lng:z.number().finite().min(-180).max(180),
 });
-stageDriverRouter.patch('/location',async(_req,res)=>{
-  res.status(503).json({detail:'Ubicación en tiempo real no habilitada: falta persistencia Redis/geo y contratos FCM'});
+const driverStatusInput=z.strictObject({status:z.string().max(40)});
+const driverCompleteInput=z.strictObject({
+  pin:z.string().regex(/^\d{4}$/),
+  photo_url:z.string().max(600).default(''),
+  lat:z.number().finite().min(-90).max(90).nullable().optional(),
+  lng:z.number().finite().min(-180).max(180).nullable().optional(),
+}).refine(v=>(v.lat==null)===(v.lng==null));
+stageDriverRouter.patch('/availability',async(req,res)=>{
+  const actor=await driverAccount(req);
+  const params=input(driverAvailabilityInput,req.body);
+  const output=await driverAvailability(actor,params.is_online);
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(output);
+});
+stageDriverRouter.patch('/location',async(req,res)=>{
+  const actor=await driverAccount(req);
+  const params=input(driverGpsInput,req.body);
+  const output=await driverGps(actor,params.lat,params.lng);
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(output);
+});
+stageDriverRouter.post('/orders/:orderId/accept',async(req,res)=>{
+  const actor=await driverAccount(req);
+  const id=await driverAccept(actor,idParam(req,'orderId'));
+  const result=await db.marketOrder.findUnique({
+    where:{id},include:orderInclude,
+  });
+  if(!result)throw new RouteError(503,'Pedido asignado no encontrado');
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(orderView(result,false));
+});
+stageDriverRouter.patch('/orders/:orderId/status',async(req,res)=>{
+  const actor=await driverAccount(req);
+  const body=input(driverStatusInput,req.body);
+  const id=await driverStatus(actor,idParam(req,'orderId'),body.status);
+  const result=await db.marketOrder.findUnique({where:{id},include:orderInclude});
+  if(!result)throw new RouteError(503,'Pedido en ruta no encontrado');
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(orderView(result,false));
+});
+stageDriverRouter.post('/orders/:orderId/complete',async(req,res)=>{
+  const actor=await driverAccount(req);
+  const body=input(driverCompleteInput,req.body);
+  const id=await driverComplete(actor,idParam(req,'orderId'),body);
+  const result=await db.marketOrder.findUnique({where:{id},include:orderInclude});
+  if(!result)throw new RouteError(503,'Entrega finalizada no encontrada');
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(orderView(result,false));
 });
 
 // Express 5 propagates async errors into router middleware.
