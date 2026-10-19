@@ -84,7 +84,7 @@ async function assign(tx:any,driverId:number,forcedOrderId?:number):Promise<numb
       (b.row.readyAt?.getTime()??b.row.updatedAt.getTime())||
     a.row.id-b.row.id);
   for(const {row} of scored){
-    const lock=await tx.$queryRawUnsafe<{id:number}[]>(
+    const lock=await tx.$queryRawUnsafe(
       'SELECT id FROM orders WHERE id=$1 AND status=$2 AND driver_id IS NULL FOR UPDATE SKIP LOCKED',
       row.id,'ready',
     );
@@ -117,7 +117,7 @@ async function assign(tx:any,driverId:number,forcedOrderId?:number):Promise<numb
 async function withProfileLock<T>(driverId:number,perform:(tx:any)=>Promise<T>):Promise<T>{
   await profileByUser(driverId);
   return db.$transaction(async tx=>{
-    const locked=await tx.$queryRawUnsafe<{id:number}[]>(
+    const locked=await tx.$queryRawUnsafe(
       'SELECT id FROM driver_profiles WHERE user_id=$1 FOR UPDATE',driverId,
     );
     if(!locked.length)return fail(503,'Perfil del repartidor no disponible');
@@ -159,7 +159,7 @@ export async function driverAccept(actor:AuthUser,orderId:number){
 export async function driverStatus(actor:AuthUser,orderId:number,next:string){
   stage();
   return db.$transaction(async tx=>{
-    const locked=await tx.$queryRawUnsafe<{id:number}[]>(
+    const locked=await tx.$queryRawUnsafe(
       'SELECT id FROM orders WHERE id=$1 FOR UPDATE',orderId,
     );
     if(!locked.length)fail(404,'Pedido no encontrado');
@@ -306,8 +306,8 @@ export async function driverComplete(actor:AuthUser,orderId:number,
   if(candidate.paymentMethod!=='cash'||candidate.orderType!=='delivery')
     fail(503,'Sólo entregas cash sintéticas en staging');
   await throttlePin(orderId,actor.id);
-  const id=await db.$transaction(async tx=>{
-    const locked=await tx.$queryRawUnsafe<{id:number}[]>(
+  const id=await withProfileLock(actor.id,async tx=>{
+    const locked=await tx.$queryRawUnsafe(
       'SELECT id FROM orders WHERE id=$1 FOR UPDATE',orderId,
     );
     if(!locked.length)fail(404,'Pedido no encontrado');
@@ -325,13 +325,13 @@ export async function driverComplete(actor:AuthUser,orderId:number,
       !timingSafeEqual(Buffer.from(o.deliveryPin),Buffer.from(proof.pin)))
       fail(400,'PIN incorrecto');
     // Concurrency-safe exactly-once wallet points and driver metrics.
-    const wallet=await tx.$queryRawUnsafe<{id:number}[]>(
+    const wallet=await tx.$queryRawUnsafe(
       'SELECT id FROM loyalty_accounts WHERE user_id=$1 FOR UPDATE',o.userId,
     );
     if(!wallet.length)fail(503,'Cuenta de puntos no disponible');
     const account=await tx.authLoyaltyAccount.findUnique({where:{userId:o.userId}});
     if(!account)fail(503,'Cuenta de puntos no disponible');
-    const profileLocks=await tx.$queryRawUnsafe<{id:number}[]>(
+    const profileLocks=await tx.$queryRawUnsafe(
       'SELECT id FROM driver_profiles WHERE user_id=$1 FOR UPDATE',actor.id,
     );
     if(!profileLocks.length)fail(503,'Perfil de repartidor no disponible');
@@ -382,7 +382,7 @@ export async function driverComplete(actor:AuthUser,orderId:number,
         message:'Pedido #'+orderId+' entregado. ¡Buen provecho!'},
     ]});
     return orderId;
-  },{maxWait:10000,timeout:20000});
+  });
   // Consistent with Python: claim another ready order, without failing a
   // delivery that has already committed if the next claim is unavailable.
   try{await withProfileLock(actor.id,async tx=>assign(tx,actor.id));}catch{/* next assignment best effort */}
