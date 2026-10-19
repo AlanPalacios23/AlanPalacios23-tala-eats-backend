@@ -351,3 +351,217 @@ v9Router.get('/admin/system-status',async(req,res)=>{
  res.json({status:dbStatus==='error'||!p.ok?'degraded':'ok',
   checks,open_incidents:open,generated_at:iso()});
 });
+
+
+// G2: 20 additional Python V9 functional contracts: consumer discovery,
+// inventory, operational incidents and loyalty missions. Stage PG15 only.
+const valid=<T extends z.ZodTypeAny>(schema:T,data:unknown):z.output<T>=>{
+ const s=schema.safeParse(data);
+ if(!s.success)return bad(422,'Parámetros inválidos');
+ return s.data;
+};
+const dec3=z.union([z.number(),z.string()]).transform(String)
+ .refine(s=>/^-?\d{1,9}(?:\.\d{1,3})?$/.test(s));
+const uiTime=()=>new Date().toISOString();
+async function store(who:{id:number;role:string}){
+ const shop=await db.marketplaceRestaurant.findFirst({where:{ownerId:who.id}});
+ if(!shop)return bad(404,'No tienes un restaurante asignado');
+ return shop;
+}
+v9Router.post('/events',async(req,res)=>{
+ const p=valid(z.strictObject({
+  event_name:z.string().min(2).max(100),
+  session_id:z.string().max(80).default(''),
+  route:z.string().max(240).default(''),
+  properties:z.record(z.string(),z.unknown()).default({}),
+ }),req.body);
+ const js=JSON.stringify(p.properties);
+ if(js.length>8000)return bad(422,'Propiedades excesivas');
+ // Pre-login analytics are deliberately anonymous even with a bearer token.
+ await db.stageProductEvent.create({data:{eventName:p.event_name,
+  sessionId:p.session_id,route:p.route,propertiesJson:js}});
+ res.status(202).json({accepted:true});
+});
+v9Router.get('/search',async(req,res)=>{
+ const q=typeof req.query.q==='string'?req.query.q.trim().slice(0,160):'';
+ const limit=numberArg(req,'limit',20,1,50);
+ const maxPrice=req.query.max_price===undefined?null:Number(req.query.max_price);
+ if(maxPrice!==null&&(!Number.isFinite(maxPrice)||maxPrice<0||maxPrice>1000000))
+  return bad(422,'Precio inválido');
+ const query=q.toLowerCase().replaceAll(',',' ');
+ const terms=query.split(/\s+/).filter(x=>x.length>1),has=(patterns:string[])=>
+  patterns.some(x=>query.includes(x));
+ const intent={healthy:has(['saludable','healthy','light','ensalada','proteina']),
+  cheap:has(['barato','económico','economico','menos de','budget']),
+  breakfast:has(['desayuno','breakfast','café','cafe']),
+  family:has(['familia','4 personas','compartir','grupo']),
+  max_price:maxPrice};
+ const shops=await db.marketplaceRestaurant.findMany({
+  where:{isOpen:true},orderBy:[{sponsored:'desc'},{rating:'desc'},{id:'asc'}],
+  take:100});
+ const menu=await db.marketplaceMenuItem.findMany({where:{
+  restaurantId:{in:shops.map(x=>x.id)},isAvailable:true,
+  ...(maxPrice!==null?{price:{lte:String(maxPrice)}}:{})},
+  orderBy:[{restaurantId:'asc'},{id:'asc'}]});
+ const map=new Map<number,typeof menu>();
+ for(const item of menu){const rows=map.get(item.restaurantId)??[];rows.push(item);map.set(item.restaurantId,rows);}
+ const results=shops.flatMap(r=>{
+  const hayR=(r.name+' '+r.cuisine).toLowerCase();
+  const matched=(map.get(r.id)??[]).map(i=>{
+   const hay=(i.name+' '+i.description+' '+i.category+' '+i.dietaryTags).toLowerCase();
+   let score=terms.reduce((v,t)=>v+(hay.includes(t)?4:0)+(hayR.includes(t)?2:0),0);
+   if(intent.healthy&&['veg','ensalada','pollo','protein','salud'].some(x=>hay.includes(x)))score+=5;
+   if(intent.breakfast&&['café','cafe','huevo','desayuno','pan'].some(x=>hay.includes(x)))score+=5;
+   if(intent.family&&(i.isCombo||hay.includes('combo')||hay.includes('familiar')))score+=5;
+   if(intent.cheap&&Number(i.price)<=180)score+=3;
+   return {i,score};
+  }).filter(v=>v.score>0||!terms.length)
+   .sort((a,b)=>b.score-a.score||Number(a.i.price)-Number(b.i.price)).slice(0,6);
+  return matched.length?[{restaurant:{id:r.id,name:r.name,cuisine:r.cuisine,
+   rating:Number(r.rating),eta_min:r.etaMin,delivery_fee:Number(r.deliveryFee)},
+   items:matched.map(x=>({id:x.i.id,name:x.i.name,price:Number(x.i.price),
+    category:x.i.category,score:x.score})),
+   score:matched.reduce((v,x)=>v+x.score,Number(r.rating))}]:[];
+ }).sort((a,b)=>b.score-a.score).slice(0,limit);
+ res.json({query:q,intent,results});
+});
+v9Router.get('/recommendations',async(req,res)=>{
+ const who=await account(req);
+ const [orders,favs,shops]=await Promise.all([
+  db.marketOrder.findMany({where:{userId:who.id,status:'delivered'},
+   orderBy:{createdAt:'desc'},take:30,select:{restaurantId:true,total:true,createdAt:true}}),
+  db.platformFavorite.findMany({where:{userId:who.id},select:{restaurantId:true}}),
+  db.marketplaceRestaurant.findMany({where:{isOpen:true},
+   orderBy:[{sponsored:'desc'},{rating:'desc'},{id:'asc'}],take:100}),
+ ]);
+ const counts=new Map<number,number>();
+ for(const order of orders)counts.set(order.restaurantId,(counts.get(order.restaurantId)??0)+1);
+ const favorites=new Set(favs.map(x=>x.restaurantId)),hour=new Date().getUTCHours();
+ const ranked=shops.map(x=>{
+  let score=Number(x.rating)*2+(counts.get(x.id)??0)*5+
+   (favorites.has(x.id)?6:0)+(x.sponsored?2:0);
+  if(hour<11&&['cafe','café','desayuno'].some(k=>x.cuisine.toLowerCase().includes(k)))score+=4;
+  return {id:x.id,name:x.name,cuisine:x.cuisine,rating:Number(x.rating),
+   eta_min:x.etaMin,delivery_fee:Number(x.deliveryFee),
+   reason:counts.has(x.id)?'Tus hábitos':favorites.has(x.id)?'Favorito':'Popular cerca',
+   score:round(score)};
+ }).sort((a,b)=>b.score-a.score).slice(0,12);
+ const total=orders.reduce((s,o)=>s+Number(o.total),0);
+ const segment=orders.length===0?'new':orders.length>=20||total>=8000?'vip':
+  orders.length>=5?'regular':'occasional';
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({segment:{segment,delivered_orders:orders.length,total_spend:total.toFixed(2)},restaurants:ranked});
+});
+v9Router.get('/admin/heatmap',async(req,res)=>{
+ await account(req,['admin']);
+ const hours=numberArg(req,'hours',24,1,168),cutoff=new Date(Date.now()-hours*3600000);
+ const rows=await db.marketOrder.findMany({where:{createdAt:{gte:cutoff}},
+  include:{restaurant:true},orderBy:{createdAt:'desc'},take:100000});
+ const online=await db.marketplaceDriverProfile.count({where:{isOnline:true}});
+ const cells=new Map<string,{lat:number;lng:number;orders:number;active_orders:number;gmv:number}>();
+ for(const o of rows){
+  const lat=round(o.deliveryLat??o.restaurant.lat),lng=round(o.deliveryLng??o.restaurant.lng);
+  const key=lat+':'+lng;
+  const cell=cells.get(key)??{lat,lng,orders:0,active_orders:0,gmv:0};
+  cell.orders++;cell.gmv+=Number(o.total);
+  if(!['delivered','cancelled'].includes(o.status))cell.active_orders++;
+  cells.set(key,cell);
+ }
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({hours,online_drivers:online,points:Array.from(cells.values())
+  .sort((a,b)=>b.orders-a.orders).slice(0,100)
+  .map(c=>({...c,gmv:c.gmv.toFixed(2),
+   pressure:round(c.active_orders/Math.max(1,online))}))});
+});
+v9Router.get('/admin/demand-forecast',async(req,res)=>{
+ await account(req,['admin']);
+ const hours=numberArg(req,'hours',24,1,72),start=new Date(),cutoff=new Date(start.getTime()-56*86400000);
+ const timestamps=await db.marketOrder.findMany({where:{createdAt:{gte:cutoff}},
+  select:{createdAt:true},orderBy:{createdAt:'desc'},take:100000});
+ const byHour=new Map<number,Map<string,number>>(),recent=new Map<number,number>();
+ for(const {createdAt:t} of timestamps){
+  const h=t.getUTCHours(),d=t.toISOString().slice(0,10);
+  const m=byHour.get(h)??new Map<string,number>();m.set(d,(m.get(d)??0)+1);byHour.set(h,m);
+  if(t.getTime()>=start.getTime()-7*86400000)recent.set(h,(recent.get(h)??0)+1);
+ }
+ const stamp=new Date(start);stamp.setUTCMinutes(0,0,0);
+ const forecast=Array.from({length:hours},(_,i)=>{
+  const at=new Date(stamp.getTime()+i*3600000),h=at.getUTCHours();
+  const vals=Array.from((byHour.get(h)??new Map()).values());
+  const avg=vals.length?vals.reduce((p,x)=>p+x,0)/vals.length:0;
+  const predicted=round(avg*.65+(recent.get(h)??0)/7*.35,1);
+  return {at:at.toISOString(),predicted_orders:predicted,
+   recommended_online_drivers:Math.max(1,Math.ceil(predicted/2.2)),
+   confidence:vals.length>=7?'medium':'low'};
+ });
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({method:'56d-hourly-moving-average',sample_orders:timestamps.length,forecast});
+});
+v9Router.post('/admin/incidents/detect',async(req,res)=>{
+ await account(req,['admin']);
+ const orders=await db.marketOrder.findMany({where:{status:{in:ACTIVE}},
+  orderBy:{updatedAt:'asc'},take:5000});
+ let count=0;
+ for(const o of orders){
+  const age=(Date.now()-o.updatedAt.getTime())/60000;
+  const checks:[string,string,string,string][]=[];
+  if(['received','confirmed','preparing'].includes(o.status)&&age>35)
+   checks.push(['restaurant_delay','high','Pedido retrasado en cocina','Contactar restaurante']);
+  if(['ready','assigned'].includes(o.status)&&o.driverId==null&&age>8)
+   checks.push(['no_driver','high','Pedido sin repartidor','Ejecutar auto-dispatch']);
+  if(['assigned','picked_up','on_the_way'].includes(o.status)&&age>25)
+   checks.push(['driver_stalled','medium','Entrega sin movimiento','Contactar repartidor']);
+  for(const [kind,severity,title,action] of checks){
+   const prior=await db.opsIncident.findFirst({where:{orderId:o.id,incidentType:kind,status:'open'}});
+   if(prior)continue;
+   await db.opsIncident.create({data:{orderId:o.id,incidentType:kind,severity,title,
+    detail:'Pedido #'+o.id+', '+Math.floor(age)+' min sin cambio',
+    recommendedAction:action}});
+   count++;
+  }
+ }
+ res.json({created:count,active_orders:orders.length});
+});
+v9Router.get('/admin/incidents',async(req,res)=>{
+ await account(req,['admin']);
+ const status=typeof req.query.status==='string'?req.query.status:'open';
+ if(status.length>30)return bad(422,'Estado inválido');
+ const rows=await db.opsIncident.findMany({where:{status},
+  orderBy:{createdAt:'desc'},take:300});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(rows.map(x=>({id:x.id,order_id:x.orderId,type:x.incidentType,
+  severity:x.severity,title:x.title,detail:x.detail,
+  recommended_action:x.recommendedAction,status:x.status,
+  created_at:x.createdAt.toISOString()})));
+});
+v9Router.patch('/admin/incidents/:incidentId',async(req,res)=>{
+ await account(req,['admin']);
+ const id=param(req,'incidentId'),p=valid(z.strictObject({
+  status:z.enum(['resolved','dismissed']).default('resolved'),
+  note:z.string().max(500).default('')}),req.body);
+ const old=await db.opsIncident.findUnique({where:{id}});
+ if(!old)return bad(404,'Incidente no encontrado');
+ const updated=await db.opsIncident.update({where:{id},data:{
+  status:p.status,resolvedAt:new Date(),
+  detail:[old.detail,p.note].filter(Boolean).join('\n')}});
+ res.json({id:updated.id,status:updated.status});
+});
+v9Router.get('/driver/score',async(req,res)=>{
+ const who=await account(req,['driver']);
+ const [p,orders]=await Promise.all([
+  db.marketplaceDriverProfile.findUnique({where:{userId:who.id}}),
+  db.marketOrder.findMany({where:{driverId:who.id},
+   select:{status:true,createdAt:true,deliveredAt:true,estimatedMinutes:true}}),
+ ]);
+ const delivered=orders.filter(x=>x.status==='delivered'),
+  cancelled=orders.filter(x=>x.status==='cancelled').length;
+ const ontime=delivered.filter(x=>x.deliveredAt&&minutesBetween(
+  x.createdAt,x.deliveredAt)<=Math.max(60,(x.estimatedMinutes||30)+20)).length;
+ const punctuality=round(100*ontime/Math.max(1,delivered.length),1),
+  completion=round(100*delivered.length/Math.max(1,orders.length),1),
+  rating=Number(p?.rating??5);
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({score:round(punctuality*.35+completion*.35+rating/5*30,1),
+  rating,punctuality,completion,deliveries:delivered.length,cancelled,
+  use:'Calidad y coaching; no genera sanciones automáticas.'});
+});
