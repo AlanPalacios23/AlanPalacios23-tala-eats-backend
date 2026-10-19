@@ -9,6 +9,7 @@ import { platformRouter, platformErrors } from './platform/routes.js';
 import { adminRouter, operationsRouter, opsErrors } from './operational/routes.js';
 import { v9Router, v10Router, v11Router } from './versions/routes.js';
 import { resilienceRouter, resilienceErrors } from './resilience/routes.js';
+import { parityRouter, parityErrors } from './parity/routes.js';
 import { marketplaceRouter, ownerRouter, stageOrdersRouter,
   stageDriverRouter, marketplaceErrors } from './marketplace/routes.js';
 
@@ -33,6 +34,8 @@ if (config.MARKETPLACE_B_ENABLED === 'true') {
   app.use('/api/v1/v10', v10Router);
   app.use('/api/v1/v11', v11Router);
   app.use('/api/v1/resilience', resilienceRouter);
+  app.use('/api/v1', parityRouter);
+  app.use(parityErrors);
   app.use(resilienceErrors);
   app.use(opsErrors);
   app.use(platformErrors);
