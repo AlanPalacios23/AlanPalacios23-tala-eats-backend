@@ -1,6 +1,6 @@
 // F1: Python v9/v10/v11 customer/merchant observability and read contracts.
 // Metadata is explicit NODE STAGING to avoid falsely advertising LIVE PSP/WS.
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { Redis } from 'ioredis';
 import { z } from 'zod';
@@ -819,4 +819,165 @@ v9Router.post('/loyalty/missions/:missionKey/claim',async(req,res)=>{
   return {claimed:true,points_added:pts,points};
  },{maxWait:10000,timeout:20000});
  res.json(result);
+});
+
+
+// G3: Python V9 collaborative carts, corporate access, user privacy and sessions.
+const gcode=(req:Request)=>{
+ const raw=req.params.code;
+ const key=(Array.isArray(raw)?raw[0]:raw)?.toUpperCase()??'';
+ if(!/^[A-Z0-9]{4,12}$/.test(key))return bad(422,'Código de grupo inválido');
+ return key;
+};
+async function groupSummary(code:string){
+ const cart=await db.stageGroupCart.findUnique({where:{code},include:{items:true}});
+ if(!cart)return bad(404,'Pedido grupal no encontrado');
+ const ids=[...new Set(cart.items.map(x=>x.userId))],
+  products=[...new Set(cart.items.map(x=>x.menuItemId))];
+ const [users,menu]=await Promise.all([
+  db.authUser.findMany({where:{id:{in:ids}},select:{id:true,name:true}}),
+  db.marketplaceMenuItem.findMany({where:{id:{in:products}},select:{id:true,name:true}})]);
+ const names=new Map(users.map(x=>[x.id,x.name])),
+  labels=new Map(menu.map(x=>[x.id,x.name]));
+ return {code,restaurant_id:cart.restaurantId,owner_user_id:cart.ownerUserId,
+  locked:cart.locked,participants:new Set([cart.ownerUserId,...ids]).size,
+  items:cart.items.sort((a,b)=>a.id-b.id).map(x=>({
+   id:x.id,user_id:x.userId,user_name:names.get(x.userId)??'Usuario',
+   menu_item_id:x.menuItemId,name:labels.get(x.menuItemId)??'Producto',
+   quantity:x.quantity,options:x.options}))};
+}
+v9Router.post('/groups',async(req,res)=>{
+ const who=await account(req),p=valid(z.strictObject({
+  restaurant_id:z.number().int().positive()}),req.body);
+ const shop=await db.marketplaceRestaurant.findUnique({where:{id:p.restaurant_id}});
+ if(!shop?.isOpen)return bad(404,'Restaurante no disponible');
+ const x=await db.stageGroupCart.create({data:{
+  code:randomBytes(6).toString('hex').toUpperCase(),
+  restaurantId:shop.id,ownerUserId:who.id}});
+ res.status(201).json({id:x.id,code:x.code,restaurant_id:x.restaurantId,
+  owner_user_id:x.ownerUserId,locked:x.locked});
+});
+v9Router.get('/groups/:code',async(req,res)=>{
+ await account(req);res.setHeader('Cache-Control','private, no-store');
+ res.json(await groupSummary(gcode(req)));
+});
+v9Router.post('/groups/:code/items',async(req,res)=>{
+ const who=await account(req),code=gcode(req);
+ const p=valid(z.strictObject({menu_item_id:z.number().int().positive(),
+  quantity:z.number().int().min(1).max(20).default(1),
+  options:z.string().max(500).default('')}),req.body);
+ await db.$transaction(async tx=>{
+  const lock=await tx.$queryRawUnsafe(
+   'SELECT id FROM group_carts WHERE code=$1 FOR UPDATE',code);
+  if(!Array.isArray(lock)||!lock.length)return bad(404,'Pedido grupal no encontrado');
+  const cart=await tx.stageGroupCart.findUnique({where:{code}});
+  if(!cart)return bad(404,'Pedido grupal no encontrado');
+  if(cart.locked)return bad(409,'El pedido grupal ya está cerrado');
+  const item=await tx.marketplaceMenuItem.findUnique({where:{id:p.menu_item_id}});
+  if(!item||item.restaurantId!==cart.restaurantId||!item.isAvailable)
+   return bad(400,'Producto no disponible en este grupo');
+  await tx.stageGroupCartItem.upsert({
+   where:{uq_group_cart_user_item:{
+    groupCartId:cart.id,userId:who.id,menuItemId:item.id}},
+   create:{groupCartId:cart.id,userId:who.id,menuItemId:item.id,
+    quantity:p.quantity,options:p.options},
+   update:{quantity:p.quantity,options:p.options}});
+ },{maxWait:10000,timeout:15000});
+ res.json(await groupSummary(code));
+});
+v9Router.post('/groups/:code/lock',async(req,res)=>{
+ const who=await account(req),code=gcode(req);
+ const cart=await db.stageGroupCart.findUnique({where:{code}});
+ if(!cart||cart.ownerUserId!==who.id)return bad(404,'Pedido grupal no encontrado');
+ await db.stageGroupCart.update({where:{id:cart.id},data:{locked:true}});
+ res.json({code,locked:true});
+});
+v9Router.get('/groups/:code/checkout-payload',async(req,res)=>{
+ const who=await account(req),code=gcode(req);
+ const cart=await db.stageGroupCart.findUnique({where:{code},include:{items:true}});
+ if(!cart||cart.ownerUserId!==who.id)return bad(404,'Pedido grupal no encontrado');
+ const merged=new Map<number,number>();
+ for(const item of cart.items)
+  merged.set(item.menuItemId,(merged.get(item.menuItemId)??0)+item.quantity);
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({restaurant_id:cart.restaurantId,group_code:code,
+  items:Array.from(merged,([menu_item_id,quantity])=>({
+   menu_item_id,quantity,options:''}))});
+});
+v9Router.post('/admin/corporate',async(req,res)=>{
+ await account(req,['admin']);
+ const p=valid(z.strictObject({name:z.string().min(2).max(180),
+  monthly_budget:z.union([z.number(),z.string()]).transform(String)
+   .refine(x=>/^\d{1,10}(?:\.\d{1,2})?$/.test(x)).default('0'),
+  cost_center:z.string().max(80).default('GENERAL')}),req.body);
+ const c=await db.stageCorporateAccount.create({data:{
+  name:p.name,monthlyBudget:p.monthly_budget,costCenter:p.cost_center,
+  joinCode:randomBytes(8).toString('hex').toUpperCase()}});
+ res.status(201).json({id:c.id,name:c.name,join_code:c.joinCode,
+  monthly_budget:c.monthlyBudget.toFixed(2),cost_center:c.costCenter});
+});
+v9Router.post('/corporate/join',async(req,res)=>{
+ const who=await account(req);
+ const p=valid(z.strictObject({join_code:z.string().min(4).max(30),
+  employee_code:z.string().max(80).default('')}),req.body);
+ const org=await db.stageCorporateAccount.findUnique({where:{
+  joinCode:p.join_code.toUpperCase()}});
+ if(!org?.active)return bad(404,'Código empresarial inválido');
+ await db.stageCorporateMember.upsert({
+  where:{uq_corporate_member:{corporateAccountId:org.id,userId:who.id}},
+  create:{corporateAccountId:org.id,userId:who.id,employeeCode:p.employee_code},
+  update:{}});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({joined:true,company:org.name,cost_center:org.costCenter,
+  monthly_budget:org.monthlyBudget.toFixed(2)});
+});
+v9Router.get('/corporate/me',async(req,res)=>{
+ const who=await account(req);
+ const rows=await db.stageCorporateMember.findMany({
+  where:{userId:who.id,active:true},include:{account:true}});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(rows.filter(x=>x.account.active).map(x=>({
+  id:x.account.id,membership_id:x.id,company:x.account.name,
+  cost_center:x.account.costCenter,employee_code:x.employeeCode,
+  individual_budget:x.individualBudget.toFixed(2),
+  monthly_budget:x.account.monthlyBudget.toFixed(2)})));
+});
+v9Router.post('/privacy',async(req,res)=>{
+ const who=await account(req),p=valid(z.strictObject({
+  request_type:z.enum(['export','delete','marketing_opt_out'])}),req.body);
+ const result=await db.$transaction(async tx=>{
+  if(p.request_type==='marketing_opt_out')await tx.authUser.update({
+   where:{id:who.id},data:{marketingOptIn:false}});
+  const orders=p.request_type==='export'?await tx.marketOrder.findMany({
+   where:{userId:who.id},orderBy:{createdAt:'desc'},take:10000,
+   select:{id:true,status:true,total:true,createdAt:true}}):[];
+  const output=p.request_type==='export'?{
+   profile:{id:who.id,name:who.name,email:who.email},
+   orders:orders.map(o=>({id:o.id,status:o.status,
+    total:o.total.toFixed(2),created_at:o.createdAt.toISOString()})),
+   generated_at:new Date().toISOString()}:null;
+  const completed=p.request_type==='export';
+  const rec=await tx.stagePrivacyRequest.create({data:{
+   userId:who.id,requestType:p.request_type,status:completed?'completed':'pending',
+   resultJson:JSON.stringify(output??{}),completedAt:completed?new Date():null}});
+  return {id:rec.id,type:p.request_type,status:rec.status,result:output};
+ });
+ res.setHeader('Cache-Control','private, no-store');
+ res.status(201).json(result);
+});
+v9Router.get('/security/devices',async(req,res)=>{
+ const who=await account(req);
+ const rows=await db.authDeviceSession.findMany({where:{userId:who.id},
+  orderBy:{lastSeenAt:'desc'}});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(rows.map(x=>({id:x.id,device:x.deviceLabel,ip_hint:x.ipHint,
+  active:x.active,created_at:x.createdAt.toISOString(),
+  last_seen_at:x.lastSeenAt.toISOString()})));
+});
+v9Router.delete('/security/devices/:deviceId',async(req,res)=>{
+ const who=await account(req),id=param(req,'deviceId');
+ const result=await db.authDeviceSession.updateMany({
+  where:{id,userId:who.id},data:{active:false}});
+ if(!result.count)return bad(404,'Sesión no encontrada');
+ res.status(204).end();
 });
