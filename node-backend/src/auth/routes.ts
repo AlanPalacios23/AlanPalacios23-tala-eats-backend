@@ -320,10 +320,10 @@ authRouter.post('/password/forgot', async (req,res) => {
       await tx.authEmailOutbox.create({
         data:{
           toEmail:user.email,subject:'Restablece tu contraseña de Tala Eats',
-          textBody:'Hola '+user.name+',\\n\\nRecibimos una solicitud para cambiar tu contraseña. '+
-            'Abre este enlace antes de '+RESET_MINUTES+' minutos:\\n\\n'+
+          textBody:'Hola '+user.name+',\n\nRecibimos una solicitud para cambiar tu contraseña. '+
+            'Abre este enlace antes de '+RESET_MINUTES+' minutos:\n\n'+
             RESET_STAGE_FRONTEND+'/restablecer?token='+raw+
-            '\\n\\nSi no fuiste tú, ignora este mensaje.',
+            '\n\nSi no fuiste tú, ignora este mensaje.',
         },
       });
       await tx.authAuditEvent.create({
