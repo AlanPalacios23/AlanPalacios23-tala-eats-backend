@@ -59,8 +59,11 @@ const methods=await go(customer,'/orders/payment-methods');
 assert.equal(methods.status,200);
 assert.equal(methods.json.production_ready,false);
 assert.equal(methods.json.methods.find(x=>x.id==='stripe').enabled,false);
+assert.equal(methods.json.digital_provider,'stripe');
+assert.equal(methods.json.methods.some(x=>x.id==='mercadopago'),false);
 assert.equal((await go(null,'/orders/payment-methods')).status,401);
 assert.equal((await go(null,'/payments/config')).json.enabled,false);
+assert.equal((await go(null,'/payments/config')).json.provider,'stripe');
 assert.equal((await go(null,'/payments/stripe/config')).json.enabled,false);
 assert.equal((await go(customer,'/operations/admin/commercial-pricing')).status,403);
 const pricing=await go(admin,'/operations/admin/commercial-pricing');
@@ -92,8 +95,6 @@ assert.equal((await db.query('SELECT status FROM referral_conversions WHERE refe
 // Missing payment providers MUST fail with 503, no false ack/transition.
 const ledgerBefore=(await db.query('SELECT count(*)::int n FROM financial_ledger_entries')).rows[0].n;
 const noMoney=[
- ['/payments/mercadopago/orders/'+order+'/checkout','POST',customer],
- ['/payments/mercadopago/orders/'+order+'/refund','POST',admin],
  ['/payments/stripe/orders/'+order+'/payment-intent','POST',customer],
  ['/payments/stripe/admin/orders/'+order+'/refund','POST',admin],
  ['/payments/stripe/admin/orders/'+order+'/settle','POST',admin],
@@ -120,7 +121,12 @@ for(const [p,method,who] of noMoney){
  assert.equal(v.status,503,p+' -> '+JSON.stringify(v.json));
 }
 assert.equal((await go(null,'/payments/stripe/webhook','POST')).status,503);
-assert.equal((await go(null,'/payments/mercadopago/webhook','POST')).status,503);
+for (const retired of ['/payments/mercadopago/webhook',
+ '/payments/mercadopago/orders/'+order+'/checkout',
+ '/payments/mercadopago/orders/'+order+'/refund']) {
+  assert.equal((await go(null,retired,'POST')).status,404,
+   'Mercado Pago removed from Node runtime: '+retired);
+ }
 assert.equal((await go(null,'/withdrawals/stripe-connect/webhook','POST')).status,503);
 assert.equal((await go(null,'/v11/payouts/webhook','POST')).status,503);
 const preview=await go(admin,'/payments/stripe/admin/orders/'+order+'/settlement-preview');
