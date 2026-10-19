@@ -297,6 +297,108 @@ platformRouter.post('/reviews',async(req,res)=>{
   });
 });
 
+async function authorizeOrderChat(orderId:number,account:{
+  id:number;role:string;
+}){
+  const order=await db.marketOrder.findUnique({
+    where:{id:orderId},
+    include:{restaurant:{select:{ownerId:true}}},
+  });
+  if(!order)return fail(404,'Pedido no encontrado');
+  const allowed=account.role==='admin'||order.userId===account.id||
+    order.driverId===account.id||
+    (account.role==='restaurant'&&order.restaurant.ownerId===account.id);
+  if(!allowed)return fail(403,'Sin acceso');
+  return order;
+}
+const chatCreate=z.strictObject({
+  message:z.string().max(1000).default(''),
+  message_type:z.enum(['text','photo','location','quick']).default('text'),
+  media_url:z.string().max(600).default(''),
+  lat:z.number().finite().min(-90).max(90).nullable().default(null),
+  lng:z.number().finite().min(-180).max(180).nullable().default(null),
+});
+function chatPublic(row:{
+  id:number;orderId:number;senderId:number;message:string;messageType:string;
+  mediaUrl:string;lat:number|null;lng:number|null;createdAt:Date;
+}){
+  return {id:row.id,order_id:row.orderId,sender_id:row.senderId,
+    message:row.message,message_type:row.messageType,media_url:row.mediaUrl,
+    lat:row.lat,lng:row.lng,created_at:row.createdAt.toISOString()};
+}
+platformRouter.get('/orders/:orderId/chat',async(req,res)=>{
+  const account=await user(req);
+  const orderId=idParam(req,'orderId');
+  await authorizeOrderChat(orderId,account);
+  const rows=await db.platformChatMessage.findMany({
+    where:{orderId},orderBy:[{createdAt:'desc'},{id:'desc'}],take:500,
+  });
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(rows.reverse().map(chatPublic));
+});
+platformRouter.post('/orders/:orderId/chat',async(req,res)=>{
+  const account=await user(req);
+  const orderId=idParam(req,'orderId');
+  const p=validate(chatCreate,req.body);
+  await authorizeOrderChat(orderId,account);
+  // Commit message and durable outbox atomically; the publisher is intentionally
+  // not running, so this does NOT claim realtime parity with Python WebSocket.
+  const row=await db.$transaction(async tx=>{
+    const created=await tx.platformChatMessage.create({data:{
+      orderId,senderId:account.id,message:p.message,messageType:p.message_type,
+      mediaUrl:p.media_url,lat:p.lat,lng:p.lng,
+    }});
+    await tx.stageEventOutbox.create({data:{
+      eventKey:'order:'+orderId+':chat:'+created.id,
+      aggregateType:'order',aggregateId:String(orderId),
+      eventType:'chat.message',
+      payloadJson:JSON.stringify({order_id:orderId,message_id:created.id,
+        sender_id:account.id}),
+    }});
+    return created;
+  },{maxWait:10000,timeout:20000});
+  res.setHeader('Cache-Control','private, no-store');
+  res.status(201).json(chatPublic(row));
+});
+const supportCreate=z.strictObject({
+  order_id:z.number().int().positive().nullable().default(null),
+  category:z.string().min(1).max(80),
+  message:z.string().min(5).max(3000),
+});
+function supportPublic(row:{
+  id:number;orderId:number|null;category:string;message:string;
+  status:string;createdAt:Date;
+}){
+  return {id:row.id,order_id:row.orderId,category:row.category,
+    message:row.message,status:row.status,created_at:row.createdAt.toISOString()};
+}
+platformRouter.get('/support',async(req,res)=>{
+  const account=await user(req);
+  const rows=await db.platformSupportTicket.findMany({
+    where:account.role==='admin'?{}:{userId:account.id},
+    orderBy:[{createdAt:'desc'},{id:'desc'}],take:200,
+  });
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(rows.map(supportPublic));
+});
+platformRouter.post('/support',async(req,res)=>{
+  const account=await user(req);
+  const p=validate(supportCreate,req.body);
+  if(p.order_id!==null){
+    const order=await db.marketOrder.findUnique({
+      where:{id:p.order_id},select:{userId:true},
+    });
+    if(!order||(account.role!=='admin'&&order.userId!==account.id))
+      return fail(404,'Pedido no encontrado');
+  }
+  const row=await db.platformSupportTicket.create({data:{
+    userId:account.id,orderId:p.order_id,category:p.category,message:p.message,
+  }});
+  res.setHeader('Cache-Control','private, no-store');
+  res.status(201).json(supportPublic(row));
+});
+
+
 export function platformErrors(error:unknown,_req:Request,res:Response,_next:NextFunction){
   if(error && typeof error==='object' && 'code' in error &&
     typeof (error as {code:unknown}).code==='number'){
