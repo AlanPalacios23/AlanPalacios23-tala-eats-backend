@@ -47,6 +47,11 @@ jobs:
           python3 -m py_compile node-backend/scripts/kali-stage-startup-check.py
           python3 -m py_compile node-backend/scripts/test_kali_stage_boot_persistence.py
           python3 node-backend/scripts/test_kali_stage_boot_persistence.py
+          python3 -m py_compile node-backend/scripts/kali-stage-backup.py
+          python3 -m py_compile node-backend/scripts/kali-stage-systemd-cutover.py
+          python3 -m py_compile node-backend/scripts/test_kali_stage_coldstart.py
+          python3 node-backend/scripts/test_kali_stage_coldstart.py
+          echo STAGE_PG_BACKUP_AND_SYSTEMD_CUTOVER_GUARDS=PASS
           echo STAGE_USER_SYSTEMD_BOOT_GUARDS=PASS
           echo PG15_NATIVE_PYTHON_SAFETY=PASS
       - name: Validate separation controls statically
