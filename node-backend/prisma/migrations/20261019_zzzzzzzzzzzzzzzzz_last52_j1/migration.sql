@@ -32,3 +32,14 @@ CREATE TABLE media_assets(
 );
 CREATE INDEX media_assets_user_category_idx ON media_assets(user_id,category);
 CREATE INDEX media_assets_order_id_idx ON media_assets(order_id);
+
+CREATE TABLE referral_conversions(
+ id SERIAL PRIMARY KEY,
+ referrer_user_id INTEGER NOT NULL REFERENCES users(id),
+ referred_user_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
+ referral_code VARCHAR(30) NOT NULL,
+ reward_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+ status VARCHAR(30) NOT NULL DEFAULT 'pending',
+ created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX referral_conversions_referrer_user_id_idx ON referral_conversions(referrer_user_id);
