@@ -1,0 +1,68 @@
+name: TALA EATS | Approve Kali staging deployment (no SSH)
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Choose APPROVE_STAGE only after reviewing changes; STAGING only'
+        type: choice
+        required: true
+        options: [NO, APPROVE_STAGE]
+        default: NO
+
+permissions:
+  contents: read
+  checks: read
+
+jobs:
+  approve:
+    name: Approved Kali staging SHA (no server access)
+
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Reject non-owner or non-APPROVE_STAGE dispatch
+        shell: bash
+        env:
+          REF: ${{ github.ref }}
+          ACTOR: ${{ github.actor }}
+          APPROVAL: ${{ inputs.approval }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF" != "refs/heads/main" || "$ACTOR" != "AlanPalacios23" || "$APPROVAL" != "APPROVE_STAGE" ]]; then
+            echo "::error::DENIED: manual APPROVE_STAGE from owner on main only"
+            exit 1
+          fi
+          echo "MANUAL_OWNER_STAGE_APPROVAL_PASS"
+      - name: Confirm all eight CI checks on this exact main SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import json,os,urllib.request
+          checks={"syntax-check","Sintaxis + secretos (solo código)",
+           "pytest FastAPI + SQLite aislado",
+           "PostgreSQL 16 + Redis 8 + Alembic (datos efímeros)",
+           "PostgreSQL 16 + Redis 8 + contratos financieros",
+           "PyPI OSV + Bandit static checks (read-only)",
+           "Real PM2 + FastAPI + worker, native PostgreSQL/Redis, isolated",
+           "20 outbound agent security cases"}
+          sha=os.environ["GIT_SHA"]
+          url="https://api.github.com/repos/AlanPalacios23/AlanPalacios23-tala-eats-backend/commits/"+sha+"/check-runs?per_page=100"
+          req=urllib.request.Request(url,headers={"Authorization":"Bearer "+os.environ["GH_TOKEN"],
+                  "Accept":"application/vnd.github+json"})
+          with urllib.request.urlopen(req,timeout=15) as response:
+              data=json.load(response)["check_runs"]
+          latest={}
+          for row in data:
+              name=row.get("name")
+              if name in checks and row.get("head_sha")==sha:
+                  if row.get("id",0)>latest.get(name,{}).get("id",0):latest[name]=row
+          bad=sorted(n for n in checks if latest.get(n,{}).get("status")!="completed"
+                     or latest[n].get("conclusion")!="success")
+          if bad:raise SystemExit("STAGING_CI_REQUIRED: "+", ".join(bad))
+          print("KALI_STAGING_APPROVED_SEVEN_GATES_PASS sha="+sha)
+          PY
+      - name: Record approval as a successful manual workflow run
+        run: echo "APPROVAL_ONLY_NO_SSH_NO_PROD; outbound Kali agent must independently verify."

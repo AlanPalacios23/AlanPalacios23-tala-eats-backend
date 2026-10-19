@@ -1,0 +1,13 @@
+[Unit]
+Description=Tala Eats staging GitHub outbound pull agent (never production)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/tala-eats-pm2-stage
+ExecStart=/usr/bin/python3 %h/tala-eats-pm2-stage/scripts/kali_stage_pull_agent.py --apply
+Environment=PYTHONDONTWRITEBYTECODE=1
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+UMask=0077

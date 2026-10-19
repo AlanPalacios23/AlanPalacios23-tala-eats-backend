@@ -1,0 +1,25 @@
+name: TALA EATS | V3 private restore candidate safety QA
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/kali_v3_prepare_private_restore.py'
+      - 'scripts/test_kali_v3_prepare_private_restore.py'
+      - '.github/workflows/kali-v3-private-restore-prep-qa.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolated:
+    name: V3 private-only recovery preview 18 safe fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m py_compile scripts/kali_v3_prepare_private_restore.py scripts/test_kali_v3_prepare_private_restore.py
+      - run: python scripts/test_kali_v3_prepare_private_restore.py

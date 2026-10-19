@@ -3,13 +3,13 @@ name: TALA EATS Backend | QA aislado
 on:
   push:
     branches: [main]
-    paths:
-      - 'backend/**'
-      - 'scripts/security_preflight.py'
-      - '.github/workflows/backend-ci.yml'
   pull_request:
     branches: [main]
     paths:
+      - 'deploy/pm2/**'
+      - 'scripts/deploy_pm2_stage.sh'
+      - 'scripts/qa_pm2_stage_offline.py'
+      - '.github/workflows/pm2-ssh-auto-deploy.yml'
       - 'backend/**'
       - 'scripts/security_preflight.py'
       - '.github/workflows/backend-ci.yml'

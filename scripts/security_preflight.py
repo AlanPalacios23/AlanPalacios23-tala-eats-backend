@@ -18,7 +18,7 @@ PATTERNS = {
     "Stripe webhook signing secret": re.compile(rb'\bwhsec_[A-Za-z0-9]{20,}\b'),
     "GitHub access token": re.compile(rb'\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{25,}\b'),
     "AWS access key": re.compile(rb'\b(?:AKIA|ASIA)[A-Z0-9]{16}\b'),
-    "Private key block": re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----'),
+    "Private key block": re.compile(rb'(?m)^[ \t]*-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----[ \t]*$'),
 }
 SOURCE_EXT = {'.py', '.ini', '.toml', '.sh', '.yaml', '.yml', '.txt', '.json', '.cfg', '.conf'}
 ALLOWED_EXAMPLE_FILES = {'.env.example', '.env.production.example', '.env.sample'}
@@ -73,6 +73,13 @@ def self_test() -> None:
         ok.parent.mkdir(parents=True)
         ok.write_text("test_key = 'sk_test_dummy'\n")
         assert inspect(root, [ok]) == []
+        # Quoted validation code is not a credential; standalone PEM headers are.
+        inline_doc = root / 'backend' / 'app' / 'marker_example.py'
+        inline_doc.write_text('key.startswith("-----BEGIN OPENSSH PRIVATE KEY-----")\n')
+        assert inspect(root, [inline_doc]) == []
+        pem_leak = root / 'backend' / 'app' / 'bad_pem.py'
+        pem_leak.write_text('"""\n-----BEGIN OPENSSH PRIVATE KEY-----\nnot-a-real-key\n-----END OPENSSH PRIVATE KEY-----\n"""\n')
+        assert inspect(root, [pem_leak])
         leaked = root / 'backend' / 'app' / 'leaked.py'
         leaked.write_text("test_key = 'sk_live_" + "A" * 25 + "'\n")
         assert inspect(root, [leaked])

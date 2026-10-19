@@ -1,0 +1,25 @@
+name: TALA EATS | V3 Compose/Catalog read-only privacy QA
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/kali_v3_catalog_preflight.py'
+      - 'scripts/test_kali_v3_catalog_preflight.py'
+      - '.github/workflows/kali-v3-catalog-preflight-qa.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  privacy:
+    name: V3 Compose / PostgreSQL catalog 23 offline safety cases
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m py_compile scripts/kali_v3_catalog_preflight.py scripts/test_kali_v3_catalog_preflight.py
+      - run: python scripts/test_kali_v3_catalog_preflight.py

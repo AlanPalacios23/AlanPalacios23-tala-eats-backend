@@ -1,0 +1,63 @@
+name: Tala Eats | PM2 staging and pull-agent static check (no deploy)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - 'deploy/pm2/**'
+      - 'scripts/deploy_pm2_stage.sh'
+      - 'scripts/pm2_vps_readonly_probe.sh'
+      - 'docs/KALI-PULL-AGENT-STAGING.md'
+      - 'scripts/kali_stage_pull_agent.py'
+      - '.github/workflows/kali-stage-approve.yml'
+      - '.github/workflows/pm2-ssh-static-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python 3.13 for isolated PM2 QA
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Bash and PM2 config syntax
+        run: |
+          set -euo pipefail
+          bash -n deploy/pm2/validate-stage.sh
+          bash -n deploy/pm2/run-python.sh
+          bash -n scripts/deploy_pm2_stage.sh
+          bash -n scripts/pm2_vps_readonly_probe.sh
+          node --check deploy/pm2/ecosystem.config.cjs
+      - name: Execute 30 disposable PM2 failure/success scenarios (no SSH/no network)
+        run: python3.13 scripts/qa_pm2_stage_offline.py
+      - name: Contract and no-real-deploy guard
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('deploy/pm2/ecosystem.config.cjs').read_text()
+          r = Path('deploy/pm2/run-python.sh').read_text()
+          g = Path('deploy/pm2/validate-stage.sh').read_text()
+          d = Path('scripts/deploy_pm2_stage.sh').read_text()
+          w = Path('.github/workflows/kali-stage-approve.yml').read_text()
+          assert 'talaeats-pm2-api-stage' in p and 'talaeats-pm2-worker-stage' in p
+          assert '--host 127.0.0.1 --port 18090' in r
+          assert 'pm2 restart' in d and 'git pull --ff-only' in d
+          assert 'alembic current --check-heads' in d and 'alembic upgrade' not in d
+          assert 'validate-stage.sh' in r and 'validate-stage.sh' in d
+          assert 'talaeats_stage' in g and 'STAGE_MEDIA_ISOLATION_REQUIRED' in g
+          assert 'MANUAL_OWNER_STAGE_APPROVAL_PASS' in w and 'APPROVE_STAGE' in w
+          assert 'get("database") is True' in d and 'get("redis") is True' in d
+          assert '192.168.100.45' not in w and '100.81.234.1' not in w
+          assert 'docker ' not in d.lower() and 'docker ' not in w.lower()
+          assert 'PM2_SSH_PRIVATE_KEY' not in w
+          assert '@{!' not in w
+          print('PM2_PULL_AGENT_STATIC_GATE_PASS, no deploy')
+          PY

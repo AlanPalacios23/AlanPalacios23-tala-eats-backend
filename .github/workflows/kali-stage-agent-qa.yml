@@ -1,0 +1,89 @@
+name: Tala Eats | Outbound Kali agent security test (no deploy)
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/kali_stage_pull_agent.py'
+      - 'scripts/test_kali_stage_pull_agent.py'
+      - '.github/workflows/kali-stage-approve.yml'
+      - '.github/workflows/kali-stage-agent-qa.yml'
+      - 'docs/KALI-PULL-AGENT-STAGING.md'
+      - 'scripts/kali_first_access_readonly.sh'
+      - 'scripts/kali_502_triage_readonly.sh'
+      - 'scripts/kali_v3_pg_diagnostic_readonly.py'
+      - 'scripts/test_kali_v3_pg_diagnostic_readonly.py'
+      - 'scripts/kali_v3_config_safe_readonly.py'
+      - 'scripts/test_kali_v3_config_safe_readonly.py'
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  unit:
+    name: 20 outbound agent security cases
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m py_compile scripts/kali_stage_pull_agent.py scripts/test_kali_stage_pull_agent.py
+      - run: python scripts/test_kali_stage_pull_agent.py
+      - name: PostgreSQL V3 classified error test (17 fixtures, no real Docker)
+        run: |
+          python -m py_compile scripts/kali_v3_pg_diagnostic_readonly.py scripts/test_kali_v3_pg_diagnostic_readonly.py
+          python scripts/test_kali_v3_pg_diagnostic_readonly.py
+          python - <<'PY'
+          from pathlib import Path
+          code=Path('scripts/kali_v3_pg_diagnostic_readonly.py').read_text()
+          assert 'docker","logs' in code and 'LOG_CLASSIFICATION_ONLY_NO_RAW_LOGS' in code
+          for forbidden in ('docker restart','docker stop','docker compose','docker rm','subprocess.Popen','os.system(','.Config.Env','alembic upgrade'):
+              assert forbidden not in code, forbidden
+          print('KALI_V3_DB_DIAGNOSTIC_SAFE_PASS')
+          PY
+      - name: V3 PostgreSQL config consistency read-only (14 cases)
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/kali_v3_config_safe_readonly.py scripts/test_kali_v3_config_safe_readonly.py
+          python scripts/test_kali_v3_config_safe_readonly.py
+          python - <<'PY'
+          from pathlib import Path
+          code=Path('scripts/kali_v3_config_safe_readonly.py').read_text()
+          assert 'NO_ENV_VALUES_NO_SECRETS_NO_SQL_NO_CHANGES' in code
+          for forbidden in ('docker restart','docker stop','docker exec','docker compose','docker rm','subprocess.Popen','os.system(', 'psql ', 'alembic upgrade', 'print(env)', 'print(url)'):
+              assert forbidden not in code, forbidden
+          print('KALI_V3_CONFIG_SANITIZED_SAFE_PASS')
+          PY
+      - name: Kali preinstallation inventory bash syntax and safety contract
+        run: |
+          set -euo pipefail
+          bash -n scripts/kali_first_access_readonly.sh
+          python - <<'PY'
+          from pathlib import Path
+          code=Path('scripts/kali_first_access_readonly.sh').read_text()
+          for unsafe in ('sudo ', 'apt-get ', 'pm2 restart', 'git pull', 'docker stop', 'docker restart', 'docker exec', 'systemctl start', 'systemctl enable', 'chmod ', 'chown ', 'CREATE DATABASE', 'alembic upgrade'):
+              assert unsafe not in '\\n'.join(l for l in code.splitlines() if not l.lstrip().startswith('#')), unsafe
+          assert 'TALA_KALI_PREFLIGHT_BEGIN' in code
+          assert 'TALA_KALI_PREFLIGHT_END_READONLY' in code
+          assert 'docker ps --format' in code and 'curl --silent' in code
+          print('KALI_PREFLIGHT_STATIC_SAFE_PASS')
+          PY
+      - name: Kali 502 diagnostic must classify logs without exposing them
+        run: |
+          set -euo pipefail
+          bash -n scripts/kali_502_triage_readonly.sh
+          python - <<'PY'
+          from pathlib import Path
+          code=Path('scripts/kali_502_triage_readonly.sh').read_text()
+          assert 'RAW_LOGS_NOT_PRINTED' in code
+          assert 'EXCEPTION_TYPE' in code
+          assert 'docker logs --tail 120' in code
+          assert 'TALA_502_TRIAGE_END_READONLY' in code
+          for line in code.splitlines():
+              if line.lstrip().startswith('#'): continue
+              for forbidden in ('sudo ', 'systemctl restart', 'systemctl start', 'docker restart', 'docker stop', 'docker compose up', 'docker exec', 'docker inspect -f', 'docker rm ', 'git pull', 'apt install'):
+                  assert forbidden not in line, forbidden
+          print('KALI_502_TRIAGE_STATIC_SAFE_PASS')
+          PY
