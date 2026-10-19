@@ -176,3 +176,132 @@ parityRouter.get('/withdrawals/:role/:recipientId/connect/status',async(req,res)
 parityRouter.get('/withdrawals/connect/finish',(_req,res)=>{
  res.status(403).json({detail:'OAuth/Connect return token unverified; finish disabled on Node staging'});
 });
+
+
+// Payments and settlements: explicit fail-closed boundaries. Unlike returning
+// fake 200s, we never acknowledge provider events without PSP signature,
+// reservation, ledger postings, external verification and durable reconcile.
+parityRouter.post('/payments/mercadopago/orders/:orderId/checkout',async(req)=>{
+ await account(req);param(req,'orderId');
+ return financialUnavailable('mercadopago_checkout');
+});
+parityRouter.post('/payments/mercadopago/webhook',async()=>{
+ return financialUnavailable('mercadopago_webhook_signature_and_reconciliation');
+});
+parityRouter.post('/payments/mercadopago/orders/:orderId/refund',async(req)=>{
+ await account(req,['admin']);param(req,'orderId');
+ return financialUnavailable('mercadopago_refund');
+});
+parityRouter.post('/payments/stripe/orders/:orderId/payment-intent',async(req)=>{
+ await account(req);param(req,'orderId');
+ return financialUnavailable('stripe_payment_intent');
+});
+parityRouter.post('/payments/stripe/webhook',async()=>{
+ // A separate signed webhook at /api/v1/webhooks/stripe exists in the base
+ // stack but is not equivalent to the Python payment capture contract.
+ return financialUnavailable('stripe_webhook_is_not_payment_settlement');
+});
+parityRouter.post('/payments/stripe/admin/orders/:orderId/refund',async(req)=>{
+ await account(req,['admin']);param(req,'orderId');
+ return financialUnavailable('stripe_refund');
+});
+parityRouter.get('/payments/stripe/admin/orders/:orderId/settlement-preview',async(req,res)=>{
+ await account(req,['admin']);
+ const id=param(req,'orderId');
+ const order=await db.marketOrder.findUnique({where:{id},include:{restaurant:true}});
+ if(!order)return bad(404,'Pedido no encontrado');
+ memoPrivate(res);
+ res.json({order_id:id,payment_provider:order.paymentProvider,
+  payment_status:order.paymentStatus,order_status:order.status,
+  gmv:euro(order.total),restaurant_payout:euro(order.restaurantPayout),
+  platform_commission:euro(order.platformCommission),
+  delivery_fee:euro(order.deliveryFee),driver_earning:euro(order.driverEarning),
+  tip:euro(order.tip),pending_refund:euro(order.refundedAmount),
+  eligibility:'reconciliation-hold',
+  reason:'No verifiable Stripe Connect charge/transfer balance from Node staging',
+  can_settle:false});
+});
+parityRouter.put('/payments/stripe/admin/recipients/:role/:entityId',async(req)=>{
+ await account(req,['admin']);
+ const role=String(req.params.role),id=param(req,'entityId');
+ if(!['driver','restaurant'].includes(role))return bad(422,'Beneficiario no permitido');
+ void id;
+ return financialUnavailable('stripe_connected_recipient_write');
+});
+parityRouter.post('/payments/stripe/admin/orders/:orderId/settle',async(req)=>{
+ await account(req,['admin']);param(req,'orderId');
+ return financialUnavailable('stripe_split_settlement');
+});
+parityRouter.post('/withdrawals/:role/:recipientId/request',async(req)=>{
+ await payee(req);
+ return financialUnavailable('withdrawal_requires_verified_ledger_and_provider');
+});
+parityRouter.post('/withdrawals/stripe-connect/webhook',async()=>{
+ return financialUnavailable('stripe_connect_webhook_signed_provider_and_hold');
+});
+parityRouter.post('/withdrawals/:role/:recipientId/connect/onboarding',async(req)=>{
+ await payee(req);
+ return financialUnavailable('stripe_connect_oauth_provider_required');
+});
+parityRouter.post('/operations/admin/payouts/run',async(req)=>{
+ await account(req,['admin']);
+ qNum(req,'days',7,1,31);
+ return financialUnavailable('payout_batch_generation_reconciled_cash_receipts_missing');
+});
+parityRouter.post('/operations/admin/payouts/:payoutId/mark-paid',async(req)=>{
+ await account(req,['admin']);
+ param(req,'payoutId');
+ return financialUnavailable('manual_mark_paid_requires_bank_document_verified');
+});
+parityRouter.post('/operations/admin/cash-settlements/run',async(req)=>{
+ await account(req,['admin']);qNum(req,'days',1,1,31);
+ return financialUnavailable('cash_receipt_matching_not_reconciled');
+});
+parityRouter.patch('/operations/admin/cash-settlements/:settlementId',async(req)=>{
+ await account(req,['admin']);param(req,'settlementId');
+ return financialUnavailable('settlement_manual_acknowledgement_unverified');
+});
+parityRouter.post('/operations/plus/subscribe',async(req)=>{
+ await account(req,['customer']);
+ return financialUnavailable('plus_subscription_without_verified_charge');
+});
+parityRouter.post('/platform/plus/subscribe',async(req)=>{
+ await account(req,['customer']);
+ return financialUnavailable('platform_plus_without_verified_charge');
+});
+parityRouter.post('/platform/rewards/redeem',async(req)=>{
+ await account(req,['customer']);
+ return financialUnavailable('points_conversion_to_money_immutable_ledger_missing');
+});
+parityRouter.post('/platform/gift-cards/redeem',async(req)=>{
+ await account(req,['customer','admin']);
+ return financialUnavailable('gift_card_liability_reconciliation_missing');
+});
+parityRouter.post('/admin/wallet/:userId/adjust',async(req)=>{
+ await account(req,['admin']);param(req,'userId');
+ return financialUnavailable('manual_wallet_adjustment_ledger_missing');
+});
+parityRouter.post('/v11/admin/orders/:orderId/partial-refund',async(req)=>{
+ await account(req,['admin']);param(req,'orderId');
+ return financialUnavailable('partial_refund_provider_verified_postings_missing');
+});
+parityRouter.post('/v11/admin/payouts/dispatch',async(req)=>{
+ await account(req,['admin']);
+ return financialUnavailable('payout_dispatch_provider_not_configured');
+});
+parityRouter.post('/v11/payouts/webhook',async()=>{
+ return financialUnavailable('payout_provider_signature_not_configured');
+});
+parityRouter.post('/v9/admin/corporate/:accountId/settle',async(req)=>{
+ await account(req,['admin']);param(req,'accountId');
+ return financialUnavailable('corporate_invoice_and_bank_payment_unverified');
+});
+parityRouter.post('/resilience/payments/reconcile',async(req)=>{
+ await account(req,['admin']);
+ return financialUnavailable('PSP_oracle_not_configured');
+});
+parityRouter.post('/resilience/outbox/drain',async(req)=>{
+ await account(req,['admin']);
+ // Never mark messages processed just to simulate that a webhook got delivered.
+ return bad(503,'Outbox de Node sin publicador ni DLQ real de consumo verificados');
+});
