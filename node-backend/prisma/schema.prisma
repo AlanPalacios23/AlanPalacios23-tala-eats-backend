@@ -319,6 +319,7 @@ model MarketOrder {
   clientReference        String?  @map("client_reference") @db.VarChar(80)
   inventoryReservedJson  String   @default("{}") @map("inventory_reserved_json")
   inventoryRestoredAt    DateTime? @map("inventory_restored_at")
+  cancelledReason       String   @default("") @map("cancelled_reason") @db.VarChar(300)
   acceptedAt             DateTime? @map("accepted_at")
   preparingAt            DateTime? @map("preparing_at")
   readyAt                DateTime? @map("ready_at")
