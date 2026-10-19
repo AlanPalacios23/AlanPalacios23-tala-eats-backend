@@ -28,9 +28,10 @@ NODE_ROUTERS = {
     "v10Router": (ROOT / "node-backend/src/versions/routes.ts", "/api/v1/v10"),
     "v11Router": (ROOT / "node-backend/src/versions/routes.ts", "/api/v1/v11"),
     "resilienceRouter": (ROOT / "node-backend/src/resilience/routes.ts", "/api/v1/resilience"),
+    "parityRouter": (ROOT / "node-backend/src/parity/routes.ts", "/api/v1"),
 }
 ROUTE_RE = re.compile(
-    r"""\b(?P<router>authRouter|marketplaceRouter|ownerRouter|stageOrdersRouter|stageDriverRouter|platformRouter|adminRouter|operationsRouter|v9Router|v10Router|v11Router|resilienceRouter)"""
+    r"""\b(?P<router>authRouter|marketplaceRouter|ownerRouter|stageOrdersRouter|stageDriverRouter|platformRouter|adminRouter|operationsRouter|v9Router|v10Router|v11Router|resilienceRouter|parityRouter)"""
     r"""\.(?P<method>get|post|put|patch|delete|head|options)"""
     r"""\(\s*['"](?P<path>/[^'"]*)['"]""",
     re.MULTILINE,
