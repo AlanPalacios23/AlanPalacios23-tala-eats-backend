@@ -9,6 +9,8 @@ const schema = z.object({
   STRIPE_SECRET_KEY: z.string().startsWith('sk_test_').optional(),
   STRIPE_WEBHOOK_SECRET: z.string().startsWith('whsec_').optional(),
   STRIPE_FINANCIAL_WRITES_ENABLED: z.literal('false'),
+  AUTH_V02_ENABLED: z.enum(['false', 'true']).default('false'),
+  AUTH_JWT_SECRET: z.string().min(40).optional(),
 });
 export const config = schema.parse(process.env);
 const pg = new URL(config.DATABASE_URL);
@@ -29,4 +31,8 @@ if (!['redis:', 'rediss:'].includes(redis.protocol) ||
 if (config.STRIPE_SECRET_KEY?.includes('CHANGE') ||
     config.STRIPE_WEBHOOK_SECRET?.includes('CHANGE')) {
   throw new Error('STAGING_STRIPE_PLACEHOLDER_FORBIDDEN');
+}
+
+if (config.AUTH_V02_ENABLED === 'true' && !config.AUTH_JWT_SECRET) {
+  throw new Error('STAGING_AUTH_V02_REQUIRES_NEW_40_CHAR_SECRET');
 }

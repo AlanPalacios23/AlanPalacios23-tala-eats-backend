@@ -4,6 +4,7 @@ import { Redis } from 'ioredis';
 import { db } from './db.js';
 import { config } from './config.js';
 import { stripeWebhook } from './webhook.js';
+import { authRouter } from './auth/routes.js';
 
 export const app = express();
 app.disable('x-powered-by');
@@ -12,6 +13,8 @@ app.post('/api/v1/webhooks/stripe',
   express.raw({ type: 'application/json', limit: '1mb' }),
   stripeWebhook);
 app.use(express.json({ limit: '128kb' }));
+// Opt-in only after dedicated stage auth migration and tested secret provisioning.
+if (config.AUTH_V02_ENABLED === 'true') app.use('/api/v1/auth', authRouter);
 app.get('/api/v1/health', (_req, res) => {
   res.json({ status: 'ok', version: '0.1.0-node-stage', production: false });
 });
