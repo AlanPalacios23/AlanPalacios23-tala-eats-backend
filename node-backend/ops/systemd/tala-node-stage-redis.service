@@ -1,0 +1,23 @@
+[Unit]
+Description=TALA EATS staging Redis 8 native (loopback 16379)
+After=local-fs.target
+AssertPathExists=/home/tala-node-stage/.local/share/talaeats-node-native/redis-stage.conf
+
+[Service]
+Type=exec
+User=tala-node-stage
+Group=tala-node-stage
+WorkingDirectory=/home/tala-node-stage
+ExecStart=/usr/bin/redis-server /home/tala-node-stage/.local/share/talaeats-node-native/redis-stage.conf --daemonize no
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=75
+StartLimitIntervalSec=120
+StartLimitBurst=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

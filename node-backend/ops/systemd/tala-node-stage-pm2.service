@@ -1,0 +1,32 @@
+[Unit]
+Description=TALA EATS staging Node24 PM2 API + receipt worker
+Requires=tala-node-stage-pg15.service tala-node-stage-redis.service
+After=network.target tala-node-stage-pg15.service tala-node-stage-redis.service
+AssertPathExists=/home/tala-node-stage/.pm2/dump.pm2
+
+[Service]
+Type=forking
+User=tala-node-stage
+Group=tala-node-stage
+WorkingDirectory=/home/tala-node-stage/talaeats-node-source/node-backend
+Environment=HOME=/home/tala-node-stage
+Environment=PM2_HOME=/home/tala-node-stage/.pm2
+Environment=PATH=/home/tala-node-stage/.local/node24/bin:/home/tala-node-stage/.local/bin:/usr/bin:/bin
+PIDFile=/home/tala-node-stage/.pm2/pm2.pid
+ExecStartPre=/usr/bin/python3 /home/tala-node-stage/talaeats-node-source/node-backend/scripts/kali-stage-startup-check.py --dependencies
+ExecStart=/home/tala-node-stage/.local/node24/bin/node /home/tala-node-stage/.local/lib/node_modules/pm2/bin/pm2 resurrect
+ExecStartPost=/usr/bin/python3 /home/tala-node-stage/talaeats-node-source/node-backend/scripts/kali-stage-startup-check.py --health
+ExecStop=/home/tala-node-stage/.local/node24/bin/node /home/tala-node-stage/.local/lib/node_modules/pm2/bin/pm2 kill
+Restart=on-failure
+RestartSec=12
+TimeoutStartSec=120
+TimeoutStopSec=50
+StartLimitIntervalSec=180
+StartLimitBurst=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
