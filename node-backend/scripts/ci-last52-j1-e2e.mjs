@@ -193,7 +193,7 @@ const chat=await media(customer,'/uploads/chat-media/'+order);
 assert.equal(chat.status,200,JSON.stringify(chat.json));
 assert.equal((await go(customer,chat.json.url)).status,403);
 await db.query(
- "INSERT INTO chat_messages(order_id,sender_id,message,media_url,message_type) VALUES($1,$2,'Imagen',$3,'image')",
+ "INSERT INTO chat_messages(order_id,sender_id,message,media_url,message_type) VALUES($1,$2,'Imagen',$3,'photo')",
  [order,customer.id,chat.json.url]);
 assert.equal((await go(customer,chat.json.url)).status,200);
 assert.equal((await go(outsider,chat.json.url)).status,403);
