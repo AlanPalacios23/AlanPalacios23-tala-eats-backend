@@ -175,7 +175,7 @@ ownerRouter.post('/menu',async(req,res)=>{
   const {row}=await ownRestaurant(req);
   const data=input(menuSchema,req.body);
   const created=await db.marketplaceMenuItem.create({
-    data:{...itemValues(data),restaurantId:row.id},
+    data:{...itemValues(data),name:data.name,price:data.price,restaurantId:row.id},
   });
   res.status(201).json(menuPublic(created));
 });
