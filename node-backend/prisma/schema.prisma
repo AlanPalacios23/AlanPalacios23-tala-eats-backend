@@ -348,3 +348,87 @@ model MarketOrderItem {
   @@index([orderId])
   @@map("order_items")
 }
+
+
+// Phase C stage-only test cash-pickup checkout. Financial audit rows have
+// append-only semantics; the migration creates DB triggers forbidding
+// UPDATE/DELETE to emulate the Python immutable ledger.
+model StageOrderEvent {
+  id          Int      @id @default(autoincrement())
+  orderId     Int      @map("order_id")
+  status      String   @db.VarChar(40)
+  actorUserId Int?     @map("actor_user_id")
+  metadataJson String  @default("{}") @map("metadata_json")
+  createdAt   DateTime @default(now()) @map("created_at")
+  @@index([orderId])
+  @@index([status])
+  @@map("order_events")
+}
+model StageFinancialLedgerEntry {
+  id               Int      @id @default(autoincrement())
+  orderId          Int?     @map("order_id")
+  userId           Int?     @map("user_id")
+  restaurantId     Int?     @map("restaurant_id")
+  account          String   @db.VarChar(60)
+  direction        String   @default("credit") @db.VarChar(10)
+  amount           Decimal  @default(0) @db.Decimal(12,2)
+  currency         String   @default("MXN") @db.VarChar(8)
+  kind             String   @db.VarChar(60)
+  description      String   @default("") @db.VarChar(300)
+  idempotencyKey   String   @unique @map("idempotency_key") @db.VarChar(180)
+  createdAt        DateTime @default(now()) @map("created_at")
+  @@index([orderId])
+  @@index([userId])
+  @@index([restaurantId])
+  @@index([account])
+  @@index([kind])
+  @@index([createdAt])
+  @@map("financial_ledger_entries")
+}
+model StageEventOutbox {
+  id            Int      @id @default(autoincrement())
+  eventKey      String   @unique @map("event_key") @db.VarChar(220)
+  aggregateType String   @map("aggregate_type") @db.VarChar(60)
+  aggregateId   String   @map("aggregate_id") @db.VarChar(120)
+  eventType     String   @map("event_type") @db.VarChar(120)
+  payloadJson   String   @default("{}") @map("payload_json")
+  status        String   @default("pending") @db.VarChar(30)
+  attempts      Int      @default(0)
+  nextAttemptAt DateTime? @map("next_attempt_at")
+  lockedAt      DateTime? @map("locked_at")
+  lastError     String   @default("") @map("last_error") @db.VarChar(1000)
+  publishedAt   DateTime? @map("published_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  @@index([eventKey])
+  @@index([aggregateType])
+  @@index([aggregateId])
+  @@index([eventType])
+  @@index([status])
+  @@index([nextAttemptAt])
+  @@index([publishedAt])
+  @@index([createdAt])
+  @@map("event_outbox")
+}
+model StageIngredientStock {
+  id           Int      @id @default(autoincrement())
+  restaurantId Int      @map("restaurant_id")
+  name         String   @db.VarChar(140)
+  unit         String   @default("unit") @db.VarChar(30)
+  quantity     Decimal  @default(0) @db.Decimal(12,3)
+  reorderLevel Decimal  @default(0) @map("reorder_level") @db.Decimal(12,3)
+  unitCost     Decimal  @default(0) @map("unit_cost") @db.Decimal(10,2)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+  @@index([restaurantId])
+  @@index([name])
+  @@map("ingredient_stocks")
+}
+model StageMenuRecipe {
+  id               Int      @id @default(autoincrement())
+  menuItemId       Int      @map("menu_item_id")
+  ingredientId     Int      @map("ingredient_id")
+  quantityRequired Decimal  @default(1) @map("quantity_required") @db.Decimal(12,3)
+  @@unique([menuItemId,ingredientId],name:"uq_recipe_component")
+  @@index([menuItemId])
+  @@index([ingredientId])
+  @@map("menu_recipes")
+}
