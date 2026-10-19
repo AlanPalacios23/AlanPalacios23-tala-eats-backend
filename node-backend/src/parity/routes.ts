@@ -305,3 +305,155 @@ parityRouter.post('/resilience/outbox/drain',async(req)=>{
  // Never mark messages processed just to simulate that a webhook got delivered.
  return bad(503,'Outbox de Node sin publicador ni DLQ real de consumo verificados');
 });
+
+
+// Referral is pending, never applies reward until a verified eligible delivery.
+parityRouter.post('/operations/referrals/apply',async(req,res)=>{
+ const who=await account(req,['customer']);
+ const code=qString(req,'code').trim().toUpperCase();
+ if(!/^[A-Z0-9_-]{4,30}$/.test(code))return bad(400,'Código de referido inválido');
+ const found=await db.authLoyaltyAccount.findUnique({where:{referralCode:code}});
+ if(!found||found.userId===who.id)return bad(400,'Código de referido inválido');
+ const row=await db.stageReferralConversion.createMany({data:[{
+  referrerUserId:found.userId,referredUserId:who.id,referralCode:code,
+  rewardAmount:'0',status:'pending'}],skipDuplicates:true});
+ if(!row.count)return bad(409,'Ya aplicaste un referido');
+ res.status(200).json({status:'pending',
+  message:'El beneficio se libera después del primer pedido entregado válido y conciliado.',
+  reward:'0.00',reconciliation_hold:true});
+});
+// Driver offers: cash-delivery staging only, with profile-first row locks.
+const offerView=(x:{id:number;orderId:number;roundNo:number;
+ score:number;estimatedPickupMin:number;
+ estimatedEarning:{toFixed:(n:number)=>string};
+ status:string;expiresAt:Date})=>({
+ id:x.id,order_id:x.orderId,round:x.roundNo,score:x.score,
+ estimated_pickup_min:x.estimatedPickupMin,
+ estimated_earning:x.estimatedEarning.toFixed(2),
+ status:x.status,expires_at:x.expiresAt.toISOString()});
+parityRouter.get('/v11/driver/offers',async(req,res)=>{
+ const who=await account(req,['driver']);
+ const now=new Date();
+ const list=await db.stageDriverOffer.findMany({
+  where:{driverId:who.id,status:'offered',expiresAt:{gt:now}},
+  orderBy:{offeredAt:'desc'},take:30});
+ memoPrivate(res);res.json(list.map(offerView));
+});
+parityRouter.post('/v11/admin/driver-offers/:orderId/create',async(req,res)=>{
+ const who=await account(req,['admin']),id=param(req,'orderId');
+ const now=new Date();
+ const offers=await db.$transaction(async tx=>{
+  await tx.$queryRawUnsafe('SELECT id FROM orders WHERE id=$1 FOR UPDATE',id);
+  const order=await tx.marketOrder.findUnique({where:{id}});
+  if(!order||order.status!=='ready'||order.driverId!==null)
+   return bad(409,'Pedido no disponible');
+  if(order.orderType!=='delivery'||order.paymentMethod!=='cash')
+   return bad(503,'Las ofertas sólo admiten entregas en efectivo de staging');
+  const profiles=await tx.marketplaceDriverProfile.findMany({
+   where:{isOnline:true,isVerified:true,user:{isActive:true,role:'driver'}},
+   include:{user:true},take:80});
+  const active=await tx.marketOrder.findMany({
+   where:{driverId:{in:profiles.map(x=>x.userId)},
+    status:{in:['assigned','picked_up','on_the_way']}},
+   select:{driverId:true}});
+  const busy=new Set(active.map(x=>x.driverId));
+  const prior=await tx.stageDriverOffer.findFirst({where:{orderId:id},
+   orderBy:{roundNo:'desc'}});
+  const round=(prior?.roundNo??0)+1;
+  const candidates=profiles.filter(x=>!busy.has(x.userId)).map(p=>{
+   return {user:p,score:Number(p.rating),eta:15};
+  }).sort((a,b)=>b.score-a.score).slice(0,5);
+  const created=[];
+  for(const selected of candidates){
+   const x=await tx.stageDriverOffer.create({data:{
+    orderId:id,driverId:selected.user.userId,roundNo:round,
+    score:selected.score,estimatedPickupMin:selected.eta,
+    estimatedEarning:order.driverEarning,
+    expiresAt:new Date(now.getTime()+45000)}});
+   await tx.authNotification.create({data:{userId:x.driverId,kind:'delivery',
+    title:'Nueva oferta de entrega',message:'Pedido #'+id+' disponible durante 45 segundos.'}});
+   created.push(x);
+  }
+  await tx.authAuditEvent.create({data:{userId:who.id,action:'v11.driver.offer.create',
+   entityType:'order',entityId:String(id),detail:'offered='+created.length}});
+  return {order_id:id,round,created:created.length};
+ },{maxWait:10000,timeout:20000});
+ res.json(offers);
+});
+parityRouter.post('/v11/driver/offers/:offerId/respond',async(req,res)=>{
+ const who=await account(req,['driver']),id=param(req,'offerId');
+ const p=vparse(z.strictObject({action:z.enum(['accept','reject'])}),req.body);
+ const decision=await db.$transaction(async tx=>{
+  const lock=await tx.$queryRawUnsafe(
+   'SELECT user_id FROM driver_profiles WHERE user_id=$1 FOR UPDATE',who.id);
+  if(!Array.isArray(lock)||!lock.length)return bad(403,'Perfil de repartidor no disponible');
+  const profile=await tx.marketplaceDriverProfile.findUnique({where:{userId:who.id}});
+  if(!profile?.isOnline||!profile.isVerified)return bad(403,'Repartidor no habilitado');
+  const offer=await tx.stageDriverOffer.findUnique({where:{id}});
+  if(!offer||offer.driverId!==who.id)return bad(404,'Oferta no encontrada');
+  if(offer.status!=='offered'||offer.expiresAt<=new Date())
+   return bad(409,'Oferta vencida o respondida');
+  await tx.$queryRawUnsafe('SELECT id FROM orders WHERE id=$1 FOR UPDATE',offer.orderId);
+  const order=await tx.marketOrder.findUnique({where:{id:offer.orderId}});
+  if(!order||order.status!=='ready'||order.driverId!==null)
+   return bad(409,'El pedido ya fue asignado');
+  if(p.action==='accept'){
+   const active=await tx.marketOrder.count({where:{driverId:who.id,
+    status:{in:['assigned','picked_up','on_the_way']}}});
+   if(active)return bad(409,'Ya tienes entrega activa');
+   await tx.marketOrder.update({where:{id:order.id},data:{
+    status:'assigned',driverId:who.id}});
+   await tx.stageOrderEvent.create({data:{orderId:order.id,
+    actorUserId:who.id,status:'assigned',
+    metadataJson:JSON.stringify({source:'v11_offer',offer_id:id})}});
+   await tx.stageEventOutbox.create({data:{aggregateType:'order',
+    aggregateId:String(order.id),eventType:'order.assigned',
+    eventKey:'offer:'+id+':accepted',
+    payloadJson:JSON.stringify({driver_id:who.id,order_id:order.id})}});
+  }
+  await tx.stageDriverOffer.update({where:{id},data:{
+   status:p.action==='accept'?'accepted':'rejected',respondedAt:new Date()}});
+  if(p.action==='accept')await tx.stageDriverOffer.updateMany({where:{
+   orderId:order.id,id:{not:id},status:'offered'},data:{
+    status:'expired',respondedAt:new Date()}});
+  return {offer_id:id,order_id:order.id,status:p.action==='accept'?'accepted':'rejected'};
+ },{maxWait:10000,timeout:20000});
+ res.json(decision);
+});
+parityRouter.post('/v9/admin/dispatch/:orderId/reassign',async(req,res)=>{
+ const who=await account(req,['admin']),id=param(req,'orderId');
+ const order=await db.marketOrder.findUnique({where:{id}});
+ if(!order)return bad(404,'Pedido no encontrado');
+ if(!['ready','assigned'].includes(order.status)||order.paymentMethod!=='cash')
+  return bad(409,'No se puede reasignar este pedido');
+ const old=order.driverId;
+ const candidate=await db.marketplaceDriverProfile.findMany({
+  where:{isOnline:true,isVerified:true,user:{role:'driver',isActive:true},
+   userId:{not:old??-1}},orderBy:{rating:'desc'},take:25});
+ const result=await db.$transaction(async tx=>{
+  for(const c of candidate){
+   const rows=await tx.$queryRawUnsafe(
+    'SELECT user_id FROM driver_profiles WHERE user_id=$1 FOR UPDATE SKIP LOCKED',
+    c.userId);
+   if(!Array.isArray(rows)||!rows.length)continue;
+   if(await tx.marketOrder.count({where:{driverId:c.userId,
+    status:{in:['assigned','picked_up','on_the_way']}}}))continue;
+   const changed=await tx.marketOrder.updateMany({where:{
+    id,status:{in:['ready','assigned']},driverId:old},
+    data:{driverId:c.userId,status:'assigned'}});
+   if(!changed.count)return bad(409,'El pedido cambió de estado');
+   await tx.opsIncident.create({data:{orderId:id,
+    incidentType:'auto_reassignment',severity:'medium',
+    title:'Reasignación automática',detail:'Anterior '+String(old),
+    recommendedAction:'Seguimiento de nueva recogida',
+    status:'resolved',resolvedAt:new Date()}});
+   await tx.stageOrderEvent.create({data:{orderId:id,actorUserId:who.id,
+    status:'assigned',metadataJson:JSON.stringify({
+     source:'v9_reassign',previous_driver:old})}});
+   return {order_id:id,previous_driver:old,driver:{driver_id:c.userId,
+    rating:Number(c.rating)}};
+  }
+  return bad(409,'No hay otro repartidor disponible');
+ });
+ res.json(result);
+});
