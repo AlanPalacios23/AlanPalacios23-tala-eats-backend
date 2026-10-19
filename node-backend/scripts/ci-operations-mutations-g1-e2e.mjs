@@ -56,6 +56,8 @@ assert.equal(approved.json.status,'approved');
 assert.equal((await req(alice,'/operations/onboarding','POST',profile)).status,401); // old JWT revoked by role change
 const ownedShop=(await db.query('SELECT id,is_open FROM restaurants WHERE owner_id=$1',[alice.id])).rows;
 assert.equal(ownedShop.length,1);assert.equal(ownedShop[0].is_open,false);
+// Approval changed the account role and intentionally invalidated its old JWT.
+await promote(alice,'restaurant');
 const duplicate=await req(bob,'/operations/onboarding','POST',profile);
 assert.equal(duplicate.status,201);
 // Customer-owned account for follow-up
