@@ -234,6 +234,69 @@ platformRouter.get('/bootstrap',async(req,res)=>{
     online_payments:false,google_signin:false,
   });
 });
+// Python platform.py: public promotions/coupons (discovery only). Applying
+// discounts in checkout remains disabled until monetary policy v1.6.2 parity.
+platformRouter.get('/promotions',async(_req,res)=>{
+  const rows=await db.platformPromotion.findMany({
+    where:{active:true},orderBy:[{sponsored:'desc'},{id:'asc'}],take:200,
+  });
+  res.json(rows.map(x=>({
+    id:x.id,restaurant_id:x.restaurantId,title:x.title,
+    description:x.description,discount_percent:x.discountPercent,
+    active:x.active,sponsored:x.sponsored,
+  })));
+});
+platformRouter.get('/coupons',async(_req,res)=>{
+  const rows=await db.platformCoupon.findMany({
+    where:{active:true},orderBy:{id:'asc'},take:200,
+  });
+  res.json(rows.map(x=>({
+    code:x.code,discount_type:x.discountType,value:x.value.toString(),
+    min_order:x.minOrder.toString(),active:x.active,description:x.description,
+  })));
+});
+// Python platform.py: only customer reviews of their own DELIVERED orders.
+// Unique order/customer constraint plus INSERT ... ON CONFLICT DO NOTHING
+// guarantees one review even when the app retries concurrently.
+const reviewInput=z.object({
+  order_id:z.number().int().positive().safe(),
+  restaurant_rating:z.number().int().min(1).max(5),
+  driver_rating:z.number().int().min(1).max(5).nullable().default(null),
+  comment:z.string().max(1000).default(''),
+});
+platformRouter.post('/reviews',async(req,res)=>{
+  const actor=await user(req,['customer']);
+  const input=validate(reviewInput,req.body);
+  const created=await db.$transaction(async tx=>{
+    const order=await tx.marketOrder.findUnique({
+      where:{id:input.order_id},select:{
+        id:true,userId:true,restaurantId:true,driverId:true,status:true,
+      },
+    });
+    // Match Python's 400 for missing, foreign or unfinished orders;
+    // never reveal a different user's order existence.
+    if(!order||order.userId!==actor.id||order.status!=='delivered')
+      return fail(400,'Solo puedes calificar pedidos entregados propios');
+    const inserted=await tx.$queryRawUnsafe<{id:number}[]>(
+      'INSERT INTO reviews(order_id,user_id,restaurant_id,driver_id,'+
+      'restaurant_rating,driver_rating,comment) VALUES($1,$2,$3,$4,$5,$6,$7)'+
+      ' ON CONFLICT(order_id,user_id) DO NOTHING RETURNING id',
+      order.id,actor.id,order.restaurantId,order.driverId,
+      input.restaurant_rating,input.driver_rating,input.comment,
+    );
+    if(inserted.length!==1)return fail(409,'Este pedido ya fue calificado');
+    const record=await tx.platformReview.findUnique({where:{id:inserted[0]!.id}});
+    if(!record)return fail(503,'Reseña no disponible después de guardar');
+    return record;
+  },{maxWait:10000,timeout:20000});
+  res.setHeader('Cache-Control','private, no-store');
+  res.status(201).json({
+    id:created.id,order_id:created.orderId,restaurant_id:created.restaurantId,
+    restaurant_rating:created.restaurantRating,driver_rating:created.driverRating,
+    comment:created.comment,created_at:created.createdAt.toISOString(),
+  });
+});
+
 export function platformErrors(error:unknown,_req:Request,res:Response,_next:NextFunction){
   if(error && typeof error==='object' && 'code' in error &&
     typeof (error as {code:unknown}).code==='number'){
