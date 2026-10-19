@@ -1,0 +1,83 @@
+name: TALA EATS | Kali native deployment guard tests
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'node-backend/scripts/kali-*.sh'
+      - 'node-backend/scripts/kali-*.py'
+      - 'node-backend/scripts/test_kali_*.py'
+      - 'node-backend/docs/KALI-NATIVE-DEPLOYMENT-EXECUTION.md'
+      - '.github/workflows/tala-kali-native-deploy-guards.yml'
+  push:
+    branches: [main, feat/node24-pm2-native-staging-20261019]
+    paths:
+      - 'node-backend/scripts/kali-*.sh'
+      - 'node-backend/scripts/kali-*.py'
+      - 'node-backend/scripts/test_kali_*.py'
+      - 'node-backend/docs/KALI-NATIVE-DEPLOYMENT-EXECUTION.md'
+      - '.github/workflows/tala-kali-native-deploy-guards.yml'
+permissions:
+  contents: read
+jobs:
+  shell-guard:
+    name: Kali install scripts shell-syntax and no-mutation plans
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate all native Kali shell scripts
+        run: |
+          set -euo pipefail
+          find node-backend/scripts -maxdepth 1 -type f -name 'kali-*.sh' -print0 |
+            while IFS= read -r -d '' script; do
+              bash -n "$script"
+            done
+          echo KALI_SHELL_SYNTAX=PASS
+      - name: Native system plan is strictly informational
+        run: |
+          bash node-backend/scripts/kali-provision-native-stage.sh --plan
+          bash node-backend/scripts/kali-native-preflight.sh
+          echo KALI_PLANS_EXIT=PASS
+      - name: Validate native PostgreSQL 15.19 Redis8 Python initializer without running services
+        run: |
+          python3 -m py_compile node-backend/scripts/kali-stage-init-native-services.py
+          python3 -m py_compile node-backend/scripts/test_kali_stage_init_native_services.py
+          python3 node-backend/scripts/test_kali_stage_init_native_services.py
+          python3 -m py_compile node-backend/scripts/kali-stage-boot-persistence.py
+          python3 -m py_compile node-backend/scripts/kali-stage-startup-check.py
+          python3 -m py_compile node-backend/scripts/test_kali_stage_boot_persistence.py
+          python3 node-backend/scripts/test_kali_stage_boot_persistence.py
+          python3 -m py_compile node-backend/scripts/kali-stage-backup.py
+          python3 -m py_compile node-backend/scripts/kali-stage-systemd-cutover.py
+          python3 -m py_compile node-backend/scripts/test_kali_stage_coldstart.py
+          python3 node-backend/scripts/test_kali_stage_coldstart.py
+          python3 -m py_compile node-backend/scripts/kali-stage-test-restore.py
+          python3 -m py_compile node-backend/scripts/test_kali_stage_restore.py
+          python3 node-backend/scripts/test_kali_stage_restore.py
+          echo STAGE_PG15_FULL_RESTORE_SAFETY=PASS
+          echo STAGE_PG_BACKUP_AND_SYSTEMD_CUTOVER_GUARDS=PASS
+          echo STAGE_USER_SYSTEMD_BOOT_GUARDS=PASS
+          echo PG15_NATIVE_PYTHON_SAFETY=PASS
+      - name: Validate separation controls statically
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          base=Path('node-backend/scripts')
+          provision=(base/'kali-provision-native-stage.sh').read_text()
+          install=(base/'kali-install-node24-user.sh').read_text()
+          migrate=(base/'kali-stage-migrate.sh').read_text()
+          deploy=(base/'kali-staging-deploy.sh').read_text()
+          assert 'I_APPROVE_NEW_NATIVE_STAGE_ONLY' in provision
+          assert 'I_APPROVE_STAGE_USER_ONLY' in install
+          assert 'I_APPROVE_NEW_STAGE_SCHEMA_ONLY' in migrate
+          assert 'I_APPROVE_LOCAL_STAGE_PM2_ONLY' in deploy
+          assert 'docker ' not in provision
+          assert 'docker ' not in install
+          assert 'docker ' not in migrate
+          assert 'docker ' not in deploy
+          assert 'service_healthy' not in deploy
+          assert '--only tala-node-stage-api' in deploy
+          assert '--only tala-node-stage-worker' in deploy
+          assert 'STAGING_API_NOT_READY_NO_WORKER_START' in deploy
+          print('NATIVE_ISOLATION_STATIC_TESTS=PASS')
+          PY

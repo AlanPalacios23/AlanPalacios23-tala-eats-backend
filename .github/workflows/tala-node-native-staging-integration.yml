@@ -1,0 +1,120 @@
+name: TALA EATS | Node native staging PostgreSQL15 Redis integration
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'node-backend/**'
+      - '.github/workflows/tala-node-native-staging-integration.yml'
+  push:
+    branches: [feat/node24-pm2-native-staging-20261019]
+    paths:
+      - 'node-backend/**'
+      - '.github/workflows/tala-node-native-staging-integration.yml'
+permissions:
+  contents: read
+jobs:
+  integration:
+    name: Node24 / PG15 migration / Redis / health-ready integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: tala_node_stage
+          POSTGRES_PASSWORD: ci-only-postgres-secret
+          POSTGRES_DB: tala_node_stage
+        ports:
+          - 15435:5432
+        options: >-
+          --health-cmd "pg_isready -U tala_node_stage -d tala_node_stage"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+      redis:
+        image: redis:7
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      NODE_ENV: staging
+      HOST: 127.0.0.1
+      PORT: '18190'
+      DATABASE_URL: 'postgresql://tala_node_stage:ci-only-postgres-secret@127.0.0.1:15435/tala_node_stage'
+      REDIS_URL: 'redis://:ci-only-redis-secret@127.0.0.1:16379/0'
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Install exact lockfile
+        run: npm ci --no-audit --no-fund
+      - name: Initialize ephemeral CI Redis authentication
+        run: |
+          node --input-type=module -e '
+            import { Redis } from "ioredis";
+            const r=new Redis("redis://127.0.0.1:16379");
+            await r.config("SET","requirepass","ci-only-redis-secret");
+            r.disconnect();
+            console.log("EPHEMERAL_CI_REDIS_AUTH=PASS");
+          '
+      - name: Prisma 7 client and migration on isolated CI PostgreSQL 15
+        run: |
+          npm run generate
+          npm run db:validate
+          npm run db:migrate:deploy
+          npm run build
+          npm test
+      - name: Verify real database, Redis, backend and worker
+        run: |
+          set -euo pipefail
+          node dist/server.js >/tmp/tala-stage-integration-api.log 2>&1 &
+          api_pid=$!
+          node dist/worker.js >/tmp/tala-stage-integration-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'kill "$api_pid" "$worker_pid" 2>/dev/null || true' EXIT
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import pg from 'pg';
+          import { Redis } from 'ioredis';
+          const c=new pg.Client({connectionString:process.env.DATABASE_URL});
+          await c.connect();
+          const r=await c.query("SELECT current_database() AS db, current_user AS usr, current_setting('server_version_num')::int AS v, inet_server_port() AS port");
+          assert.equal(r.rows[0].db, 'tala_node_stage');
+          assert.equal(r.rows[0].usr, 'tala_node_stage');
+          assert.equal(r.rows[0].port, 5432);
+          assert.ok(r.rows[0].v>=150000 && r.rows[0].v<160000);
+          const tables=await c.query("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname='public' AND tablename IN ('stripe_webhook_events','merchant_connect_accounts','payout_instructions')");
+          assert.equal(tables.rows[0].n,3);
+          await c.end();
+          const redis=new Redis(process.env.REDIS_URL);
+          assert.equal(await redis.ping(),'PONG');
+          redis.disconnect();
+          const base='http://127.0.0.1:18190';
+          let ready;
+          for(let i=0;i<25;i++){
+            try {
+              const response=await fetch(base+'/api/v1/ready');
+              const j=await response.json();
+              if(response.ok&&j.ready===true&&j.financialWrites===false){ready=j;break;}
+            }catch {}
+            await new Promise(resolve=>setTimeout(resolve,400));
+          }
+          assert.ok(ready,'STAGING_READY_NOT_REACHED');
+          const health=await fetch(base+'/api/v1/health');
+          assert.equal(health.status,200);
+          const webhook=await fetch(base+'/api/v1/webhooks/stripe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:'evt_ci'})});
+          assert.equal(webhook.status,503,'Stripe must be disabled unless TEST secrets are configured');
+          console.log('NODE24_PG15_REDIS_STAGING_READY=PASS');
+          console.log('NO_LIVE_STRIPE_PAYMENTS=PASS');
+          JS

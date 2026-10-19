@@ -1,0 +1,18 @@
+[Unit]
+Description=TALA EATS staging user PostgreSQL 15.19 (127.0.0.1:15435)
+AssertPathExists=/home/tala-node-stage/.local/share/talaeats-node-native/postgres15-data/PG_VERSION
+
+[Service]
+Type=exec
+WorkingDirectory=/home/tala-node-stage
+ExecStart=/home/tala-node-stage/.local/postgresql-15.19/bin/postgres -D /home/tala-node-stage/.local/share/talaeats-node-native/postgres15-data
+ExecStop=/home/tala-node-stage/.local/postgresql-15.19/bin/pg_ctl -D /home/tala-node-stage/.local/share/talaeats-node-native/postgres15-data -m fast -w -t 60 stop
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=75
+StartLimitIntervalSec=120
+StartLimitBurst=5
+UMask=0077
+
+[Install]
+WantedBy=default.target

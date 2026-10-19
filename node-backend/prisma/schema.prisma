@@ -1,0 +1,66 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum WebhookStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+}
+
+enum PayoutStatus {
+  DRAFT
+  REQUIRES_REVIEW
+  APPROVED
+  SUBMITTED
+  RECONCILING
+  COMPLETED
+  FAILED
+}
+
+model StripeWebhookEvent {
+  id              String        @id
+  type            String
+  stripeAccountId String?
+  objectId        String?
+  status          WebhookStatus @default(RECEIVED)
+  deliveryCount   Int           @default(1)
+  receivedAt      DateTime      @default(now())
+  processedAt     DateTime?
+  lastErrorAt     DateTime?
+  @@index([status, receivedAt])
+  @@map("stripe_webhook_events")
+}
+
+model MerchantConnectAccount {
+  id              String   @id @default(uuid())
+  merchantId      String   @unique
+  stripeAccountId String   @unique
+  chargesEnabled  Boolean  @default(false)
+  payoutsEnabled  Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  @@map("merchant_connect_accounts")
+}
+
+// Diseño de conciliación, nunca ejecuta pagos en v0.1.0.
+model PayoutInstruction {
+  id               String       @id @default(uuid())
+  merchantId       String
+  amountMinor      BigInt
+  currency         String       @default("mxn")
+  idempotencyKey   String       @unique
+  stripePayoutId   String?      @unique
+  status           PayoutStatus @default(DRAFT)
+  lastReconciledAt DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  @@index([merchantId, status])
+  @@map("payout_instructions")
+}

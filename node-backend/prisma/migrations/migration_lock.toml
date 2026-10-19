@@ -1,0 +1,2 @@
+# Prisma Migrate: isolated staging database only.
+provider = "postgresql"
