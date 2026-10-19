@@ -399,6 +399,88 @@ platformRouter.post('/support',async(req,res)=>{
 });
 
 
+
+// E4: Python platform.py read-only Wallet, recommendations, group orders,
+// referral. No checkout credits, gift redemption, Plus charge or payouts.
+function walletTransactionPublic(v:{
+  id:number;kind:string;amount:{toString():string};
+  balanceAfter:{toString():string};referenceType:string;
+  referenceId:string;description:string;createdAt:Date;
+}){
+  return {id:v.id,kind:v.kind,amount:v.amount.toString(),
+    balance_after:v.balanceAfter.toString(),
+    reference_type:v.referenceType,reference_id:v.referenceId,
+    description:v.description,created_at:v.createdAt.toISOString()};
+}
+platformRouter.get('/wallet',async(req,res)=>{
+  const account=await user(req,['customer','admin']);
+  const [wallet,transactions]=await db.$transaction([
+    db.authLoyaltyAccount.findUnique({where:{userId:account.id}}),
+    db.stageWalletTransaction.findMany({
+      where:{userId:account.id},
+      orderBy:[{createdAt:'desc'},{id:'desc'}],take:20,
+    }),
+  ]);
+  if(!wallet)return fail(503,'Cuenta de fidelidad no disponible');
+  res.setHeader('Cache-Control','private, no-store');
+  res.json({balance:wallet.walletBalance.toString(),
+    points:wallet.points,plus_member:wallet.plusMember,
+    referral_code:wallet.referralCode,
+    transactions:transactions.map(walletTransactionPublic)});
+});
+platformRouter.get('/wallet/transactions',async(req,res)=>{
+  const account=await user(req,['customer','admin']);
+  const transactions=await db.stageWalletTransaction.findMany({
+    where:{userId:account.id},
+    orderBy:[{createdAt:'desc'},{id:'desc'}],take:100,
+  });
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(transactions.map(walletTransactionPublic));
+});
+platformRouter.get('/recommendations',async(req,res)=>{
+  await user(req,['customer','admin']);
+  // Python reference is a rule engine: open + sponsored then rating, limit 6.
+  // This is NOT a personalized LLM and does not call any external provider.
+  const restaurants=await db.marketplaceRestaurant.findMany({
+    where:{isOpen:true},
+    orderBy:[{sponsored:'desc'},{rating:'desc'},{id:'asc'}],take:6,
+  });
+  res.setHeader('Cache-Control','private, no-store');
+  res.json({
+    engine:'rules',
+    message:'Recomendaciones basadas en patrocinio, rating y disponibilidad; AI_PROVIDER puede sustituir el motor de reglas.',
+    restaurants:restaurants.map(restaurantPublic),
+  });
+});
+platformRouter.get('/groups/:groupCode',async(req,res)=>{
+  const account=await user(req);
+  const raw=req.params.groupCode;
+  const code=(Array.isArray(raw)?raw[0]:raw)?.trim()??'';
+  if(!code||code.length>12)return fail(422,'Código de grupo inválido');
+  const orders=await db.marketOrder.findMany({
+    where:{
+      groupCode:code,
+      ...(account.role==='admin'?{}:{userId:account.id}),
+    },
+    select:{id:true,status:true,total:true,scheduledFor:true},
+    orderBy:[{createdAt:'asc'},{id:'asc'}],take:200,
+  });
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(orders.map(o=>({id:o.id,status:o.status,
+    total:o.total.toString(),
+    scheduled_for:o.scheduledFor?.toISOString()??null})));
+});
+platformRouter.get('/referral',async(req,res)=>{
+  const account=await user(req,['customer']);
+  const wallet=await db.authLoyaltyAccount.findUnique({
+    where:{userId:account.id},select:{referralCode:true},
+  });
+  if(!wallet)return fail(503,'Cuenta de fidelidad no disponible');
+  res.setHeader('Cache-Control','private, no-store');
+  res.json({code:wallet.referralCode,
+    reward_rule:'Código persistente listo; la política de recompensa se configura en la capa comercial.'});
+});
+
 export function platformErrors(error:unknown,_req:Request,res:Response,_next:NextFunction){
   if(error && typeof error==='object' && 'code' in error &&
     typeof (error as {code:unknown}).code==='number'){
