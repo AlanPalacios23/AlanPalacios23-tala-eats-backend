@@ -1,0 +1,46 @@
+name: TALA EATS | Node24 native staging CI
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'node-backend/**'
+      - '.github/workflows/tala-node-native-staging-ci.yml'
+  push:
+    branches: [main, feat/node24-pm2-native-staging-20261019]
+    paths:
+      - 'node-backend/**'
+      - '.github/workflows/tala-node-native-staging-ci.yml'
+permissions:
+  contents: read
+jobs:
+  node-native:
+    name: Node24 Prisma7 TypeScript safety tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: node-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Generate Prisma client
+        run: npm run generate
+        env:
+          DATABASE_URL: 'postgresql://tala_node_stage:dummy@127.0.0.1:15435/tala_node_stage'
+      - name: Validate Prisma schema
+        run: npm run db:validate
+        env:
+          DATABASE_URL: 'postgresql://tala_node_stage:dummy@127.0.0.1:15435/tala_node_stage'
+      - name: Compile TypeScript
+        run: npm run build
+      - name: Safety fixtures
+        run: npm test
+      - name: Safety and lockfile proof
+        run: |
+          test -s package-lock.json
+          ! grep -ER --include='*.ts' 'sk_live_|rk_live_' src
+          echo "NPM_LOCK_GENERATED_IN_CI=PASS"
