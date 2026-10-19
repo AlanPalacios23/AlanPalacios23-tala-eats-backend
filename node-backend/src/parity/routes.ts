@@ -637,3 +637,10 @@ parityRouter.get('/uploads/chat-media/:filename',async(req,res)=>{
  await ownOrder(message.orderId,who);
  await mediaResponse(res,'chat-media',name);
 });
+
+export function parityErrors(error:unknown,_req:Request,res:Response,next:NextFunction){
+ if(error instanceof Error&&error.message==='request aborted'){
+  res.status(400).json({detail:'Carga multipart interrumpida'});return;
+ }
+ next(error);
+}
