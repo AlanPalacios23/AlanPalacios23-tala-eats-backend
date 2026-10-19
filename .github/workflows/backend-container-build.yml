@@ -65,7 +65,7 @@ jobs:
             > dist/PROVENANCE.txt
           echo "DOCKER_QA_ARCHIVE_SHA256_PASS"
       - name: Upload immutable QA artifact (90 day retention, not production deploy)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: talaeats-backend-ci-${{ github.sha }}
           path: |
