@@ -523,3 +523,48 @@ model PlatformFavorite {
   @@index([restaurantId])
   @@map("favorites")
 }
+
+  
+// E2 source: Python platform.py models Review, ChatMessage, SupportTicket.
+// Staging-only: no external messaging, FCM or live notification dispatch.
+model PlatformReview {
+  id               Int      @id @default(autoincrement())
+  orderId          Int      @map("order_id")
+  userId           Int      @map("user_id")
+  restaurantId     Int      @map("restaurant_id")
+  driverId         Int?     @map("driver_id")
+  restaurantRating Int      @map("restaurant_rating")
+  driverRating     Int?     @map("driver_rating")
+  comment          String   @default("")
+  createdAt        DateTime @default(now()) @map("created_at")
+  @@unique([orderId,userId],map:"uq_review_customer_order")
+  @@index([userId])
+  @@index([restaurantId])
+  @@map("reviews")
+}
+model PlatformChatMessage {
+  id          Int      @id @default(autoincrement())
+  orderId     Int      @map("order_id")
+  senderId    Int      @map("sender_id")
+  message     String   @default("") @db.VarChar(1000)
+  messageType String   @default("text") @map("message_type") @db.VarChar(30)
+  mediaUrl    String   @default("") @map("media_url") @db.VarChar(600)
+  lat         Float?
+  lng         Float?
+  createdAt   DateTime @default(now()) @map("created_at")
+  @@index([orderId,createdAt])
+  @@index([senderId])
+  @@map("chat_messages")
+}
+model PlatformSupportTicket {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  orderId   Int?     @map("order_id")
+  category  String   @db.VarChar(80)
+  message   String
+  status    String   @default("open") @db.VarChar(30)
+  createdAt DateTime @default(now()) @map("created_at")
+  @@index([userId,createdAt])
+  @@index([orderId])
+  @@map("support_tickets")
+}
