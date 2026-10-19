@@ -1117,3 +1117,112 @@ v11Router.put('/privacy/preferences',async(req,res)=>{
   analytics_opt_in:updated.analyticsOptIn,
   personalization_opt_in:updated.personalizationOptIn});
 });
+
+
+// H1: V11 stage-only safe HTTP flows, no LIVE push/PSP/map provider.
+v11Router.put('/admin/canary',async(req,res)=>{
+ const who=await account(req,['admin']);
+ const p=valid(z.strictObject({percent:z.number().int().min(0).max(100)}),req.body);
+ await db.$transaction(async tx=>{
+  await tx.stageSystemSetting.upsert({where:{key:'v11.canary_percent'},
+   create:{key:'v11.canary_percent',value:String(p.percent),valueType:'integer',
+    description:'Porcentaje rollout V11',updatedByUserId:who.id},
+   update:{value:String(p.percent),updatedByUserId:who.id}});
+  await tx.authAuditEvent.create({data:{userId:who.id,action:'v11.canary.update',
+   entityType:'system_setting',entityId:'v11.canary_percent',
+   detail:String(p.percent)}});
+ });
+ res.json({canary_percent:p.percent});
+});
+const pushPublic=(x:{
+ id:number;platform:string;deviceLabel:string;active:boolean;
+ createdAt:Date;updatedAt:Date;
+})=>({id:x.id,platform:x.platform,device_label:x.deviceLabel,
+ active:x.active,created_at:x.createdAt.toISOString(),
+ updated_at:x.updatedAt.toISOString()});
+v11Router.post('/push/subscriptions',async(req,res)=>{
+ const who=await account(req);
+ const p=valid(z.strictObject({
+  endpoint:z.url().min(20).max(1200),
+  p256dh:z.string().max(300).default(''),
+  auth:z.string().max(300).default(''),
+  platform:z.enum(['web','android','ios']).default('web'),
+  device_label:z.string().max(200).default(''),
+ }),req.body);
+ if(!p.endpoint.startsWith('https://'))return bad(422,'Push requiere HTTPS');
+ // Endpoints are bearer capabilities; one endpoint can only belong to one
+ // current account. Serialize cross-worker moves by PostgreSQL advisory lock.
+ const created=await db.$transaction(async tx=>{
+  await tx.$queryRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))',
+   p.endpoint);
+  await tx.stagePushSubscription.updateMany({where:{
+   endpoint:p.endpoint,userId:{not:who.id},active:true},data:{active:false}});
+  return tx.stagePushSubscription.upsert({
+   where:{uq_push_user_endpoint:{userId:who.id,endpoint:p.endpoint}},
+   create:{userId:who.id,endpoint:p.endpoint,p256dh:p.p256dh,auth:p.auth,
+    platform:p.platform,deviceLabel:p.device_label,active:true},
+   update:{p256dh:p.p256dh,auth:p.auth,platform:p.platform,
+    deviceLabel:p.device_label,active:true}});
+ },{maxWait:10000,timeout:15000});
+ res.setHeader('Cache-Control','private, no-store');
+ res.status(201).json(pushPublic(created));
+});
+v11Router.delete('/push/subscriptions/:subscriptionId',async(req,res)=>{
+ const who=await account(req),id=param(req,'subscriptionId');
+ const updated=await db.stagePushSubscription.updateMany({where:{
+  id,...(who.role!=='admin'?{userId:who.id}:{})},data:{active:false}});
+ if(!updated.count)return bad(404,'Suscripción no encontrada');
+ res.status(204).end();
+});
+v11Router.post('/maps/geocode',async(req,res)=>{
+ await account(req);
+ const p=valid(z.strictObject({query:z.string().min(3).max(300),
+  limit:z.number().int().min(1).max(10).default(5)}),req.body);
+ const rows=await db.marketplaceRestaurant.findMany({where:{isOpen:true,
+  OR:[{name:{contains:p.query,mode:'insensitive'}},
+   {address:{contains:p.query,mode:'insensitive'}}]},
+  take:p.limit,orderBy:{id:'asc'}});
+ // DB-backed local Tala marketplace directory ONLY, not street-level geocode.
+ res.json({query:p.query,results:rows.map(x=>({
+  label:x.name,lat:x.lat,lng:x.lng,address:x.address,
+  source:'verified-marketplace-record'})),
+  provider:'local-catalog',provider_status:'no-external-geocoder'});
+});
+v11Router.post('/maps/route',async(req,res)=>{
+ await account(req);
+ const n=z.number().finite(),p=valid(z.strictObject({
+  origin_lat:n.min(-90).max(90),origin_lng:n.min(-180).max(180),
+  destination_lat:n.min(-90).max(90),destination_lng:n.min(-180).max(180),
+ }),req.body);
+ const km=haversine(p.origin_lat,p.origin_lng,
+  p.destination_lat,p.destination_lng);
+ const kmRoad=km*1.3;
+ res.json({distance_km:round(kmRoad,2),
+  duration_minutes:Math.max(1,Math.round(kmRoad/25*60)),
+  source:'haversine-road-factor-estimate',precise_road_route:false,
+  provider:'local-stage',real_time_traffic:false});
+});
+const liveStages=['received','confirmed','preparing','ready',
+ 'assigned','picked_up','on_the_way','delivered'];
+v11Router.get('/orders/:orderId/live',async(req,res)=>{
+ const who=await account(req),id=param(req,'orderId');
+ const order=await authorizedOrder(id,who);
+ const events=await db.stageOrderEvent.findMany({where:{orderId:id},
+  orderBy:[{createdAt:'asc'},{id:'asc'}]});
+ const idx=liveStages.indexOf(order.status);
+ // Never derive driver GPS from stale DB fields: only verified fresh
+ // post-assignment Redis GPS would be safe, and is not enabled in H1.
+ const output={id:order.id,user_id:order.userId,restaurant_id:order.restaurantId,
+  driver_id:order.driverId,status:order.status,order_type:order.orderType,
+  payment_status:order.paymentStatus,total:order.total.toFixed(2),
+  delivery_fee:order.deliveryFee.toFixed(2),
+  estimated_minutes:order.estimatedMinutes,
+  ...(who.id===order.userId?{delivery_pin:order.deliveryPin}:{})};
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({order:output,timeline:events.map(e=>({
+  status:e.status,at:e.createdAt.toISOString(),metadata:e.metadataJson})),
+  stages:liveStages.map((key,i)=>({key,done:idx>=i,active:key===order.status})),
+  route:null,driver_location:null,
+  next_action:order.status==='delivered'?'rate':
+   order.status==='on_the_way'?'delivery_pin':'track'});
+});
