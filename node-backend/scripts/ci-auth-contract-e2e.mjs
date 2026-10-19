@@ -75,6 +75,49 @@ const devices=await req('/api/v1/auth/devices',{headers:ownHeaders});
 assert.equal(devices.code,200);
 assert.equal(devices.body.length,2);
 assert.equal(devices.body.filter(x=>x.current).length,1);
+
+// E2E: revocar un dispositivo específico (no el actual), sin revocar otros.
+// A user cannot revoke another account's session, even with a known ID.
+const third=await req('/api/v1/auth/login',{
+  method:'POST',headers,body:JSON.stringify({email,password})
+});
+assert.equal(third.code,200);
+const thirdToken=third.body.access_token;
+const thirdDevices=await req('/api/v1/auth/devices',{headers:ownHeaders});
+assert.equal(thirdDevices.code,200);
+assert.equal(thirdDevices.body.length,3);
+const thirdId=thirdDevices.body.find(x=>!x.current && x.id!==devices.body.find(d=>!d.current).id)?.id;
+assert.ok(Number.isSafeInteger(thirdId));
+const outsider=await req('/api/v1/auth/register',{
+  method:'POST',headers,body:JSON.stringify({
+    name:'Another Customer',email:'other.'+process.pid+'@example.test',password
+  })
+});
+assert.equal(outsider.code,201);
+const outsiderHeaders={...headers,authorization:'Bearer '+outsider.body.access_token};
+const denied=await req('/api/v1/auth/devices/'+thirdId+'/revoke',{
+  method:'POST',headers:outsiderHeaders
+});
+assert.equal(denied.code,404);
+const thirdStillValid=await req('/api/v1/auth/me',{
+  headers:{...headers,authorization:'Bearer '+thirdToken}
+});
+assert.equal(thirdStillValid.code,200);
+const individual=await req('/api/v1/auth/devices/'+thirdId+'/revoke',{
+  method:'POST',headers:ownHeaders
+});
+assert.equal(individual.code,200);
+assert.equal(individual.body.revoked,true);
+assert.equal(individual.body.current,false);
+const killedThird=await req('/api/v1/auth/me',{
+  headers:{...headers,authorization:'Bearer '+thirdToken}
+});
+assert.equal(killedThird.code,401);
+const ownAfterIndividual=await req('/api/v1/auth/me',{headers:ownHeaders});
+assert.equal(ownAfterIndividual.code,200);
+const outsiderStillValid=await req('/api/v1/auth/me',{headers:outsiderHeaders});
+assert.equal(outsiderStillValid.code,200);
+
 const revoke=await req('/api/v1/auth/devices/revoke-others',{
   method:'POST',headers:ownHeaders
 });
