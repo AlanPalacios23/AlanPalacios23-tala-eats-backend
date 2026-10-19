@@ -1,0 +1,25 @@
+name: TALA EATS | V3 existing-credential worker auth offline test
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/kali_v3_worker_auth_proof_readonly.py'
+      - 'scripts/test_kali_v3_worker_auth_proof_readonly.py'
+      - '.github/workflows/kali-v3-worker-auth-proof-qa.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-security:
+    name: V3 existing-credential read-only proof, 20 security cases
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m py_compile scripts/kali_v3_worker_auth_proof_readonly.py scripts/test_kali_v3_worker_auth_proof_readonly.py
+      - run: python scripts/test_kali_v3_worker_auth_proof_readonly.py
