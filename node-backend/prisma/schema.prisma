@@ -1090,3 +1090,16 @@ model StageMediaAsset {
  @@index([orderId])
  @@map("media_assets")
 }
+
+
+model StageReferralConversion {
+ id Int @id @default(autoincrement())
+ referrerUserId Int @map("referrer_user_id")
+ referredUserId Int @unique @map("referred_user_id")
+ referralCode String @map("referral_code") @db.VarChar(30)
+ rewardAmount Decimal @default(0) @map("reward_amount") @db.Decimal(10,2)
+ status String @default("pending") @db.VarChar(30)
+ createdAt DateTime @default(now()) @map("created_at")
+ @@index([referrerUserId])
+ @@map("referral_conversions")
+}
