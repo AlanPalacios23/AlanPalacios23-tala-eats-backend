@@ -70,7 +70,7 @@ export async function completeCashPickupStage(
     const order=await tx.marketOrder.findUnique({
       where:{id:orderId},include:{restaurant:true},
     });
-    if(!order)reject(404,'Pedido no encontrado');
+    if(!order)return reject(404,'Pedido no encontrado');
     if(actor.role!=='admin' && order.restaurant.ownerId!==actor.id)
       reject(403,'Ese pedido no pertenece a tu restaurante');
     if(order.orderType!=='pickup'||order.paymentMethod!=='cash')
@@ -100,7 +100,7 @@ export async function completeCashPickupStage(
     `;
     if(!wallets.length)reject(503,'Cuenta de fidelidad no disponible');
     const loyalty=await tx.authLoyaltyAccount.findUnique({where:{userId:order.userId}});
-    if(!loyalty)reject(503,'Cuenta de fidelidad no disponible');
+    if(!loyalty)return reject(503,'Cuenta de fidelidad no disponible');
     const last=await tx.marketOrder.findFirst({
       where:{userId:order.userId,status:'delivered',id:{not:order.id},deliveredAt:{not:null}},
       orderBy:[{deliveredAt:'desc'},{id:'desc'}],
