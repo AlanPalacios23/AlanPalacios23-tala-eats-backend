@@ -95,6 +95,8 @@ model AuthUser {
   assignedOrders        MarketOrder[] @relation("DriverOrders")
   driverProfile         MarketplaceDriverProfile?
   restaurantEmployment  MarketplaceRestaurantEmployee[]
+  customerAddresses     StageCustomerAddress[]
+  favoriteRestaurants   StageCustomerFavorite[]
   @@index([role])
   @@map("users")
 }
@@ -227,6 +229,7 @@ model MarketplaceRestaurant {
   owner             AuthUser? @relation(fields:[ownerId],references:[id],onDelete:SetNull)
   menuItems         MarketplaceMenuItem[]
   employees         MarketplaceRestaurantEmployee[]
+  customerFavorites StageCustomerFavorite[]
   orders            MarketOrder[]
   @@index([ownerId])
   @@index([marketCode])
@@ -492,4 +495,31 @@ model MarketplaceRestaurantEmployee {
   @@index([restaurantId])
   @@index([userId])
   @@map("restaurant_employees")
+}
+
+// E1 customer platform parity: Python models.Address and Favorite.
+// PostgreSQL enforces one default address per customer with a partial index.
+model StageCustomerAddress {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  label     String   @default("Casa") @db.VarChar(60)
+  address   String   @db.VarChar(300)
+  lat       Float?
+  lng       Float?
+  isDefault Boolean  @default(false) @map("is_default")
+  user      AuthUser @relation(fields:[userId],references:[id],onDelete:Cascade)
+  @@index([userId])
+  @@index([userId,isDefault])
+  @@map("addresses")
+}
+model StageCustomerFavorite {
+  id           Int      @id @default(autoincrement())
+  userId       Int      @map("user_id")
+  restaurantId Int      @map("restaurant_id")
+  user         AuthUser @relation(fields:[userId],references:[id],onDelete:Cascade)
+  restaurant   MarketplaceRestaurant @relation(fields:[restaurantId],references:[id],onDelete:Cascade)
+  @@unique([userId,restaurantId],map:"uq_customer_favorite_restaurant")
+  @@index([userId])
+  @@index([restaurantId])
+  @@map("favorites")
 }
