@@ -84,6 +84,19 @@ def clean_redis_url(url):
         return u.scheme in ("redis","rediss") and bool(u.hostname) and (u.port or 6379)>0
     except (TypeError,ValueError):return False
 
+def redis_alias_is_v3(url, worker_nets, redis_nets):
+    # Reject REDIS_URL if it could target GREEN or an unrelated Redis.
+    try:
+        host=(urlsplit(url).hostname or "").lower()
+    except (TypeError,ValueError):
+        return False
+    for net in set(worker_nets or {}) & set(redis_nets or {}):
+        aliases=set((redis_nets[net] or {}).get("Aliases") or [])
+        aliases.add("talaeats-v3-redis-1")
+        if host in {str(alias).lower() for alias in aliases}:
+            return True
+    return False
+
 def main():
     print("TALA_V3_RECOVERY_PREP_BEGIN")
     try:
@@ -104,6 +117,11 @@ def main():
             if not db_env.get(key):
                 print("DB_DECLARED_CONFIG_INCOMPLETE")
                 return
+        redis_labels=dj("talaeats-v3-redis-1","{{json .Config.Labels}}")
+        if redis_labels.get("com.docker.compose.project")!=PROJECT or redis_labels.get("com.docker.compose.service")!="redis":
+            print("V3_REDIS_IDENTITY_REJECTED")
+            return
+        redis_nets=dj("talaeats-v3-redis-1","{{json .NetworkSettings.Networks}}")
         desired={}
         for name,container in C.items():
             if name not in config:
@@ -127,6 +145,10 @@ def main():
                 return
             if not clean_redis_url(redis):
                 print(name.upper()+"_REDIS_URL_REJECTED")
+                return
+            nets=dj(container,"{{json .NetworkSettings.Networks}}")
+            if not redis_alias_is_v3(redis,nets,redis_nets):
+                print(name.upper()+"_REDIS_NOT_V3_ALIAS_REJECTED")
                 return
             diff=[k for k,v in base_env.items()
                   if k not in ("DATABASE_URL","REDIS_URL")
