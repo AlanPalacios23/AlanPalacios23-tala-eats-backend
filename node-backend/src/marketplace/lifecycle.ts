@@ -2,6 +2,7 @@
 // Source contracts: backend/app/routes/{orders,owner}.py, inventory.py.
 // No LIVE, no PSP, no customer wallet or driver/dispatch writes.
 import { db } from '../db.js';
+import { config } from '../config.js';
 import type { AuthUser, MarketOrder } from '../generated/prisma/client.js';
 
 class LifecycleError extends Error {
@@ -59,6 +60,8 @@ export async function previewCancelStage(orderId:number,actor:AuthUser) {
 export async function cancelCashPickupStage(
   orderId:number, actor:AuthUser, reason:string='Cambio de planes',
 ):Promise<number>{
+  if(config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true')
+    fail(503,'Ciclo de pedidos de staging deshabilitado');
   return db.$transaction(async tx=>{
     const locks=await tx.$queryRaw<{id:number}[]>`
       SELECT id FROM orders WHERE id=${orderId} FOR UPDATE
@@ -184,6 +187,8 @@ export async function cancelCashPickupStage(
 }
 export async function moveCashPickupOwnerStage(orderId:number,actor:AuthUser,
   next:'confirmed'|'preparing'|'ready'):Promise<number>{
+  if(config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true')
+    fail(503,'Ciclo de pedidos de staging deshabilitado');
   if(!['restaurant','admin'].includes(actor.role))fail(403,'No autorizado');
   return db.$transaction(async tx=>{
     const locks=await tx.$queryRaw<{id:number}[]>`
