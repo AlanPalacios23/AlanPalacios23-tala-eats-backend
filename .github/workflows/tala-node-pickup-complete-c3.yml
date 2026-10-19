@@ -50,7 +50,9 @@ jobs:
           cache: npm
           cache-dependency-path: node-backend/package-lock.json
       - name: Strict Python route inventory unchanged
-        run: python3 scripts/python_route_inventory.py --check
+        run: |
+          python3 scripts/python_route_inventory.py --check
+          python3 scripts/node_route_coverage.py --check
       - name: Frozen dependencies and disposable PG15 migrations
         run: |
           npm ci --no-audit --no-fund
