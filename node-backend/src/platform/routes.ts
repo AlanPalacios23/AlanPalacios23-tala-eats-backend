@@ -407,8 +407,8 @@ function walletTransactionPublic(v:{
   balanceAfter:{toString():string};referenceType:string;
   referenceId:string;description:string;createdAt:Date;
 }){
-  return {id:v.id,kind:v.kind,amount:v.amount.toString(),
-    balance_after:v.balanceAfter.toString(),
+  return {id:v.id,kind:v.kind,amount:v.amount.toFixed(2),
+    balance_after:v.balanceAfter.toFixed(2),
     reference_type:v.referenceType,reference_id:v.referenceId,
     description:v.description,created_at:v.createdAt.toISOString()};
 }
@@ -423,7 +423,7 @@ platformRouter.get('/wallet',async(req,res)=>{
   ]);
   if(!wallet)return fail(503,'Cuenta de fidelidad no disponible');
   res.setHeader('Cache-Control','private, no-store');
-  res.json({balance:wallet.walletBalance.toString(),
+  res.json({balance:wallet.walletBalance.toFixed(2),
     points:wallet.points,plus_member:wallet.plusMember,
     referral_code:wallet.referralCode,
     transactions:transactions.map(walletTransactionPublic)});
@@ -467,7 +467,7 @@ platformRouter.get('/groups/:groupCode',async(req,res)=>{
   });
   res.setHeader('Cache-Control','private, no-store');
   res.json(orders.map(o=>({id:o.id,status:o.status,
-    total:o.total.toString(),
+    total:o.total.toFixed(2),
     scheduled_for:o.scheduledFor?.toISOString()??null})));
 });
 platformRouter.get('/referral',async(req,res)=>{
