@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { db } from '../db.js';
 import { config } from '../config.js';
 import { createCashPickupOnly, isCashPickupIntent } from './checkout.js';
+import { previewCancelStage, cancelCashPickupStage, moveCashPickupOwnerStage } from './lifecycle.js';
 import { current } from '../auth/routes.js';
 import type { AuthUser, MarketplaceRestaurant, MarketplaceMenuItem,
   MarketplaceDriverProfile, MarketOrder, MarketOrderItem } from '../generated/prisma/client.js';
@@ -279,6 +280,24 @@ stageOrdersRouter.post('/:orderId/reorder',async(req,res)=>{
     })),
   });
 });
+stageOrdersRouter.get('/:orderId/cancellation-preview',async(req,res)=>{
+  const account=await user(req,['customer','admin']);
+  const result=await previewCancelStage(idParam(req,'orderId'),account);
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(result);
+});
+stageOrdersRouter.post('/:orderId/cancel',async(req,res)=>{
+  const account=await user(req,['customer','admin']);
+  const raw=req.query.reason;
+  if(raw!==undefined&&(typeof raw!=='string'||raw.length>300))
+    throw new RouteError(422,'Motivo inválido');
+  const id=await cancelCashPickupStage(idParam(req,'orderId'),account,
+    typeof raw==='string'?raw:'Cambio de planes');
+  const order=await db.marketOrder.findUnique({where:{id},include:orderInclude});
+  if(!order)throw new RouteError(503,'Pedido no encontrado tras cancelación');
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(orderView(order,true));
+});
 stageOrdersRouter.get('/:orderId',async(req,res)=>{
   const account=await user(req);
   const order=await db.marketOrder.findUnique({
@@ -305,6 +324,22 @@ stageOrdersRouter.post('/',async(req,res)=>{
   if(!created)throw new RouteError(503,'Pedido transaccional no encontrado');
   res.setHeader('Cache-Control','private, no-store');
   res.status(201).json(orderView(created,true));
+});
+ownerRouter.patch('/orders/:orderId/status',async(req,res)=>{
+  const account=await user(req,['restaurant','admin']);
+  const parsed=z.strictObject({status:z.string()}).safeParse(req.body);
+  if(!parsed.success)throw new RouteError(422,'Estado inválido');
+  const value=parsed.data.status;
+  const id=idParam(req,'orderId');
+  const orderId=value==='cancelled'?
+    await cancelCashPickupStage(id,account,'Cancelado por restaurante'):
+    ['confirmed','preparing','ready'].includes(value)?
+      await moveCashPickupOwnerStage(id,account,value as 'confirmed'|'preparing'|'ready'):
+      (()=>{throw new RouteError(503,'Transición no disponible en staging');})();
+  const order=await db.marketOrder.findUnique({where:{id:orderId},include:orderInclude});
+  if(!order)throw new RouteError(503,'Pedido no encontrado tras actualización');
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(orderView(order,false));
 });
 ownerRouter.get('/orders',async(req,res)=>{
   const account=await user(req,['restaurant','admin']);
