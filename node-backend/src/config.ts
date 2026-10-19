@@ -11,6 +11,7 @@ const schema = z.object({
   STRIPE_FINANCIAL_WRITES_ENABLED: z.literal('false'),
   AUTH_V02_ENABLED: z.enum(['false', 'true']).default('false'),
   MARKETPLACE_B_ENABLED: z.enum(['false','true']).default('false'),
+  STAGE_DRIVER_DELIVERY_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_PICKUP_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
   // Synthetic checkout C1 only models the default Python v1.5.2 policy.
   // Refuse alternative policies rather than silently computing wrong fees.
@@ -53,4 +54,10 @@ if (config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED === 'true' &&
     (config.MARKETPLACE_B_ENABLED !== 'true' ||
       config.AUTH_V02_ENABLED !== 'true')) {
   throw new Error('STAGE_PICKUP_CHECKOUT_REQUIRES_MARKETPLACE_AND_AUTH');
+}
+
+if(config.STAGE_DRIVER_DELIVERY_ENABLED==='true' &&
+  (config.MARKETPLACE_B_ENABLED!=='true'||config.AUTH_V02_ENABLED!=='true'||
+   config.MERCHANT_MANAGED_DELIVERY==='true')){
+  throw new Error('STAGE_DRIVER_DELIVERY_REQUIRES_ISOLATED_AUTH_AND_MARKETPLACE');
 }
