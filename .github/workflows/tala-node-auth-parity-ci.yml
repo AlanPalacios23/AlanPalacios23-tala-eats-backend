@@ -1,0 +1,45 @@
+name: TALA EATS | Python Auth to Node Parity CI
+on:
+  push:
+    branches: [feat/node-python-parity-auth-v02]
+    paths:
+      - 'node-backend/**'
+      - '.github/workflows/tala-node-auth-parity-ci.yml'
+  pull_request:
+    branches: [feat/node24-pm2-native-staging-20261019]
+    paths:
+      - 'node-backend/**'
+      - '.github/workflows/tala-node-auth-parity-ci.yml'
+permissions:
+  contents: read
+jobs:
+  auth-contract:
+    name: Node24 Prisma7 Python authentication parity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      DATABASE_URL: postgresql://tala_node_stage:ci-only-postgres@127.0.0.1:15435/tala_node_stage
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Frozen dependency tree
+        run: npm ci --no-audit --no-fund
+      - name: Prisma generated client and validation
+        run: |
+          npm run generate
+          npm run db:validate
+      - name: TypeScript compilation
+        run: npm run build
+      - name: Node authentication parity and existing staging regression tests
+        run: npm test
+      - name: No cross-project deployment credentials or LIVE use
+        run: |
+          node -e 'const p=require("./package.json");if(!p.private)process.exit(1)'
+          ! grep -ER --include='*.ts' -E 'sk_live_|rk_live_|DATABASE_URL_PRODUCTION' src
