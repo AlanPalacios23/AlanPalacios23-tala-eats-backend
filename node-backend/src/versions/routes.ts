@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { db } from '../db.js';
 import { config } from '../config.js';
 import { account, bad, param } from '../operational/routes.js';
+import { verifyTotp } from '../auth/crypto.js';
 export const v9Router=Router();
 export const v10Router=Router();
 export const v11Router=Router();
@@ -1423,4 +1424,392 @@ v11Router.get('/admin/command-center',async(req,res)=>{
   integrations:readinessIntegrations(),
   runtime:{traffic_sampled:false,websocket_active:false},
   canary_percent:Math.max(0,Math.min(100,Number(stageSetting?.value??0)||0))});
+});
+
+
+// H3 Python V9 growth / partner / corporate parity. Stage only.
+const userExperimentBucket=(value:string)=>parseInt(createHash('sha256')
+ .update(value).digest('hex').slice(0,8),16)%100;
+v9Router.post('/admin/experiments',async(req,res)=>{
+ await account(req,['admin']);
+ const p=valid(z.strictObject({
+  key:z.string().min(2).max(100).regex(/^[a-z0-9_.-]+$/),
+  name:z.string().min(2).max(180),
+  variants:z.array(z.string().min(1).max(60)).min(1).max(10)
+   .default(['control','variant']),
+  audience_role:z.enum(['all','customer','restaurant','driver','admin']).default('customer'),
+  rollout_percent:z.number().int().min(0).max(100).default(100),
+  primary_metric:z.string().min(1).max(100).default('checkout_completed'),
+  status:z.enum(['draft','running','paused','completed']).default('running'),
+ }),req.body);
+ if(new Set(p.variants).size!==p.variants.length)return bad(422,'Variantes repetidas');
+ const existing=await db.stageExperiment.findUnique({where:{key:p.key}});
+ if(existing)return bad(409,'Ya existe ese experimento');
+ const row=await db.stageExperiment.create({data:{
+  key:p.key,name:p.name,variantsJson:JSON.stringify(p.variants),
+  audienceRole:p.audience_role,rolloutPercent:p.rollout_percent,
+  primaryMetric:p.primary_metric,status:p.status}});
+ res.status(201).json({id:row.id,key:row.key,status:row.status});
+});
+v9Router.get('/experiments/active',async(req,res)=>{
+ const who=await account(req);
+ const experiments=await db.stageExperiment.findMany({
+  where:{status:'running',audienceRole:{in:['all',who.role]}},
+  orderBy:{id:'asc'},take:300});
+ const rows=[];
+ for(const exp of experiments){
+  const bucket=userExperimentBucket(exp.key+':'+who.id);
+  if(bucket>=exp.rolloutPercent)continue;
+  const options=JSON.parse(exp.variantsJson) as string[];
+  const variants=options.length?options:['control'];
+  const index=userExperimentBucket('variant:'+exp.key+':'+who.id)%variants.length;
+  await db.stageExperimentAssignment.createMany({data:[{
+   experimentId:exp.id,userId:who.id,variant:variants[index]!}],
+   skipDuplicates:true});
+  const x=await db.stageExperimentAssignment.findUnique({where:{
+   uq_experiment_user:{experimentId:exp.id,userId:who.id}}});
+  if(!x)return bad(503,'Asignación de cohorte no disponible');
+  rows.push({key:exp.key,variant:x.variant,metric:exp.primaryMetric});
+ }
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(rows);
+});
+v9Router.get('/admin/experiments',async(req,res)=>{
+ await account(req,['admin']);
+ const experiments=await db.stageExperiment.findMany({
+  orderBy:{createdAt:'desc'},take:200,include:{assignments:true}});
+ const metrics=await db.stageProductEvent.findMany({
+  where:{userId:{not:null},eventName:{in:experiments.map(x=>x.primaryMetric)}},
+  select:{eventName:true,userId:true,createdAt:true},take:100000});
+ const data=experiments.map(exp=>{
+  const counts:Record<string,{assigned:number;converted:number;conversion_rate:number}>={};
+  const distribution:Record<string,number>={};
+  for(const a of exp.assignments){
+   distribution[a.variant]=(distribution[a.variant]??0)+1;
+  }
+  for(const [variant,assigned] of Object.entries(distribution)){
+   const users=new Set(exp.assignments.filter(x=>x.variant===variant)
+    .filter(x=>metrics.some(y=>y.userId===x.userId&&
+     y.eventName===exp.primaryMetric&&y.createdAt>=x.createdAt))
+    .map(x=>x.userId));
+   const converted=users.size;
+   counts[variant]={assigned,converted,
+    conversion_rate:round(100*converted/Math.max(1,assigned),2)};
+  }
+  return {id:exp.id,key:exp.key,name:exp.name,status:exp.status,
+   rollout_percent:exp.rolloutPercent,primary_metric:exp.primaryMetric,
+   assignments:distribution,metrics:counts};
+ });
+ res.setHeader('Cache-Control','private, no-store');res.json(data);
+});
+v9Router.get('/admin/corporate/:accountId/statement',async(req,res)=>{
+ await account(req,['admin']);
+ const id=param(req,'accountId');
+ const org=await db.stageCorporateAccount.findUnique({where:{id}});
+ if(!org)return bad(404,'Cuenta empresarial no encontrada');
+ const raw=req.query.month;
+ if(raw!==undefined&&(typeof raw!=='string'||
+   !/^\d{4}-(0[1-9]|1[0-2])$/.test(raw)))return bad(400,'Mes inválido');
+ const now=new Date();
+ const label=typeof raw==='string'?raw:now.toISOString().slice(0,7);
+ const [year,month]=label.split('-').map(Number);
+ const start=new Date(Date.UTC(year!,month!-1,1));
+ const end=new Date(Date.UTC(year!,month!,1));
+ const orders=await db.marketOrder.findMany({
+  where:{corporateAccountId:id,createdAt:{gte:start,lt:end},
+   status:{not:'cancelled'}},
+  select:{id:true,userId:true,total:true,paymentStatus:true,createdAt:true},
+  orderBy:{createdAt:'asc'},take:10000});
+ const amount=orders.reduce((sum,x)=>sum+
+  BigInt(x.total.toFixed(2).replace('.','')),0n);
+ const total=(amount/100n).toString()+'.'+(amount%100n).toString().padStart(2,'0');
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({account_id:id,company:org.name,period:label,
+  orders:orders.map(x=>({id:x.id,user_id:x.userId,
+   total:x.total.toFixed(2),payment_status:x.paymentStatus,
+   created_at:x.createdAt.toISOString()})),
+  total,budget:org.monthlyBudget.toFixed(2)});
+});
+v9Router.post('/admin/partner-keys',async(req,res)=>{
+ const who=await account(req,['admin']);
+ const p=valid(z.strictObject({
+  partner_name:z.string().min(2).max(180),
+  scopes:z.string().max(500).default('catalog:read'),
+ }),req.body);
+ // Never mint LIVE keys or grant order access in this lab.
+ if(p.scopes!=='catalog:read')return bad(403,'Solamente catalog:read en staging');
+ const raw='te_stage_'+randomBytes(30).toString('base64url');
+ const record=await db.$transaction(async tx=>{
+  const created=await tx.stagePartnerApiKey.create({data:{
+   partnerName:p.partner_name,keyHash:createHash('sha256')
+    .update(raw).digest('hex'),scopes:p.scopes}});
+  await tx.authAuditEvent.create({data:{userId:who.id,action:'v9.partner.create',
+   entityType:'partner_api_key',entityId:String(created.id),
+   detail:'Staging, scope=catalog:read; secret shown only at creation'}});
+  return created;
+ });
+ res.setHeader('Cache-Control','no-store');
+ res.status(201).json({id:record.id,partner:record.partnerName,
+  api_key:raw,scopes:record.scopes,warning:'La clave solo se muestra una vez.'});
+});
+v9Router.get('/partner/catalog',async(req,res)=>{
+ const raw=req.header('x-partner-key')??'';
+ if(!/^te_stage_[a-zA-Z0-9_-]{40}$/.test(raw))return bad(401,'Partner key inválida');
+ const digest=createHash('sha256').update(raw).digest('hex');
+ const key=await db.stagePartnerApiKey.findUnique({where:{keyHash:digest}});
+ if(!key?.active||!key.scopes.split(',').includes('catalog:read'))
+  return bad(401,'Partner key inválida');
+ const shops=await db.marketplaceRestaurant.findMany({where:{isOpen:true},
+  select:{id:true,name:true,cuisine:true,branchCode:true,brandName:true},
+  orderBy:{id:'asc'},take:500});
+ await db.stagePartnerApiKey.update({where:{id:key.id},
+  data:{lastUsedAt:new Date()}});
+ res.setHeader('Cache-Control','no-store');
+ res.json({restaurants:shops.map(x=>({id:x.id,name:x.name,cuisine:x.cuisine,
+  branch_code:x.branchCode,brand_name:x.brandName}))});
+});
+v9Router.post('/admin/marketing/:automationId/run',async(req,res)=>{
+ const who=await account(req,['admin']);
+ const id=param(req,'automationId');
+ const result=await db.$transaction(async tx=>{
+  const lock=await tx.$queryRawUnsafe(
+   'SELECT id FROM marketing_automations WHERE id=$1 FOR UPDATE',id);
+  if(!Array.isArray(lock)||!lock.length)return bad(404,'Automatización no disponible');
+  const auto=await tx.stageMarketingAutomation.findUnique({where:{id}});
+  if(!auto?.active)return bad(404,'Automatización no disponible');
+  if(auto.channel!=='in_app')return bad(503,'SMTP worker no configurado en Node');
+  if(auto.lastRunAt&&Date.now()-auto.lastRunAt.getTime()<15*60000)
+   return bad(429,'Ya se ejecutó esta campaña en los últimos 15 minutos');
+  const users=await tx.authUser.findMany({where:{
+   role:'customer',isActive:true,marketingOptIn:true},
+   select:{id:true},take:5000,orderBy:{id:'asc'}});
+  const orders=await tx.marketOrder.findMany({where:{
+   userId:{in:users.map(x=>x.id)}},
+   select:{userId:true,status:true,total:true,createdAt:true}});
+  const stats=new Map<number,{n:number;spend:number;last:number|null}>();
+  for(const o of orders){
+   const x=stats.get(o.userId)??{n:0,spend:0,last:null};
+   if(o.status==='delivered'){x.n++;x.spend+=Number(o.total);}
+   x.last=Math.max(x.last??0,o.createdAt.getTime());stats.set(o.userId,x);
+  }
+  const selected=users.filter(u=>{
+   const s=stats.get(u.id)??{n:0,spend:0,last:null},
+    days=s.last===null?null:Math.floor((Date.now()-s.last)/86400000);
+   const segment=s.n===0?'new':s.n>=20||s.spend>=8000?'vip':
+    days!==null&&days>=30?'inactive':days!==null&&days>=14?'at_risk':
+    s.n>=5?'frequent':'active';
+   if(auto.segment!=='all'&&auto.segment!==segment)return false;
+   if(auto.triggerType==='vip'&&segment!=='vip')return false;
+   if(auto.triggerType==='at_risk'&&segment!=='at_risk')return false;
+   if(auto.triggerType==='first_order'&&s.n!==1)return false;
+   if(auto.triggerType==='inactive_7d'&&(days===null||days<7))return false;
+   if(auto.triggerType==='inactive_30d'&&(days===null||days<30))return false;
+   // Birthday/cart signals are unsupported until consented birth data and
+   // attributed customer events are available. Do not guess recipients.
+   if(['birthday','cart_abandoned'].includes(auto.triggerType))return false;
+   return true;
+  });
+  if(selected.length)await tx.authNotification.createMany({data:
+   selected.map(u=>({userId:u.id,kind:'growth',title:auto.name,
+    message:auto.messageTemplate.replaceAll('{coupon}',auto.couponCode)}))});
+  await tx.stageMarketingAutomation.update({where:{id},
+   data:{lastRunAt:new Date()}});
+  await tx.authAuditEvent.create({data:{userId:who.id,action:'v9.marketing.run',
+   entityType:'marketing_automation',entityId:String(id),
+   detail:'target_count='+selected.length}});
+  return {automation_id:id,targeted_users:selected.length,
+   channel:'in_app',delivery:'in_app',batch_limit:5000};
+ },{maxWait:10000,timeout:20000});
+ res.json(result);
+});
+
+
+// H3: three security management contracts. Setup never reveals existing MFA
+// secret once enrolled. No SMS fallback and no privileged live identity here.
+const base32=(raw:Uint8Array)=>{
+ const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+ let bits=0,val=0,out='';
+ for(const byte of raw){val=(val<<8)|byte;bits+=8;
+  while(bits>=5){out+=alphabet[(val>>>(bits-=5))&31];val&=(1<<bits)-1;}}
+ if(bits)out+=alphabet[(val<<(5-bits))&31];
+ return out;
+};
+const otpCode=z.strictObject({code:z.string().regex(/^\d{6}$/)});
+v9Router.post('/security/2fa/setup',async(req,res)=>{
+ const who=await account(req,['admin','restaurant','driver']);
+ const result=await db.$transaction(async tx=>{
+  const locks=await tx.$queryRawUnsafe('SELECT id FROM users WHERE id=$1 FOR UPDATE',who.id);
+  if(!Array.isArray(locks)||!locks.length)return bad(404,'Cuenta no encontrada');
+  const user=await tx.authUser.findUnique({where:{id:who.id}});
+  if(!user)return bad(404,'Cuenta no encontrada');
+  if(user.twoFactorEnabled)return bad(409,'2FA activo: recuperación verificada obligatoria');
+  // A pending secret is stable across repeated setup requests, preventing
+  // unaudited regeneration and TOCTOU enrollments.
+  const secret=user.totpSecret||base32(randomBytes(20));
+  if(!user.totpSecret)await tx.authUser.update({where:{id:who.id},
+   data:{totpSecret:secret}});
+  await tx.authAuditEvent.create({data:{userId:who.id,
+   action:'v9.2fa.setup',entityType:'user',entityId:String(who.id),
+   detail:'Pending confirmation; no existing enrolled secret reset'}});
+  return {secret,otpauth_uri:'otpauth://totp/'+
+   encodeURIComponent('Tala Eats:'+user.email)+'?secret='+secret+
+   '&issuer=Tala%20Eats&digits=6&period=30',enabled:false};
+ });
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(result);
+});
+v9Router.post('/security/2fa/confirm',async(req,res)=>{
+ const who=await account(req),p=valid(otpCode,req.body);
+ await db.$transaction(async tx=>{
+  await tx.$queryRawUnsafe('SELECT id FROM users WHERE id=$1 FOR UPDATE',who.id);
+  const user=await tx.authUser.findUnique({where:{id:who.id}});
+  if(!user?.totpSecret||!verifyTotp(user.totpSecret,p.code))
+   return bad(400,'Código inválido');
+  if(user.twoFactorEnabled)return bad(409,'2FA ya está activo');
+  await tx.authUser.update({where:{id:who.id},data:{twoFactorEnabled:true}});
+  await tx.authAuditEvent.create({data:{userId:who.id,
+   action:'v9.2fa.confirm',entityType:'user',entityId:String(who.id),
+   detail:'Authenticator enrolled'}});
+ });
+ res.json({enabled:true});
+});
+v9Router.post('/security/2fa/disable',async(req,res)=>{
+ const who=await account(req),p=valid(otpCode,req.body);
+ await db.$transaction(async tx=>{
+  await tx.$queryRawUnsafe('SELECT id FROM users WHERE id=$1 FOR UPDATE',who.id);
+  const user=await tx.authUser.findUnique({where:{id:who.id}});
+  if(!user?.twoFactorEnabled||!verifyTotp(user.totpSecret,p.code))
+   return bad(400,'Código inválido');
+  await tx.authUser.update({where:{id:who.id},
+   data:{twoFactorEnabled:false,totpSecret:''}});
+  await tx.authAuditEvent.create({data:{userId:who.id,
+   action:'v9.2fa.disable',entityType:'user',entityId:String(who.id),
+   detail:'User-proven valid authenticator code'}});
+ });
+ res.json({enabled:false});
+});
+// H3: KDS transitions are serialized by order lock. No online charge.
+v11Router.post('/merchant/orders/:orderId/bump',async(req,res)=>{
+ const who=await account(req,['restaurant','admin']);
+ const id=param(req,'orderId'),p=valid(z.strictObject({
+  action:z.enum(['confirm','start','ready','undo']),
+  station:z.string().max(60).default('general')}),req.body);
+ const result=await db.$transaction(async tx=>{
+  const lock=await tx.$queryRawUnsafe(
+   'SELECT id FROM orders WHERE id=$1 FOR UPDATE',id);
+  if(!Array.isArray(lock)||!lock.length)return bad(404,'Pedido no encontrado');
+  const order=await tx.marketOrder.findUnique({where:{id},include:{restaurant:true}});
+  if(!order)return bad(404,'Pedido no encontrado');
+  if(who.role!=='admin'&&order.restaurant.ownerId!==who.id)
+   return bad(403,'No administras ese restaurante');
+  if(order.paymentMethod!=='cash')
+   return bad(503,'KDS habilitado sólo para cobro en efectivo del laboratorio');
+  if(['cancelled','delivered'].includes(order.status))
+   return bad(409,'El pedido está finalizado');
+  const map:Record<string,string>={confirm:'confirmed',start:'preparing',ready:'ready'};
+  const previous:Record<string,string>={ready:'preparing',preparing:'confirmed',confirmed:'received'};
+  const expected:Record<string,string>={received:'confirm',confirmed:'start',preparing:'ready'};
+  const target=p.action==='undo'?previous[order.status]:map[p.action];
+  if(!target||(p.action!=='undo'&&expected[order.status]!==p.action))
+   return bad(409,'Transición KDS inválida: '+order.status+' → '+p.action);
+  const stamp=new Date();
+  await tx.marketOrder.update({where:{id},data:{
+   status:target,
+   ...(target==='confirmed'?{acceptedAt:order.acceptedAt??stamp}:{}),
+   ...(target==='preparing'?{preparingAt:order.preparingAt??stamp}:{}),
+   ...(target==='ready'?{readyAt:stamp}:{})}});
+  await tx.stageOrderEvent.create({data:{
+   orderId:id,status:target,actorUserId:who.id,
+   metadataJson:JSON.stringify({source:'v11_kds',station:p.station,action:p.action})}});
+  await tx.authNotification.create({data:{userId:order.userId,kind:'order',
+   title:'Tu pedido avanza',message:'Pedido #'+id+': '+target+'.'}});
+  await tx.stageEventOutbox.create({data:{
+   eventKey:'kds:'+id+':'+randomBytes(12).toString('hex'),
+   aggregateType:'order',aggregateId:String(id),eventType:'order.status',
+   payloadJson:JSON.stringify({status:target,source:'v11-kds'})}});
+  return {order_id:id,status:target,station:p.station};
+ },{maxWait:10000,timeout:20000});
+ res.json(result);
+});
+type DispatchCandidate={driver_id:number;name:string;distance_km:number;
+ estimated_pickup_min:number;active_deliveries:number;rating:number;
+ acceptance_rate:number;idle_minutes:number;score:number;engine:string};
+async function dispatchCandidates(order:{restaurantId:number}):Promise<DispatchCandidate[]>{
+ const shop=await db.marketplaceRestaurant.findUnique({where:{id:order.restaurantId}});
+ if(!shop)return [];
+ const drivers=await db.marketplaceDriverProfile.findMany({where:{
+  isOnline:true,isVerified:true,user:{role:'driver',isActive:true}},
+  include:{user:true},take:1000});
+ const ids=drivers.map(x=>x.userId);
+ const [busy,recent]=await Promise.all([
+  db.marketOrder.groupBy({by:['driverId'],where:{
+   driverId:{in:ids},status:{in:['assigned','picked_up','on_the_way']}},
+   _count:{_all:true}}),
+  db.marketOrder.groupBy({by:['driverId'],where:{driverId:{in:ids},
+   status:'delivered'},_max:{deliveredAt:true}})]);
+ const currentBusy=new Map(busy.map(x=>[x.driverId,x._count._all])),
+  lastDelivery=new Map(recent.map(x=>[x.driverId,x._max.deliveredAt]));
+ return drivers.map(d=>{
+  const hasGps=d.currentLat!==null&&d.currentLng!==null;
+  const distance=hasGps?haversine(d.currentLat!,d.currentLng!,shop.lat,shop.lng):99;
+  const eta=distance<90?Math.max(3,Math.round(distance/25*60+3)):999;
+  const active=currentBusy.get(d.userId)??0;
+  const last=lastDelivery.get(d.userId),
+   idle=last?Math.min(180,Math.max(0,(Date.now()-last.getTime())/60000)):180;
+  const score=Math.max(0,115-distance*8.5-eta*.7-active*25+
+   Number(d.rating)*4+(.9*8)+Math.min(12,idle/15));
+  return {driver_id:d.userId,name:d.user.name,
+   distance_km:round(distance),estimated_pickup_min:eta,
+   active_deliveries:active,rating:Number(d.rating),
+   acceptance_rate:.9,idle_minutes:round(idle,1),
+   score:round(score),engine:'dispatch-v2-fairness-eta-node-stage'};
+ }).sort((a,b)=>b.score-a.score);
+}
+v9Router.get('/admin/dispatch/:orderId/candidates',async(req,res)=>{
+ await account(req,['admin']);
+ const id=param(req,'orderId');
+ const order=await db.marketOrder.findUnique({where:{id}});
+ if(!order)return bad(404,'Pedido no encontrado');
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({order_id:order.id,candidates:(await dispatchCandidates(order)).slice(0,20)});
+});
+v9Router.post('/admin/dispatch/:orderId/auto-assign',async(req,res)=>{
+ const who=await account(req,['admin']);
+ const id=param(req,'orderId');
+ // Never auto-dispatch an online payment whose capture is unverified.
+ const initial=await db.marketOrder.findUnique({where:{id}});
+ if(!initial)return bad(404,'Pedido no encontrado');
+ if(initial.paymentMethod!=='cash'||initial.orderType!=='delivery')
+  return bad(503,'Autoasignación staging limitada a efectivo y entrega');
+ const candidates=await dispatchCandidates(initial);
+ const assigned=await db.$transaction(async tx=>{
+  // Keep driver locking in the same order as the existing driverAccept flow,
+  // serializing one-active-delivery claims across PM2 workers.
+  for(const pick of candidates.filter(x=>x.active_deliveries===0)){
+   const locked=await tx.$queryRawUnsafe(
+    'SELECT user_id FROM driver_profiles WHERE user_id=$1 AND is_online=true AND is_verified=true FOR UPDATE SKIP LOCKED',
+    pick.driver_id);
+   if(!Array.isArray(locked)||!locked.length)continue;
+   const busy=await tx.marketOrder.count({where:{driverId:pick.driver_id,
+    status:{in:['assigned','picked_up','on_the_way']}}});
+   if(busy)continue;
+   const claim=await tx.marketOrder.updateMany({where:{
+    id,status:'ready',driverId:null,paymentMethod:'cash',orderType:'delivery'},
+    data:{driverId:pick.driver_id,status:'assigned'}});
+   if(!claim.count)return bad(409,'El pedido ya no está disponible');
+   await tx.stageOrderEvent.create({data:{orderId:id,status:'assigned',
+    actorUserId:who.id,metadataJson:JSON.stringify({
+     source:'v9_auto_dispatch',score:pick.score})}});
+   await tx.stageEventOutbox.create({data:{
+    eventKey:'dispatch:'+id+':auto:'+pick.driver_id,
+    aggregateType:'order',aggregateId:String(id),eventType:'order.assigned',
+    payloadJson:JSON.stringify({driver_id:pick.driver_id,source:'v9_auto_dispatch'})}});
+   await tx.authNotification.create({data:{userId:pick.driver_id,
+    kind:'delivery',title:'Nueva entrega inteligente',
+    message:'Tala Eats te asignó el pedido #'+id+'.'}});
+   return pick;
+  }
+  return bad(409,'No hay repartidores disponibles');
+ },{maxWait:10000,timeout:20000});
+ res.json({assigned:true,order_id:id,driver:assigned});
 });

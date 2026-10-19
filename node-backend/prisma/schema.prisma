@@ -1009,3 +1009,41 @@ model StagePaymentReconciliation {
  @@index([createdAt])
  @@map("payment_reconciliations")
 }
+
+
+model StageExperiment {
+ id Int @id @default(autoincrement())
+ key String @unique @db.VarChar(100)
+ name String @db.VarChar(180)
+ variantsJson String @default("[\"control\",\"variant\"]") @map("variants_json")
+ audienceRole String @default("customer") @map("audience_role") @db.VarChar(30)
+ rolloutPercent Int @default(100) @map("rollout_percent")
+ status String @default("draft") @db.VarChar(30)
+ primaryMetric String @default("checkout_completed") @map("primary_metric") @db.VarChar(100)
+ createdAt DateTime @default(now()) @map("created_at")
+ assignments StageExperimentAssignment[]
+ @@index([status])
+ @@map("experiments")
+}
+model StageExperimentAssignment {
+ id Int @id @default(autoincrement())
+ experimentId Int @map("experiment_id")
+ userId Int @map("user_id")
+ variant String @db.VarChar(60)
+ createdAt DateTime @default(now()) @map("created_at")
+ experiment StageExperiment @relation(fields:[experimentId],references:[id],onDelete:Cascade)
+ @@unique([experimentId,userId],name:"uq_experiment_user")
+ @@index([userId])
+ @@map("experiment_assignments")
+}
+model StagePartnerApiKey {
+ id Int @id @default(autoincrement())
+ partnerName String @map("partner_name") @db.VarChar(180)
+ keyHash String @unique @map("key_hash") @db.VarChar(64)
+ scopes String @default("catalog:read") @db.VarChar(500)
+ active Boolean @default(true)
+ createdAt DateTime @default(now()) @map("created_at")
+ lastUsedAt DateTime? @map("last_used_at")
+ @@index([partnerName])
+ @@map("partner_api_keys")
+}
