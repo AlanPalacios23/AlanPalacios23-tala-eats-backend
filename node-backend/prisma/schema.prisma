@@ -1047,3 +1047,59 @@ model StagePartnerApiKey {
  @@index([partnerName])
  @@map("partner_api_keys")
 }
+
+
+model StageGiftCard {
+ id Int @id @default(autoincrement())
+ code String @unique @db.VarChar(50)
+ balance Decimal @default(0) @db.Decimal(10,2)
+ active Boolean @default(true)
+ createdAt DateTime @default(now()) @map("created_at")
+ @@map("gift_cards")
+}
+model StageDriverOffer {
+ id Int @id @default(autoincrement())
+ orderId Int @map("order_id")
+ driverId Int @map("driver_id")
+ roundNo Int @default(1) @map("round_no")
+ score Float @default(0)
+ estimatedPickupMin Int @default(5) @map("estimated_pickup_min")
+ estimatedEarning Decimal @default(0) @map("estimated_earning") @db.Decimal(10,2)
+ status String @default("offered") @db.VarChar(20)
+ offeredAt DateTime @default(now()) @map("offered_at")
+ expiresAt DateTime @map("expires_at")
+ respondedAt DateTime? @map("responded_at")
+ @@unique([orderId,driverId,roundNo],name:"uq_offer_round")
+ @@index([driverId,status])
+ @@index([orderId,status])
+ @@map("driver_offers")
+}
+model StageMediaAsset {
+ id Int @id @default(autoincrement())
+ filename String @unique @db.VarChar(180)
+ category String @db.VarChar(50)
+ userId Int @map("user_id")
+ orderId Int? @map("order_id")
+ restaurantId Int? @map("restaurant_id")
+ menuItemId Int? @map("menu_item_id")
+ mime String @db.VarChar(60)
+ bytes Int
+ attached Boolean @default(false)
+ createdAt DateTime @default(now()) @map("created_at")
+ @@index([userId,category])
+ @@index([orderId])
+ @@map("media_assets")
+}
+
+
+model StageReferralConversion {
+ id Int @id @default(autoincrement())
+ referrerUserId Int @map("referrer_user_id")
+ referredUserId Int @unique @map("referred_user_id")
+ referralCode String @map("referral_code") @db.VarChar(30)
+ rewardAmount Decimal @default(0) @map("reward_amount") @db.Decimal(10,2)
+ status String @default("pending") @db.VarChar(30)
+ createdAt DateTime @default(now()) @map("created_at")
+ @@index([referrerUserId])
+ @@map("referral_conversions")
+}
