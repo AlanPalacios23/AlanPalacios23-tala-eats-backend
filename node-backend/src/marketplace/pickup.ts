@@ -15,8 +15,10 @@ const secureCompare=(a:string,b:string):boolean=>{
   if(!/^\d{4}$/.test(a)||!/^\d{4}$/.test(b))return false;
   return timingSafeEqual(Buffer.from(a,'utf8'),Buffer.from(b,'utf8'));
 };
-// Redis is required, not optional: limits attempts at 4-digit PIN guessing
-// before any DB row locks. This key is per order/actor, TTL 15 minutes.
+// Redis is required, not optional. Enforce two independent rolling-window
+// budgets to prevent brute force through multiple merchant/admin identities:
+// 5 tries per actor/order and 12 tries total across actors per order, 15 min.
+// Authorization is checked FIRST so cross-tenant roles cannot exhaust limits.
 async function limitPickupPin(orderId:number,userId:number):Promise<void>{
   const redis=new Redis(config.REDIS_URL,{
     lazyConnect:true,connectTimeout:2000,maxRetriesPerRequest:1,
@@ -24,12 +26,16 @@ async function limitPickupPin(orderId:number,userId:number):Promise<void>{
   });
   try{
     await redis.connect();
-    const key='tala:node:stage:pickup:pin:'+orderId+':'+userId;
-    const count=await redis.eval(
-      "local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call('EXPIRE',KEYS[1],900) end; return n",
-      1,key,
+    const perActor='tala:node:stage:pickup:pin:'+orderId+':'+userId;
+    const perOrder='tala:node:stage:pickup:pin:order:'+orderId;
+    const counts=await redis.eval(
+      "local a=redis.call('INCR',KEYS[1]); if a==1 then redis.call('EXPIRE',KEYS[1],900) end; "+
+      "local b=redis.call('INCR',KEYS[2]); if b==1 then redis.call('EXPIRE',KEYS[2],900) end; "+
+      "return {a,b}", 2,perActor,perOrder,
     );
-    if(Number(count)>5)reject(429,'Demasiados intentos de PIN. Inténtalo más tarde.');
+    if(!Array.isArray(counts)||counts.length!==2 ||
+       Number(counts[0])>5||Number(counts[1])>12)
+      reject(429,'Demasiados intentos de PIN. Inténtalo más tarde.');
   }catch(error){
     if(error instanceof PickupError)throw error;
     reject(503,'Validación de PIN temporalmente no disponible');
@@ -61,6 +67,19 @@ export async function completeCashPickupStage(
     reject(503,'Entrega de staging deshabilitada');
   if(!['restaurant','admin'].includes(actor.role))
     reject(403,'No autorizado');
+  // Authorize owner before incrementing a SHARED per-order PIN budget.
+  // Otherwise a malicious merchant could lock out another merchant's pickup.
+  // The locked transaction rechecks ownership before any state change.
+  const candidate=await db.marketOrder.findUnique({
+    where:{id:orderId},
+    select:{orderType:true,paymentMethod:true,
+      restaurant:{select:{ownerId:true}}},
+  });
+  if(!candidate)reject(404,'Pedido no encontrado');
+  if(actor.role!=='admin'&&candidate.restaurant.ownerId!==actor.id)
+    reject(403,'Ese pedido no pertenece a tu restaurante');
+  if(candidate.orderType!=='pickup'||candidate.paymentMethod!=='cash')
+    reject(503,'Solamente recogida en efectivo de staging');
   await limitPickupPin(orderId,actor.id);
   return db.$transaction(async tx=>{
     const found=await tx.$queryRaw<{id:number}[]>`
