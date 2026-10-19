@@ -18,6 +18,15 @@ do{
 redis.disconnect();
 const db=new pg.Client({connectionString:process.env.DATABASE_URL});
 await db.connect();
+// New Node process may not be listening immediately after background launch.
+for(let attempt=0;attempt<50;attempt++){
+  try{
+    const response=await fetch(base+'/ready');
+    if(response.ok && (await response.json()).ready===true)break;
+  }catch{}
+  if(attempt===49)throw Error('PLATFORM_E1_API_NOT_READY');
+  await new Promise(resolve=>setTimeout(resolve,250));
+}
 const password='E1-Customer-Synthetic-Pass-2026!';
 async function req(path,{token,method='GET',body}={}){
  const response=await fetch(base+path,{
