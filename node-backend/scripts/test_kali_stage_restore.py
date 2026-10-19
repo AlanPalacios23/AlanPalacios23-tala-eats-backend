@@ -24,8 +24,7 @@ class RestoreSafety(TestCase):
              patch.object(target, "pg15_bins", return_value=True), \
              patch.object(target, "source_unchanged", return_value=True), \
              patch.object(target, "backups_safe", return_value=[Path("/tmp/fake.dump")]), \
-             patch.object(target.ROOT, "is_dir", return_value=True), \
-             patch.object(target.ROOT, "is_symlink", return_value=False), \
+             patch.object(target, "ROOT", Path("/tmp")), \
              patch.object(target, "exec_cmd", return_value=(True, "valid")), \
              patch.object(target.tempfile, "mkdtemp") as m, \
              patch.object(sys, "argv", ["script", "--plan"]):
@@ -37,8 +36,7 @@ class RestoreSafety(TestCase):
              patch.object(target, "pg15_bins", return_value=True), \
              patch.object(target, "source_unchanged", return_value=True), \
              patch.object(target, "backups_safe", return_value=[Path("/tmp/fake.dump")]), \
-             patch.object(target.ROOT, "is_dir", return_value=True), \
-             patch.object(target.ROOT, "is_symlink", return_value=False), \
+             patch.object(target, "ROOT", Path("/tmp")), \
              patch.object(target, "exec_cmd", return_value=(True, "valid")), \
              patch.object(target.tempfile, "mkdtemp") as m, \
              patch.dict(os.environ, {"TALA_STAGE_RESTORE_APPROVAL": ""}), \
