@@ -47,7 +47,7 @@ jobs:
         run: bandit -r backend/app -lll -iii -f json -o bandit-audit.json
       - name: Evidencia de auditoría
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: talaeats-backend-security-audit-${{ github.run_number }}
           path: |
