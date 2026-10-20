@@ -96,13 +96,6 @@ git merge-base --is-ancestor "$OLD_SHA" "$TARGET_SHA" || {
 [[ -n "$(git ls-tree -r --name-only "$TARGET_SHA" -- node-backend/src/server.ts)" ]] || {
   echo "ABORT_NODE_SOURCE_MISSING"; exit 1;
 }
-# Schema changes are never applied from this convenience updater.
-# They require separate reviewed migrations, backup and restore first.
-if [[ -n "$(git diff --name-only "$OLD_SHA" "$TARGET_SHA" -- node-backend/prisma)" ]]; then
-  echo "ABORT_PRISMA_CHANGE_REQUIRES_REVIEWED_MIGRATION_AND_MANUAL_RELEASE"
-  exit 1
-fi
-
 # Current PM2 stage must be exactly the expected API + worker.
 PREVIOUS_DIR="$(pm2 jlist | node -e '
 let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{
@@ -122,6 +115,25 @@ try {
   echo "ABORT_PREVIOUS_PM2_RELEASE_UNRECOVERABLE"; exit 1;
 }
 echo "PREVIOUS_RELEASE_RECOVERY=PASS"
+# The source checkout can remain on an older commit because PM2 runs a
+# separate worktree. Compare migration changes to the ACTUAL running release,
+# not to the original Git checkout, or every later update would be blocked.
+ACTIVE_SHA="$(git -C "$PREVIOUS_DIR" rev-parse --verify HEAD)" || {
+  echo "ABORT_RUNNING_PM2_RELEASE_SHA_UNKNOWN"; exit 1;
+}
+git cat-file -e "$ACTIVE_SHA^{commit}" || {
+  echo "ABORT_RUNNING_SHA_NOT_IN_SOURCE_REPOSITORY"; exit 1;
+}
+git merge-base --is-ancestor "$ACTIVE_SHA" "$TARGET_SHA" || {
+  echo "ABORT_TARGET_NOT_DESCENDANT_OF_RUNNING_RELEASE"; exit 1;
+}
+printf 'RUNNING_PM2_SHA=%s\\n' "$ACTIVE_SHA"
+# Schema changes are never applied from this convenience updater.
+# They require separate reviewed migrations, backup and restore first.
+if [[ -n "$(git diff --name-only "$ACTIVE_SHA" "$TARGET_SHA" -- node-backend/prisma)" ]]; then
+  echo "ABORT_PRISMA_CHANGE_REQUIRES_REVIEWED_MIGRATION_AND_MANUAL_RELEASE"
+  exit 1
+fi
 
 curl -fsS --max-time 5 http://127.0.0.1:18190/api/v1/ready |
   node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{
