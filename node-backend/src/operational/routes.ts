@@ -12,16 +12,19 @@ export class OpsError extends Error {
 }
 export const bad=(code:number,message:string):never=>{throw new OpsError(code,message);};
 export async function account(req:Request,roles?:string[]){
- const {user}=await current(req);
+ const {user,mfaVerified}=await current(req);
  if(roles&&!roles.includes(user.role))return bad(403,'Sin acceso');
  // Protected ADMIN operations require an enrolled TOTP on the SERVER.
  // Authenticated enrollment remains possible via v9 setup/confirm only.
  const route=req.originalUrl.split('?')[0];
  const mfaEnrollment=route==='/api/v1/v9/security/2fa/setup'||
   route==='/api/v1/v9/security/2fa/confirm';
- if(user.role==='admin'&&roles?.includes('admin')&&
-    !user.twoFactorEnabled&&!mfaEnrollment)
-  return bad(403,'Activa 2FA para acceder a funciones ADMIN');
+ if(user.role==='admin'&&roles?.includes('admin')&&!mfaEnrollment){
+  if(!user.twoFactorEnabled)
+    return bad(403,'Activa 2FA para acceder a funciones ADMIN');
+  if(!mfaVerified)
+    return bad(403,'Vuelve a iniciar sesión con tu código 2FA para administrar');
+ }
  return user;
 }
 export const param=(req:Request,name:string):number=>{
