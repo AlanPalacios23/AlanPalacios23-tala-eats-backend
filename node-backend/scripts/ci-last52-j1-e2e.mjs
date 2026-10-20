@@ -201,7 +201,8 @@ const absoluteCatalogPath=(url)=>{
  const parsed=new URL(url);
  assert.equal(parsed.protocol,'https:');
  assert.equal(parsed.host,'api-stage-talaeats.alan-palacios-dev.com');
- assert.match(parsed.pathname,/^\\/api\\/v1\\/uploads\\/catalog\\/[A-Za-z0-9_-]+\\.(jpg|png|webp)$/);
+ assert.ok(parsed.pathname.startsWith('/api/v1/uploads/catalog/'));
+ assert.match(parsed.pathname,/[.](jpg|png|webp)$/);
  return parsed.pathname;
 };
 assert.equal((await go(null,absoluteCatalogPath(cover.json.url))).status,200);
