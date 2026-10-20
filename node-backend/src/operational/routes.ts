@@ -316,8 +316,26 @@ const onboardingSchema=z.strictObject({
 operationsRouter.post('/onboarding',async(req,res)=>{
  const who=await account(req);
  const p=payload(onboardingSchema,req.body);
- if(p.documents.some(x=>!/^uploads\/[a-zA-Z0-9_./-]{1,180}$/.test(x)||
-  x.includes('..')||x.includes('//')))return bad(422,'Documento no seguro');
+ // Only attach an exact private onboarding upload belonging to this account.
+ // Match Python's /api/v1/uploads/onboarding-document/u<ID>-<random>.<ext>.
+ const owned=/^\\/api\\/v1\\/uploads\\/onboarding-document\\/(u([1-9]\\d*)-[A-Za-z0-9_-]{32}\\.(?:jpg|png|webp|pdf))$/;
+ const fileNames:string[]=[];
+ for(const url of p.documents){
+  const matched=owned.exec(url);
+  if(!matched||Number(matched[2])!==who.id)
+   return bad(403,'Documento ajeno o referencia no permitida');
+  fileNames.push(matched[1]!);
+ }
+ if(new Set(fileNames).size!==fileNames.length)
+  return bad(422,'Lista de documentos duplicados');
+ if(fileNames.length){
+  const ownedAssets=await db.stageMediaAsset.findMany({
+   where:{filename:{in:fileNames},category:'onboarding',userId:who.id},
+   select:{filename:true},
+  });
+  if(ownedAssets.length!==fileNames.length)
+   return bad(403,'Documento de alta inexistente o ajeno');
+ }
  const result=await boardUser(who.id,async tx=>{
   const old=await tx.opsOnboarding.findFirst({where:{
    userId:who.id,entityType:p.entity_type,
