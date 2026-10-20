@@ -550,7 +550,7 @@ stageDriverRouter.get('/available',async(req,res)=>{
 stageDriverRouter.get('/profile',async(req,res)=>{
   const account=await driverAccount(req);
   const profile=await db.marketplaceDriverProfile.upsert({
-    where:{userId:account.id},create:{userId:account.id},update:{},
+    where:{userId:account.id},create:{userId:account.id,isVerified:false},update:{},
   });
   res.json(jsonFields(profile,driverFields));
 });
