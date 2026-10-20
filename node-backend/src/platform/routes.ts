@@ -376,6 +376,8 @@ function supportPublic(row:{
 }
 platformRouter.get('/support',async(req,res)=>{
   const account=await user(req);
+  if(account.role==='admin'&&!account.twoFactorEnabled)
+    return fail(403,'Activa 2FA para consultar soporte ADMIN');
   const rows=await db.platformSupportTicket.findMany({
     where:account.role==='admin'?{}:{userId:account.id},
     orderBy:[{createdAt:'desc'},{id:'desc'}],take:200,

@@ -856,7 +856,8 @@ adminRouter.patch('/support/:ticketId',async(req,res)=>{
    if(p.status==='resolved'){
      await tx.authNotification.create({data:{
        userId:ticket.userId,kind:'support',title:'Respuesta de Tala Eats · Ticket #'+id,
-       message:p.reply!,
+       message:p.reply!.length>400?
+         p.reply!.slice(0,397)+'...':p.reply!,
      }});
    }
    await tx.authAuditEvent.create({data:{
