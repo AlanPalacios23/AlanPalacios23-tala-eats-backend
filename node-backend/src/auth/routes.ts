@@ -1,4 +1,5 @@
 import { randomBytes, randomInt } from 'node:crypto';
+import { isIP } from 'node:net';
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { Redis } from 'ioredis';
 import { z } from 'zod';
@@ -51,7 +52,14 @@ function isUnique(err: unknown): boolean {
     (err as { code?: string }).code === 'P2002';
 }
 function normalizedEmail(v: string): string { return v.trim().toLowerCase(); }
-function remoteIp(req: Request): string { return (req.socket.remoteAddress ?? 'unknown').slice(0, 80); }
+function remoteIp(req: Request): string {
+  // Cloudflared reaches the API over loopback. Do not put every Internet
+  // user into the same rate-limit bucket; never trust arbitrary XFF chains.
+  const peer=req.socket.remoteAddress ?? 'unknown';
+  const fromTunnel=peer==='127.0.0.1'||peer==='::1'||peer==='::ffff:127.0.0.1';
+  const cloudflare=req.header('cf-connecting-ip')?.trim() ?? '';
+  return (fromTunnel&&isIP(cloudflare)?cloudflare:peer).slice(0,80);
+}
 function header(req: Request, key: string): string {
   const v = req.header(key) ?? '';
   return v.trim();
