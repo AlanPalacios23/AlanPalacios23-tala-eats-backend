@@ -10,8 +10,12 @@ class StageResilienceError extends Error {
 }
 const fail=(http:number,msg:string):never=>{throw new StageResilienceError(http,msg);};
 async function admin(req:Request){
- const {user}=await current(req);
+ const {user,mfaVerified}=await current(req);
  if(user.role!=='admin')return fail(403,'Sin permisos de ADMIN');
+ // Resilience exposes operational and financial metadata, plus retry actions.
+ // Reject old admin bearer tokens issued before TOTP enrollment.
+ if(!user.twoFactorEnabled||!mfaVerified)
+  return fail(403,'ADMIN requiere inicio de sesión verificado con 2FA');
  return user;
 }
 function id(req:Request,key:string){
