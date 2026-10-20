@@ -76,16 +76,13 @@ if [[ "$MODE" == "--plan" ]]; then
   exit 0
 fi
 
-[[ "$(printenv TALA_STAGE_FIRST_PROMOTE_APPROVAL 2>/dev/null || true)" ==
-   "I_APPROVE_FIRST_NODE_STAGE_PM2_ONLY" ]] || {
+[[ "$(printenv TALA_STAGE_FIRST_PROMOTE_APPROVAL 2>/dev/null || true)" == "I_APPROVE_FIRST_NODE_STAGE_PM2_ONLY" ]] || {
   echo "ABORT_STAGE_PM2_PROMOTE_APPROVAL"; exit 1;
 }
-[[ "$(printenv TALA_STAGE_BACKUP_APPROVAL 2>/dev/null || true)" ==
-   "I_APPROVE_STAGE_DB_BACKUP_ONLY" ]] || {
+[[ "$(printenv TALA_STAGE_BACKUP_APPROVAL 2>/dev/null || true)" == "I_APPROVE_STAGE_DB_BACKUP_ONLY" ]] || {
   echo "ABORT_STAGE_BACKUP_APPROVAL"; exit 1;
 }
-[[ "$(printenv TALA_STAGE_RESTORE_APPROVAL 2>/dev/null || true)" ==
-   "I_APPROVE_ISOLATED_STAGING_RESTORE_TEST" ]] || {
+[[ "$(printenv TALA_STAGE_RESTORE_APPROVAL 2>/dev/null || true)" == "I_APPROVE_ISOLATED_STAGING_RESTORE_TEST" ]] || {
   echo "ABORT_STAGE_RESTORE_APPROVAL"; exit 1;
 }
 cd "$CANDIDATE_DIR"
