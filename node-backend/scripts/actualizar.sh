@@ -152,6 +152,7 @@ ROLLOUT_STARTED=no
 ROLLOUT_OK=no
 rollback() {
   if [[ "$ROLLOUT_STARTED" != yes || "$ROLLOUT_OK" == yes ]]; then return; fi
+  ROLLOUT_STARTED=no  # Never rollback twice on ERR followed by EXIT.
   trap - ERR
   echo "STAGE_ROLLBACK_START"
   pm2 delete tala-node-stage-api >/dev/null 2>&1 || true
@@ -159,11 +160,15 @@ rollback() {
   cd "$PREVIOUS_DIR"
   TALA_STAGE_ENV_FILE="$ENVFILE" pm2 start ecosystem.config.cjs --only tala-node-stage-api --update-env || true
   TALA_STAGE_ENV_FILE="$ENVFILE" pm2 start ecosystem.config.cjs --only tala-node-stage-worker --update-env || true
-  if curl -fsS --max-time 5 http://127.0.0.1:18190/api/v1/ready >/dev/null; then
+  if curl -fsS --max-time 5 http://127.0.0.1:18190/api/v1/ready |
+    node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{
+      try{const j=JSON.parse(s);process.exit(j.ready===true&&j.database===true&&
+        j.redis===true&&j.financialWrites===false?0:1)}catch{process.exit(1)}
+    })' >/dev/null 2>&1; then
     pm2 save >/dev/null || true
-    echo "STAGE_ROLLBACK_HTTP_READY=PASS"
+    echo "STAGE_ROLLBACK_READINESS=PASS"
   else
-    echo "STAGE_ROLLBACK_HTTP_READY=FAIL_REQUIRES_OPERATOR"
+    echo "STAGE_ROLLBACK_READINESS=FAIL_REQUIRES_OPERATOR"
   fi
 }
 trap rollback ERR EXIT
