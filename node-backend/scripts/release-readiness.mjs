@@ -21,6 +21,10 @@ const worker=read('src/worker.ts');
 const webhook=read('src/webhook.ts');
 const auth=read('src/auth/routes.ts');
 const stripe=read('src/stripe.ts');
+const market=read('src/marketplace/routes.ts');
+const resilience=read('src/resilience/routes.ts');
+const versions=read('src/versions/routes.ts');
+const media=read('src/parity/routes.ts');
 const files=[
  'src/server.ts','src/app.ts','src/worker.ts','src/config.ts',
  'prisma/schema.prisma','ecosystem.config.cjs',
@@ -44,6 +48,17 @@ const stageChecks=[
      app.includes("tala:node:stage:worker:heartbeat") &&
      worker.includes("workerHeartbeatTimer"),
   detail:'Visibilidad del worker PM2 por TTL'},
+ {id:'admin-mfa-across-roles',
+  ok:market.includes("session.user.twoFactorEnabled || !session.mfaVerified") &&
+     resilience.includes("!user.twoFactorEnabled||!mfaVerified"),
+  detail:'Los pedidos ajenos y el diagnóstico requieren TOTP ADMIN'},
+ {id:'runtime-worker-key',
+  ok:versions.includes("tala:node:stage:worker:heartbeat") &&
+     !versions.includes("talaeats:worker:heartbeat"),
+  detail:'Diagnóstico V10 consulta el heartbeat PM2 real'},
+ {id:'multipart-exact-closure',
+  ok:media.includes("tail!==close&&tail!==close+'\\r\\n'"),
+  detail:'Archivos malformados se rechazan después del cierre multipart'},
  {id:'checkout-narrow',ok:checkout.includes("STAGE_PICKUP_CASH_CHECKOUT_ENABLED")&&
      checkout.includes("order_type:z.literal('pickup')"),
   detail:'Checkout experimental limitado a efectivo/recoger'},
