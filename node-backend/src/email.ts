@@ -67,7 +67,7 @@ export async function deliverStageMailBatch():Promise<number>{
     await tx.authEmailOutbox.update({where:{id:mail.id},data:{
       attempts:{increment:1},
       status:attempts>=3?'failed':'pending',
-      lastError:/^MAIL_PROVIDER_HTTP_\\d{3}$/.test(failure)?failure:'MAIL_PROVIDER_UNAVAILABLE',
+      lastError:/^MAIL_PROVIDER_HTTP_[0-9]{3}$/.test(failure)?failure:'MAIL_PROVIDER_UNAVAILABLE',
       ...(attempts>=3 ? {textBody:'[redacted: mail failed]'} : {}),
     }});
    }
