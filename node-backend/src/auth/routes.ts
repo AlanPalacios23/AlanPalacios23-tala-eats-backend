@@ -136,10 +136,12 @@ export async function current(req: Request) {
       throw new HttpFailure(401, 'Identidad de dispositivo inválida');
     }
   }
-  return session;
+  return {...session,mfaVerified:claims.mfa===true};
 }
-async function issue(req: Request, res: Response, user: Awaited<ReturnType<typeof db.authUser.create>>) {
-  const token = signAccessToken(user.id, user.role, secret());
+async function issue(req: Request, res: Response, user: Awaited<ReturnType<typeof db.authUser.create>>,
+  mfaVerified=false) {
+  // A post-enrollment session must be reissued by /login after OTP verification.
+  const token = signAccessToken(user.id, user.role, secret(),undefined,undefined,mfaVerified);
   const rawId = header(req, 'x-device-id').slice(0, 256);
   const idHash = rawId ? sha256Hex(rawId) : '';
   let riskScore = 0;
@@ -221,10 +223,11 @@ authRouter.post('/login', async (req,res) => {
     throw new HttpFailure(401, 'Correo o contraseña incorrectos');
   }
   if (!user.isActive) throw new HttpFailure(403, 'La cuenta está desactivada');
-  if (user.twoFactorEnabled && !verifyTotp(user.totpSecret,data.otp ?? '')) {
+  const mfaVerified=user.twoFactorEnabled&&verifyTotp(user.totpSecret,data.otp??'');
+  if(user.twoFactorEnabled&&!mfaVerified) {
     throw new HttpFailure(401, 'Código de verificación 2FA requerido o inválido');
   }
-  res.json(await issue(req,res,user));
+  res.json(await issue(req,res,user,mfaVerified));
 });
 authRouter.post('/logout', async (req,res) => {
   const token = suppliedToken(req);
