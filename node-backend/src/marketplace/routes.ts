@@ -528,7 +528,7 @@ stageDriverRouter.get('/available',async(req,res)=>{
   const limit=z.coerce.number().int().min(1).max(100).safeParse(req.query.limit??25);
   if(!limit.success) throw new RouteError(422,'Límite inválido');
   const profile=await db.marketplaceDriverProfile.findUnique({where:{userId:account.id}});
-  if(!profile?.isOnline){res.json([]);return;}
+  if(!profile?.isOnline||!profile.isVerified){res.json([]);return;}
   const active=await db.marketOrder.count({
     where:{driverId:account.id,status:{in:['assigned','picked_up','on_the_way']}},
   });
