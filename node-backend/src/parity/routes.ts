@@ -529,7 +529,11 @@ async function singleUpload(req:Request,pdf=false){
   end=body.indexOf(Buffer.from('\r\n--'+boundary),contentStart);
  if(end<contentStart)return bad(400,'Multipart sin cierre');
  const tail=body.subarray(end).toString('latin1');
- if(!tail.startsWith('\r\n--'+boundary+'--'))return bad(400,'Sólo se admite un archivo');
+ // Require the exact terminating delimiter. Trailing bytes, additional
+ // parts and ambiguous multipart endings must never be silently accepted.
+ const close='\r\n--'+boundary+'--';
+ if(tail!==close&&tail!==close+'\r\n')
+  return bad(400,'Multipart contiene campos o datos adicionales');
  const file=body.subarray(contentStart,end);
  if(file.length===0||file.length>MAX_BYTES)return bad(413,'Archivo vacío o demasiado grande');
  if(!spec.magic(file))return bad(415,'La firma del archivo no coincide');
