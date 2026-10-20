@@ -401,6 +401,8 @@ operationsRouter.patch('/admin/onboarding/:applicationId',async(req,res)=>{
      update:{vehicle:old.vehicle||'Motocicleta',isVerified:true}});
    }else{
     const existing=await tx.marketplaceRestaurant.findFirst({where:{ownerId:account.id}});
+    if(existing?.verificationStatus==='archived')
+     return bad(409,'Comercio archivado: requiere revisión administrativa');
     if(!existing)await tx.marketplaceRestaurant.create({data:{
      ownerId:account.id,name:old.businessName||'Restaurante de '+account.name,
      taxId:old.taxId,isOpen:false,onboardingStatus:'approved',
@@ -412,6 +414,22 @@ operationsRouter.patch('/admin/onboarding/:applicationId',async(req,res)=>{
    await tx.authUser.update({where:{id:account.id},data:{
     role:old.entityType==='driver'?'driver':'restaurant'}});
    // Password/session refresh required: role change invalidates existing JWT.
+  }else{
+   // A negative onboarding decision must revoke the previously granted
+   // marketplace capability as part of the SAME transaction. Leaving an old
+   // verified restaurant or driver active creates a business authorization gap.
+   if(old.entityType==='restaurant'){
+    const status=p.status==='needs_info'?'pending':p.status;
+    await tx.marketplaceRestaurant.updateMany({
+     where:{ownerId:account.id,verificationStatus:{not:'archived'}},
+     data:{verificationStatus:status,isOpen:false,sponsored:false,
+      ...(status==='suspended'?{pickupEnabled:false}:{})},
+    });
+   }else{
+    await tx.marketplaceDriverProfile.updateMany({
+     where:{userId:account.id},data:{isVerified:false,isOnline:false},
+    });
+   }
   }
   const changed=await tx.opsOnboarding.update({where:{id},
    data:{status:p.status,notes:p.notes}});
@@ -775,7 +793,8 @@ adminRouter.patch('/restaurants/:restaurantId/verification',async(req,res)=>{
  const updated=await db.$transaction(async tx=>{
   const result=await tx.marketplaceRestaurant.update({where:{id},data:{
    verificationStatus:status,
-   ...(status==='suspended'?{isOpen:false,sponsored:false,pickupEnabled:false}:{})}});
+   ...(status!=='verified'?{isOpen:false,sponsored:false,
+     ...(status==='suspended'?{pickupEnabled:false}:{})}:{})}});
   await tx.authAuditEvent.create({data:{userId:who.id,action:'restaurant.verify',
    entityType:'restaurant',entityId:String(id),detail:status}});
   return result;
