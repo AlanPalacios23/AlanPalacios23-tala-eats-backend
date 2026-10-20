@@ -45,7 +45,7 @@ async function fixture(tx:{
   catch{return false;}
 }
 const profileByUser=async(userId:number)=>db.marketplaceDriverProfile.upsert({
-  where:{userId},create:{userId},update:{},
+  where:{userId},create:{userId,isVerified:false},update:{},
 });
 async function redisLocation(driverId:number):Promise<{lat:number;lng:number}|null>{
   const redis=redisClient();
@@ -129,6 +129,8 @@ export async function driverAvailability(actor:AuthUser,isOnline:boolean){
   return withProfileLock(actor.id,async tx=>{
     const profile=await tx.marketplaceDriverProfile.findUnique({where:{userId:actor.id}});
     if(!profile)return fail(503,'Perfil del repartidor no disponible');
+    if(isOnline&&!profile.isVerified)
+      return fail(403,'Se requiere verificación del repartidor');
     if(!isOnline){
       const active=await tx.marketOrder.count({where:{driverId:actor.id,status:{in:ACTIVE}}});
       if(active>0)fail(409,'Finaliza la entrega activa antes de desconectarte');

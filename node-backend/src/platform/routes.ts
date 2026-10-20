@@ -134,7 +134,7 @@ platformRouter.get('/favorites',async(req,res)=>{
     where:{userId:account.id},select:{restaurantId:true},orderBy:{id:'asc'},
   });
   const found=favorites.length?await db.marketplaceRestaurant.findMany({
-    where:{id:{in:favorites.map(v=>v.restaurantId)},verificationStatus:{not:'archived'}},
+    where:{id:{in:favorites.map(v=>v.restaurantId)},verificationStatus:'verified'},
   }):[];
   const byId=new Map(found.map(row=>[row.id,row]));
   res.setHeader('Cache-Control','private, no-store');
@@ -450,7 +450,7 @@ platformRouter.get('/recommendations',async(req,res)=>{
   // Python reference is a rule engine: open + sponsored then rating, limit 6.
   // This is NOT a personalized LLM and does not call any external provider.
   const restaurants=await db.marketplaceRestaurant.findMany({
-    where:{isOpen:true,verificationStatus:{not:'archived'}},
+    where:{isOpen:true,verificationStatus:'verified'},
     orderBy:[{sponsored:'desc'},{rating:'desc'},{id:'asc'}],take:6,
   });
   res.setHeader('Cache-Control','private, no-store');

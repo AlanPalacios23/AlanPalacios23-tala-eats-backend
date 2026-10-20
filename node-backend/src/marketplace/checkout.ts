@@ -135,7 +135,8 @@ export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promis
     `;
     if(!restaurantLock.length)throw new CheckoutError(404,'Restaurante no encontrado');
     const restaurant=await tx.marketplaceRestaurant.findUnique({where:{id:data.restaurant_id}});
-    if(!restaurant)throw new CheckoutError(404,'Restaurante no encontrado');
+    if(!restaurant||restaurant.verificationStatus!=='verified')
+      throw new CheckoutError(404,'Restaurante no disponible');
     if(!restaurant.isOpen)throw new CheckoutError(400,'El restaurante está cerrado');
     if(!restaurant.pickupEnabled)throw new CheckoutError(400,'Este restaurante no permite recoger');
     const pricingV162=config.COMMERCIAL_PRICING_V162_ENABLED==='true';
