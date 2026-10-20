@@ -41,6 +41,12 @@ async function user(req:Request, roles?:string[]) {
   const session=await current(req);
   if (roles && !roles.includes(session.user.role))
     throw new RouteError(403,'No tienes permisos para esta operación');
+  // The ADMIN role is a privileged identity everywhere, including owner
+  // mutations and cross-customer order views. A pre-enrollment JWT must not
+  // bypass MFA simply by choosing a non-/admin/ route.
+  if(session.user.role==='admin' &&
+     (!session.user.twoFactorEnabled || !session.mfaVerified))
+    throw new RouteError(403,'ADMIN requiere iniciar sesión con código 2FA');
   return session.user;
 }
 const prop = (obj:object,camel:string):unknown => (obj as Record<string,unknown>)[camel];
