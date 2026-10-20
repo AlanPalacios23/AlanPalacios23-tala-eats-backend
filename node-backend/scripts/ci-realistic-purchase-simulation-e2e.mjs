@@ -117,12 +117,12 @@ stats.orders_created++;
 assert.equal(bought.json.status,'received');
 assert.equal(bought.json.payment_method,'cash');
 assert.equal(bought.json.payment_status,'pending');
-assert.equal(bought.json.subtotal,'160.00');
-assert.equal(bought.json.platform_commission,'24.00');
-assert.equal(bought.json.service_fee,'11.20');
-assert.equal(bought.json.restaurant_payout,'136.00');
-assert.equal(bought.json.platform_revenue,'35.20');
-assert.equal(bought.json.total,'171.20');
+assert.equal(Number(bought.json.subtotal),160.00);
+assert.equal(Number(bought.json.platform_commission),24.00);
+assert.equal(Number(bought.json.service_fee),11.20);
+assert.equal(Number(bought.json.restaurant_payout),136.00);
+assert.equal(Number(bought.json.platform_revenue),35.20);
+assert.equal(Number(bought.json.total),171.20);
 assert.match(bought.json.delivery_pin,/^[0-9]{4}$/);
 passed('precio y desglose comercial exactos: 15% + 7%, propina cero');
 const concurrent=await Promise.all(Array.from({length:4},
