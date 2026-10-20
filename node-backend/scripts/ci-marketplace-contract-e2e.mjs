@@ -81,6 +81,15 @@ assert.equal(noMarket.status,200);
 assert.deepEqual(noMarket.body,[]);
 assert.equal((await call('/restaurants?market_code=../AMECA-JAL')).status,422);
 assert.equal((await call('/restaurants?market_code[]=AMECA-JAL')).status,422);
+// Suspended shops must not be visible, including direct id lookup or
+// offset/limit pages. An old is_open=true flag never overrides moderation.
+const suspended=(await client.query(
+ "INSERT INTO restaurants(name,is_open,market_code,verification_status) VALUES('Suspended QA',true,'TALA-JAL','suspended') RETURNING id"
+)).rows[0].id;
+assert.equal((await call('/restaurants/'+suspended)).status,404);
+const afterSuspension=await call('/restaurants?market_code=TALA-JAL&limit=200');
+assert.equal(afterSuspension.status,200);
+assert.deepEqual(afterSuspension.body.map(x=>x.id),[rid]);
 assert.equal((await call('/restaurants?limit=201')).status,422);
 assert.equal((await call('/restaurants/999999')).status,404);
 const anonProfile=await call('/owner/restaurant');
