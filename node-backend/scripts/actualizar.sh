@@ -127,7 +127,7 @@ git cat-file -e "$ACTIVE_SHA^{commit}" || {
 git merge-base --is-ancestor "$ACTIVE_SHA" "$TARGET_SHA" || {
   echo "ABORT_TARGET_NOT_DESCENDANT_OF_RUNNING_RELEASE"; exit 1;
 }
-printf 'RUNNING_PM2_SHA=%s\\n' "$ACTIVE_SHA"
+echo "RUNNING_PM2_SHA=$ACTIVE_SHA"
 # Schema changes are never applied from this convenience updater.
 # They require separate reviewed migrations, backup and restore first.
 if [[ -n "$(git diff --name-only "$ACTIVE_SHA" "$TARGET_SHA" -- node-backend/prisma)" ]]; then
