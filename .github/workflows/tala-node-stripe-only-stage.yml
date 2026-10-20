@@ -119,6 +119,23 @@ jobs:
           node scripts/ci-first200-h3-growth-security.mjs
           node scripts/ci-first200-h3-kds-dispatch.mjs
           node scripts/ci-last52-j1-e2e.mjs
+      - name: Kali manual PM2 updater syntax and non-stage fail-closed
+        run: |
+          bash -n scripts/actualizar.sh
+          if bash scripts/actualizar.sh --plan >/tmp/tala-unsafe-stage-invocation.log 2>&1; then
+            echo "ERROR: Kali stage updater accepted GitHub runner"; exit 1
+          fi
+          grep -q 'ABORT_STAGE_USER_ONLY' /tmp/tala-unsafe-stage-invocation.log
+          echo "KALI_PM2_MANUAL_UPDATER_STAGE_USER_GUARD=PASS"
+      - name: Python 1.6.2 pricing cap on isolated PostgreSQL Redis (independent process)
+        env:
+          COMMERCIAL_PRICING_V162_ENABLED: 'true'
+        run: |
+          set -euo pipefail
+          node dist/server.js >/tmp/tala-node-v162-stage-e2e.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          node scripts/ci-cash-pickup-v162-e2e.mjs
       - name: Fail closed for LIVE credentials
         run: |
           ! grep -ER --include='*.ts' -E 'sk_live_|rk_live_|DATABASE_URL_PRODUCTION' src
