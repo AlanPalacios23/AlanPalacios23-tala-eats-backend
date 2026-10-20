@@ -184,16 +184,33 @@ const document=await media(customer,'/uploads/onboarding-document');
 assert.equal(document.status,200,JSON.stringify(document.json));
 assert.equal((await go(customer,document.json.url)).status,403);
 assert.equal((await go(outsider,document.json.url)).status,403);
-await db.query('INSERT INTO onboarding_applications(user_id,entity_type,documents_json) VALUES($1,$2,$3)',
- [customer.id,'driver',JSON.stringify([document.json.url])]);
+const acceptedOnboarding=await go(customer,'/operations/onboarding','POST',{
+ entity_type:'driver',documents:[document.json.url]});
+assert.equal(acceptedOnboarding.status,201,JSON.stringify(acceptedOnboarding.json));
+assert.equal((await go(outsider,'/operations/onboarding','POST',{
+ entity_type:'driver',documents:[document.json.url]})).status,403);
+assert.equal((await go(customer,'/operations/onboarding','POST',{
+ entity_type:'driver',documents:[document.json.url,document.json.url]})).status,422);
+assert.equal((await go(customer,'/operations/onboarding','POST',{
+ entity_type:'driver',documents:['uploads/dummy.png']})).status,403);
 assert.equal((await go(customer,document.json.url)).status,200);
 assert.equal((await go(admin,document.json.url)).status,200);
 const cover=await media(merchant,'/uploads/catalog/restaurant-cover');
 assert.equal(cover.status,200,JSON.stringify(cover.json));
-assert.equal((await go(null,cover.json.url)).status,200);
+const absoluteCatalogPath=(url)=>{
+ const parsed=new URL(url);
+ assert.equal(parsed.protocol,'https:');
+ assert.equal(parsed.host,'api-stage-talaeats.alan-palacios-dev.com');
+ assert.ok(parsed.pathname.startsWith('/api/v1/uploads/catalog/'));
+ assert.match(parsed.pathname,/[.](jpg|png|webp)$/);
+ return parsed.pathname;
+};
+assert.equal((await go(null,absoluteCatalogPath(cover.json.url))).status,200);
 const catalog=await media(merchant,'/uploads/catalog/menu/'+item);
 assert.equal(catalog.status,200,JSON.stringify(catalog.json));
-assert.equal((await go(null,catalog.json.url)).status,200);
+assert.equal((await go(null,absoluteCatalogPath(catalog.json.url))).status,200);
+const savedMenuImage=await db.query('SELECT image_url FROM menu_items WHERE id=$1',[item]);
+assert.equal(savedMenuImage.rows[0].image_url,catalog.json.url);
 assert.equal((await media(customer,'/uploads/catalog/menu/'+item)).status,403);
 const chat=await media(customer,'/uploads/chat-media/'+order);
 assert.equal(chat.status,200,JSON.stringify(chat.json));

@@ -36,6 +36,12 @@ const a=await createCustomer('a');
 const b=await createCustomer('b');
 const c=await createCustomer('c');
 const merchant=await createCustomer('merchant');
+const capabilities=await call('/orders/payment-methods',{token:a.token});
+assert.equal(capabilities.status,200,JSON.stringify(capabilities.json));
+assert.equal(capabilities.json.cash_available_in_staging,true);
+assert.equal(capabilities.json.methods.find(x=>x.id==='cash').enabled,true);
+assert.equal(capabilities.json.methods.find(x=>x.id==='stripe').enabled,false);
+
 await client.query("UPDATE users SET role='restaurant' WHERE id=$1",[merchant.id]);
 const fresh=await call('/auth/login',{method:'POST',body:{email:merchant.email,password}});
 assert.equal(fresh.status,200);
@@ -63,15 +69,25 @@ const payload=(ref,notes='')=>({
 async function create(customer,p){
   return call('/orders',{method:'POST',token:customer.token,body:p});
 }
+// Match the Flutter Usuarios checkout payload exactly.
+const mobilePayload=ref=>({
+  ...payload(ref),
+  items:[{menu_item_id:mid,quantity:1,options:''}],
+  coupon_code:'',delivery_lat:null,delivery_lng:null,
+});
 const blockedCard=await call('/orders',{method:'POST',token:a.token,
   body:{...payload('card-blocked'),payment_method:'stripe'}});
 assert.equal(blockedCard.status,503);
 const blockedDelivery=await call('/orders',{method:'POST',token:a.token,
   body:{...payload('delivery-blocked'),order_type:'delivery'}});
 assert.equal(blockedDelivery.status,503);
+const blockedDiscount=await create(a,{...mobilePayload('coupon-blocked'),coupon_code:'WELCOME10'});
+assert.equal(blockedDiscount.status,503);
+const blockedCoordinates=await create(a,{...mobilePayload('coords-blocked'),delivery_lat:20.6534});
+assert.equal(blockedCoordinates.status,503);
 const blockedOwner=await create(merchant,payload('merchant-blocked'));
 assert.equal(blockedOwner.status,403);
-const first=await create(a,payload('checkout-uniq'));
+const first=await create(a,mobilePayload('checkout-uniq'));
 assert.equal(first.status,201,JSON.stringify(first.json));
 const orderId=first.json.id;
 assert.equal(first.json.status,'received');
@@ -90,6 +106,9 @@ const retryResults=await Promise.all(Array.from({length:4},
   ()=>create(a,payload('checkout-uniq'))));
 assert.ok(retryResults.every(x=>x.status===201 && x.json.id===orderId),
   JSON.stringify(retryResults.map(x=>[x.status,x.json?.id])));
+const mobileRetry=await create(a,mobilePayload('checkout-uniq'));
+assert.equal(mobileRetry.status,201);
+assert.equal(mobileRetry.json.id,orderId);
 const changed=await create(a,payload('checkout-uniq','otro producto/nota'));
 assert.equal(changed.status,409);
 const badRef=await create(a,{...payload('checkout-uniq'),tip:'2.00'});

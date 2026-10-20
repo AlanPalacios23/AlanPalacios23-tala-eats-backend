@@ -27,13 +27,24 @@ const intentSchema=z.strictObject({
   })).min(1).max(100),
   tip:price.default('0'),
 });
+// Flutter Usuarios sends the following optional neutral fields for *all*
+// order types. Accept only empty coupon and null coordinates for pickup.
+// Never silently grant a discount or accept delivery location as a pickup.
+const mobilePickupSchema=intentSchema.extend({
+  coupon_code:z.literal('').optional(),
+  delivery_lat:z.null().optional(),
+  delivery_lng:z.null().optional(),
+});
 // Unsupported money-moving or incomplete commercial features deliberately
 // return 503 rather than pretending to honor the full Python OrderCreate.
 export function isCashPickupIntent(payload:unknown):boolean {
   if(!payload || typeof payload!=='object'||Array.isArray(payload))return false;
   const p=payload as Record<string,unknown>;
   return p.payment_method==='cash'&&p.order_type==='pickup'&&
-    Object.keys(p).every(k=>k in intentSchema.shape);
+    Object.keys(p).every(k=>k in mobilePickupSchema.shape)&&
+    (p.coupon_code===undefined||p.coupon_code==='')&&
+    (p.delivery_lat===undefined||p.delivery_lat===null)&&
+    (p.delivery_lng===undefined||p.delivery_lng===null);
 }
 const toMinor=(raw:string):bigint=>{
   if(!/^(?:0|[1-9]\d{0,7})(?:\.\d{1,2})?$/.test(raw))
@@ -86,9 +97,11 @@ export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promis
     throw new CheckoutError(403,'No tienes permisos para crear pedidos');
   if(!isCashPickupIntent(raw))
     throw new CheckoutError(503,'Este checkout de staging sólo admite efectivo para recoger; demás métodos pendientes');
-  const parsed=intentSchema.safeParse(raw);
+  const parsed=mobilePickupSchema.safeParse(raw);
   if(!parsed.success)throw new CheckoutError(422,'Datos del pedido inválidos');
-  const data=parsed.data;
+  // The metadata fields are not part of the financial signature or insert.
+  // Stripe/delivery/scheduled/coupon checkout is intentionally not implied.
+  const {coupon_code:_coupon,delivery_lat:_lat,delivery_lng:_lng,...data}=parsed.data;
   const tip=toMinor(data.tip);
   if(tip>1_000_000n)throw new CheckoutError(422,'Propina fuera de límite');
   const itemIds=data.items.map(x=>x.menu_item_id);
