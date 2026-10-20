@@ -123,7 +123,7 @@ marketplaceRouter.get('/',async(req,res)=>{
     throw new RouteError(422,'Código de localidad inválido');
   const marketCode=typeof raw==='string'?raw:undefined;
   const rows=await db.marketplaceRestaurant.findMany({
-    where:{verificationStatus:{not:'archived'},...(marketCode?{marketCode}:{})},
+    where:{verificationStatus:'verified',...(marketCode?{marketCode}:{})},
     orderBy:[{isOpen:'desc'},{name:'asc'},{id:'asc'}],skip:offset,take:limit,
   });
   res.json(rows.map(restaurantPublic));
@@ -132,7 +132,7 @@ marketplaceRouter.get('/:restaurantId',async(req,res)=>{
   const row=await db.marketplaceRestaurant.findUnique({
     where:{id:idParam(req,'restaurantId')},include:{menuItems:true},
   });
-  if(!row||row.verificationStatus==='archived') return notFound('Restaurante no encontrado');
+  if(!row||row.verificationStatus!=='verified') return notFound('Restaurante no encontrado');
   res.json(restaurantDetail(row));
 });
 
@@ -323,6 +323,10 @@ const restaurantPatch=z.strictObject({
 ownerRouter.patch('/restaurant',async(req,res)=>{
   const {account,row}=await ownRestaurant(req);
   const data=input(restaurantPatch,req.body);
+  // Opening is only authorized for administratively verified merchants;
+  // profile, menu and photo preparation remain possible while pending.
+  if(data.is_open===true && row.verificationStatus!=='verified')
+    throw new RouteError(403,'El comercio debe estar verificado antes de abrir');
   // Paid placement is platform-controlled; a restaurant cannot award itself
   // featured exposure by mutating its own profile.
   if(data.sponsored!==undefined && account.role!=='admin')
