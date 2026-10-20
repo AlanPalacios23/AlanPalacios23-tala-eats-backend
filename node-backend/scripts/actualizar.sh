@@ -25,8 +25,7 @@ REPO="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 cd "$REPO"
 REMOTE="$(git remote get-url origin)"
 case "$REMOTE" in
-  "https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend.git"|
-  "git@github.com:AlanPalacios23/AlanPalacios23-tala-eats-backend.git") ;;
+  "https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend.git"|"git@github.com:AlanPalacios23/AlanPalacios23-tala-eats-backend.git") ;;
   *) echo "ABORT_UNEXPECTED_GITHUB_REMOTE"; exit 1;;
 esac
 BRANCH="$(git symbolic-ref --short -q HEAD || true)"
