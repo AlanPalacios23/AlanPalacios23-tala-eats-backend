@@ -40,8 +40,10 @@ OLD_SHA="$(git rev-parse HEAD)"
 TARGET_SHA="$(git ls-remote --exit-code origin "refs/heads/$BRANCH" | awk '{print $1}')"
 [[ "$TARGET_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "ABORT_REMOTE_SHA"; exit 1; }
 printf 'STAGE_BRANCH=%s\nCURRENT_SHA=%s\nTARGET_SHA=%s\n' "$BRANCH" "$OLD_SHA" "$TARGET_SHA"
+# Git checkout HEAD can remain unchanged while PM2 still runs an older release.
+# Source equality is NOT evidence that the deployed application is current.
 if [[ "$OLD_SHA" == "$TARGET_SHA" ]]; then
-  echo "STAGE_ALREADY_UP_TO_DATE=PASS"; exit 0
+  echo "SOURCE_BRANCH_UP_TO_DATE=YES_PM2_STATE_NOT_YET_VERIFIED"
 fi
 echo "STAGE_ACTION=RELEASE_SHA_CHECKED_MANUAL_PM2"
 if [[ "$MODE" == "--plan" ]]; then
@@ -105,9 +107,10 @@ try {
   if(JSON.stringify(names)!==JSON.stringify(["tala-node-stage-api","tala-node-stage-worker"]))process.exit(2);
   if(a.some(x=>x.pm2_env?.status!=="online"))process.exit(3);
   const api=a.find(x=>x.name==="tala-node-stage-api");
+  const worker=a.find(x=>x.name==="tala-node-stage-worker");
   const cwd=api.pm2_env?.pm_cwd;
   if(typeof cwd!=="string" || !cwd.startsWith("/home/tala-node-stage/") ||
-    !cwd.endsWith("/node-backend"))process.exit(4);
+    !cwd.endsWith("/node-backend") || worker?.pm2_env?.pm_cwd!==cwd)process.exit(4);
   process.stdout.write(cwd);
 }catch{process.exit(5)}
 })')" || { echo "ABORT_UNEXPECTED_PM2_STAGE_PROCESSES"; exit 1; }
@@ -128,6 +131,10 @@ git merge-base --is-ancestor "$ACTIVE_SHA" "$TARGET_SHA" || {
   echo "ABORT_TARGET_NOT_DESCENDANT_OF_RUNNING_RELEASE"; exit 1;
 }
 echo "RUNNING_PM2_SHA=$ACTIVE_SHA"
+if [[ "$ACTIVE_SHA" == "$TARGET_SHA" ]]; then
+  echo "STAGE_PM2_ALREADY_DEPLOYED=PASS"
+  exit 0
+fi
 # Schema changes are never applied from this convenience updater.
 # They require separate reviewed migrations, backup and restore first.
 if [[ -n "$(git diff --name-only "$ACTIVE_SHA" "$TARGET_SHA" -- node-backend/prisma)" ]]; then
