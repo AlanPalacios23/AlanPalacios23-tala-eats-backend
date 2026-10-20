@@ -1,6 +1,7 @@
 // G3: V9/V11 collaborative, privacy and bounded administrative contracts.
 // Disposable PostgreSQL15 + Redis8 ONLY. Never deploy this seed.
 import assert from 'node:assert/strict';
+import {enrollAdminQa} from './ci-admin-totp-helper.mjs';
 import pgLib from 'pg';
 import {Redis} from 'ioredis';
 const pgUrl=String(process.env.DATABASE_URL??''),ru=String(process.env.REDIS_URL??'');
@@ -35,6 +36,7 @@ async function promote(u,role){
 const alice=await signup('alice'),bob=await signup('bob'),
  admin=await signup('admin'),driver=await signup('driver');
 await promote(admin,'admin');await promote(driver,'driver');
+await enrollAdminQa(admin,call,password);
 const api=(who,path,method='GET',body)=>
  call(path,{token:who?.token,method,body});
 const shop=(await pg.query(

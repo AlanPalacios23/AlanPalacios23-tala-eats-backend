@@ -579,7 +579,8 @@ async function mediaResponse(res:Response,category:string,name:string,publicCach
 }
 async function ownsRestaurant(user:{id:number;role:string}){
  if(user.role!=='restaurant')return bad(403,'Se requiere cuenta de restaurante');
- const shop=await db.marketplaceRestaurant.findFirst({where:{ownerId:user.id}});
+ const shop=await db.marketplaceRestaurant.findFirst({
+  where:{ownerId:user.id,verificationStatus:{not:'archived'}}});
  if(!shop)return bad(404,'Restaurante no encontrado');
  return shop;
 }

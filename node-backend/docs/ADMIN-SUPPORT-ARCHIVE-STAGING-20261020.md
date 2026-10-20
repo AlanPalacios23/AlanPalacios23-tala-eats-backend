@@ -1,0 +1,11 @@
+# ADMIN support and inactive restaurant archive (STAGING)
+- Customer `POST /api/v1/platform/support` already exists; no replacement endpoint.
+- Admin `GET /api/v1/admin/support?status=open|in_progress|resolved|all` lists real tickets, including customer email and order reference. Require role ADMIN + enrolled TOTP.
+- Admin `PATCH /api/v1/admin/support/{id}` with `{"status":"resolved","reply":"..."}` persists the exact answer, closes the ticket, creates a customer notification and writes an audit event in **one** database transaction. Duplicate response => 409. `in_progress` marks it pending without sending.
+- The customer can read `admin_reply` with `GET /api/v1/platform/support`; ownership is enforced by the API.
+- Admin `GET /api/v1/admin/restaurants?filter=inactive|archived|all` lists and computes archive eligibility.
+- Admin `PATCH /api/v1/admin/restaurants/{id}/archive` with `confirm_name` and `reason` only archives if currently closed and no unfinished orders; archived shops are hidden from public discovery and cannot self-reactivate via the owner API.
+- This deliberately does **NOT** physically DELETE rows: payments/order history, support, reports, taxes, accounting and compliance data must remain preserved.
+- `PATCH /admin/restaurants/{id}/verification?status=suspended` also closes the storefront.
+- After reviewing backups, migrate only the **isolated** Node/Prisma staging database, never the production Python/PostgreSQL 16 DB. Do not use `prisma db push`.
+- Before promoting to LIVE: build, unit/E2E role & MFA gates, concurrent order/archive test, verify no availability after archive, customer notification and admin/customer support history. No deploy is included.

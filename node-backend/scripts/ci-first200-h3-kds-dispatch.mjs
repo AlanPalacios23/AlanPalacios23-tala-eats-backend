@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {enrollAdminQa} from './ci-admin-totp-helper.mjs';
 import pgLib from 'pg';
 import {Redis} from 'ioredis';
 const pgUrl=String(process.env.DATABASE_URL??''),ru=String(process.env.REDIS_URL??'');
@@ -29,6 +30,7 @@ async function role(user,role){
 const admin=await make('admin'),driver=await make('driver'),
  merchant=await make('merchant'),buyer=await make('buyer');
 await role(admin,'admin');await role(merchant,'restaurant');await role(driver,'driver');
+await enrollAdminQa(admin,api,password);
 const go=(u,path,method='GET',body)=>api(path,{token:u?.token,method,body});
 const store=(await sql.query(
  "INSERT INTO restaurants(name,address,owner_id,lat,lng)"+

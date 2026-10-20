@@ -595,6 +595,8 @@ model PlatformSupportTicket {
   category  String   @db.VarChar(80)
   message   String
   status    String   @default("open") @db.VarChar(30)
+  adminReply String  @default("") @map("admin_reply")
+  respondedAt DateTime? @map("responded_at")
   createdAt DateTime @default(now()) @map("created_at")
   @@index([userId,createdAt])
   @@index([orderId])

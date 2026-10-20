@@ -1,6 +1,7 @@
 // F1: 35 real Python contracts -> Node staging. PostgreSQL15 Redis8 CI ONLY.
 // Synthetic users, no actual payment capture, checkout to consumers disabled.
 import assert from 'node:assert/strict';
+import {enrollAdminQa} from './ci-admin-totp-helper.mjs';
 import pg from 'pg';
 import { Redis } from 'ioredis';
 const url=String(process.env.DATABASE_URL??'');
@@ -43,6 +44,7 @@ const outsider=await register('outsider');
 const driver=await register('driver');
 const merchant=await register('merchant');
 await promote(admin,'admin');await promote(driver,'driver');await promote(merchant,'restaurant');
+await enrollAdminQa(admin,api,password);
 const get=(who,path)=>api(path,{token:who?.token});
 const denied=async path=>{
  assert.equal((await get(customer,path)).status,403,'not RBAC: '+path);
