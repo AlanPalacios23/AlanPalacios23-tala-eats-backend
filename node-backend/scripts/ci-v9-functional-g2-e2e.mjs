@@ -1,5 +1,6 @@
 // G2 V9 twenty real routes, disposable PG15+Redis8 only.
 import assert from 'node:assert/strict';
+import {enrollAdminQa} from './ci-admin-totp-helper.mjs';
 import pg from 'pg';
 import {Redis} from 'ioredis';
 const url=String(process.env.DATABASE_URL??''),ru=String(process.env.REDIS_URL??'');
@@ -33,6 +34,7 @@ async function promote(u,role){
 const admin=await person('admin'),shopUser=await person('shop'),customer=await person('customer'),
  stranger=await person('stranger'),driver=await person('driver');
 await promote(admin,'admin');await promote(shopUser,'restaurant');await promote(driver,'driver');
+await enrollAdminQa(admin,call,password);
 const go=(u,p,m='GET',body)=>call('/v9'+p,{token:u?.token,method:m,body});
 const store=(await sql.query(
  "INSERT INTO restaurants(name,address,owner_id,cuisine,rating,is_open)"+
