@@ -59,6 +59,10 @@ jobs:
         run: |
           python3 scripts/kali-stage-migration-static-audit.py --check
           python3 scripts/test_kali_stage_migration_static_audit.py
+          python3 scripts/test_kali_stage_restore.py
+          python3 scripts/test_kali_stage_coldstart.py
+          python3 scripts/test_kali_stage_boot_persistence.py
+          python3 scripts/test_kali_stage_init_native_services.py
       - name: Frozen dependencies and disposable PG15 migrations
         run: |
           npm ci --no-audit --no-fund
