@@ -1,0 +1,83 @@
+name: TALA EATS | Kali Node Stage Remote Connection Probe
+on:
+  push:
+    branches: [ops/node-stage-connection-probe-20261020]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stage-readonly-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    environment: talaeats-production
+    steps:
+      - name: Validate access prerequisites without printing secret values
+        env:
+          TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+          KALI_SSH_PRIVATE_KEY: ${{ secrets.KALI_SSH_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for key in TS_OAUTH_CLIENT_ID TS_OAUTH_SECRET KALI_SSH_PRIVATE_KEY; do
+            if [[ -z "${!key}" ]]; then
+              echo "::error::MISSING_ACCESS_PREREQUISITE_${key}"
+              missing=1
+            fi
+          done
+          if [[ "$missing" != 0 ]]; then
+            echo "KALI_STAGE_CONNECTION=BLOCKED_MISSING_SECRETS"
+            exit 1
+          fi
+          echo "STAGE_CONNECTION_PREREQUISITES=PASS"
+
+      - name: Validate noninteractive SSH key
+        shell: bash
+        env:
+          KALI_SSH_PRIVATE_KEY: ${{ secrets.KALI_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          content = os.environ["KALI_SSH_PRIVATE_KEY"].strip()
+          if "\\n" in content and "\n" not in content:
+              content = content.replace("\\n", "\n")
+          content = content.replace("\r\n", "\n")
+          if not (content.startswith("-----BEGIN OPENSSH PRIVATE KEY-----") and
+                  content.endswith("-----END OPENSSH PRIVATE KEY-----")):
+              raise SystemExit("INVALID_SSH_KEY_FORMAT")
+          Path(os.environ["RUNNER_TEMP"], "tala_key").write_text(content+"\n")
+          PY
+          chmod 600 "$RUNNER_TEMP/tala_key"
+          ssh-keygen -y -P '' -f "$RUNNER_TEMP/tala_key" >/dev/null 2>&1 || { echo "::error::INVALID_SSH_PRIVATE_KEY"; exit 1; }
+
+      - name: Join private Tailscale network (no deployment)
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:talaeats-ci
+
+      - name: Check fixed Kali SSH host identity and remote identity (read only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 18 ssh-keyscan -T 10 -t ed25519 100.81.234.1 2>/dev/null > "$RUNNER_TEMP/tala_hosts"
+          [[ -s "$RUNNER_TEMP/tala_hosts" ]] || { echo "::error::KALI_PRIVATE_SSH_UNREACHABLE"; exit 1; }
+          fingerprint="$(ssh-keygen -lf "$RUNNER_TEMP/tala_hosts" -E sha256 | awk '{print $2}')"
+          [[ "$fingerprint" == 'SHA256:NBzEhEuiG8qbodvDtrhihAWfHbvtpNaOEKV67s/v7A8' ]] || { echo "::error::KALI_SSH_HOSTKEY_MISMATCH"; exit 1; }
+          ssh -i "$RUNNER_TEMP/tala_key" \
+            -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/tala_hosts" \
+            -o ConnectTimeout=12 talaeats-ci@100.81.234.1 \
+            'printf "REMOTE_KALI_READONLY_SSH=PASS\\n"; id -un; uname -s'
+          echo "STAGE_REMOTE_CHANNEL=AVAILABLE_READONLY"
+
+      - name: Secure cleanup
+        if: always()
+        run: rm -f "$RUNNER_TEMP/tala_key" "$RUNNER_TEMP/tala_hosts"
