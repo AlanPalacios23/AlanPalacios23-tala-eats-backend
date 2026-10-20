@@ -80,6 +80,27 @@ Cualquier error de migración es NO-GO; no iniciar PM2 nuevo.
 
 ## Gate 4 · Primer cambio controlado de PM2 staging
 
+**Nuevo script de primera promoción**: `scripts/kali-stage-first-pm2-promote.sh`, distinto del actualizador rápido. La ejecución `--plan` es solo lectura y verifica versión exacta y rollback. La ejecución `--apply` requiere permisos explícitos; compila candidato en directorio aislado, respalda PostgreSQL15 staging, realiza restore en cluster efímero, respalda media staging si existe, verifica migraciones Prisma ya aplicadas, sustituye solo API/worker PM2 y hace smoke con SHA; ante fallo intenta rollback a la instancia PM2 anterior. No ejecuta migraciones ni toca Docker/Stripe LIVE.
+
+Desde la carpeta de la nueva versión `node-backend` (ya clonada, en el usuario staging):
+
+```bash
+SHA="$(git rev-parse HEAD)"
+bash scripts/kali-stage-first-pm2-promote.sh --plan "$SHA"
+```
+
+**Antes de aplicar**: ejecutar Gate 2 + Gate 3 y confirmar salida. El script `--apply` vuelve a crear/restaurar una copia antes de cambiar PM2, y aborta sin reiniciar si Prisma tiene alguna migración pendiente. Para ese caso, aplicar las migraciones solo mediante el Gate 3 por separado, después repetir `--apply`. El comando de cambio es:
+
+```bash
+TALA_STAGE_FIRST_PROMOTE_APPROVAL=I_APPROVE_FIRST_NODE_STAGE_PM2_ONLY \
+TALA_STAGE_BACKUP_APPROVAL=I_APPROVE_STAGE_DB_BACKUP_ONLY \
+TALA_STAGE_RESTORE_APPROVAL=I_APPROVE_ISOLATED_STAGING_RESTORE_TEST \
+  bash scripts/kali-stage-first-pm2-promote.sh --apply "$SHA"
+```
+
+**No lanzar este comando hasta haber revisado el resultado de preflight, backup/restore y migraciones con el operador.** No certificar el despliegue únicamente porque se haya ejecutado la instrucción: se exige la salida `FIRST_NODE_PM2_STAGE_PROMOTION=PASS` y el smoke estricto del SHA.
+
+
 Para el primer salto desde la versión Node inicial, **NO usar `actualizar.sh --apply`**, pues está diseñado para actualizaciones sin migraciones. La nueva versión compilada debe quedar bajo directorio de release versionado, preservando intacta la anterior y documentando la ruta del PM2 activo.
 
 Tras revisar el directorio ejecutable, el SHA exacto, migraciones aplicadas y plan de vuelta atrás, detener **solamente** los procesos PM2 `tala-node-stage-api` y `tala-node-stage-worker` y arrancarlos desde el `ecosystem.config.cjs` compilado; comprobar `/ready` ANTES de iniciar worker. No reiniciar `systemd` global, no usar `pm2 startup` ni mover el proxy público.
