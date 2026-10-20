@@ -303,8 +303,12 @@ const restaurantPatch=z.strictObject({
   lng:z.number().finite().min(-180).max(180).optional(),
 }).refine(v=>(v.lat===undefined)===(v.lng===undefined),{message:'lat y lng deben enviarse juntos'});
 ownerRouter.patch('/restaurant',async(req,res)=>{
-  const {row}=await ownRestaurant(req);
+  const {account,row}=await ownRestaurant(req);
   const data=input(restaurantPatch,req.body);
+  // Paid placement is platform-controlled; a restaurant cannot award itself
+  // featured exposure by mutating its own profile.
+  if(data.sponsored!==undefined && account.role!=='admin')
+    throw new RouteError(403,'Destacados requiere autorización de administración');
   const changes:Record<string,unknown>={};
   for(const [key,value] of Object.entries(data)){
     const camel=key.replace(/_([a-z])/g,(_m,c:string)=>c.toUpperCase());
