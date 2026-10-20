@@ -1,5 +1,6 @@
 // G1: operational write parity smoke and adversarial ACL on PG15/Redis8.
 import assert from 'node:assert/strict';
+import {enrollAdminQa} from './ci-admin-totp-helper.mjs';
 import pg from 'pg';
 import { Redis } from 'ioredis';
 const pgUrl=String(process.env.DATABASE_URL??''),ru=String(process.env.REDIS_URL??'');
@@ -32,6 +33,7 @@ async function promote(who,role){
 const admin=await user('admin'),alice=await user('alice'),bob=await user('bob'),
  owner=await user('owner'),driver=await user('driver');
 await promote(admin,'admin');await promote(owner,'restaurant');await promote(driver,'driver');
+await enrollAdminQa(admin,call,pwd);
 const req=(who,path,method='GET',body)=>call(path,{token:who?.token,method,body});
 const denied=async(path,method='GET',body)=>{
  const x=await req(alice,path,method,body);assert.equal(x.status,403,JSON.stringify(x.json));
