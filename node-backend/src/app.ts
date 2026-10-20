@@ -54,7 +54,16 @@ app.get('/api/v1/ready', async (_req, res) => {
     await db.$queryRawUnsafe('SELECT 1');
     await redis.connect();
     if (await redis.ping() !== 'PONG') throw new Error('redis_not_ready');
-    res.json({ ready: true, database: true, redis: true, financialWrites: false, digitalPaymentProvider: 'stripe', onlinePaymentsEnabled: false });
+    // Operational dependency reporting is advisory in staging because CI
+    // deliberately tests the API without starting the worker. Never equate
+    // HTTP /ready with authorization to take customer payments.
+    const heartbeat = await redis.get('tala:node:stage:worker:heartbeat');
+    res.setHeader('Cache-Control','no-store');
+    res.json({ ready: true, database: true, redis: true,
+      workerOnline: Boolean(heartbeat),
+      productionReady: false, environment: 'staging',
+      financialWrites: false, digitalPaymentProvider: 'stripe',
+      onlinePaymentsEnabled: false });
   } catch {
     res.status(503).json({ ready: false });
   } finally {

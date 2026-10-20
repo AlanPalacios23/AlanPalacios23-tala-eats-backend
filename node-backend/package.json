@@ -15,7 +15,10 @@
     "start": "node dist/server.js",
     "start:worker": "node dist/worker.js",
     "test": "node --test tests/*.test.mjs",
-    "verify": "npm run preflight && npm run generate && npm run db:validate && npm run build && npm test"
+    "verify": "npm run preflight && npm run generate && npm run db:validate && npm run build && npm test",
+    "release:stage:check": "node scripts/release-readiness.mjs --stage",
+    "release:production:check": "node scripts/release-readiness.mjs --production",
+    "smoke:stage": "node scripts/stage-readonly-smoke.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.0",
