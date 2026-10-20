@@ -102,6 +102,7 @@ jobs:
           node scripts/ci-cash-pickup-atomic-e2e.mjs
           node scripts/ci-order-lifecycle-c2-e2e.mjs
           node scripts/ci-pickup-complete-c3-e2e.mjs
+          node scripts/ci-realistic-purchase-simulation-e2e.mjs
           node scripts/ci-python-node-decimal-parity-e2e.mjs
           node scripts/ci-owner-operational-d1-e2e.mjs
       - name: Synthetic driver lifecycle integration (separate feature-flagged process)
@@ -173,6 +174,14 @@ jobs:
           pid=$!
           trap 'kill "$pid" 2>/dev/null || true' EXIT
           node scripts/ci-cash-pickup-v162-e2e.mjs
+      - name: Upload simulated purchase report (synthetic data only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TalaEats-Node-Synthetic-Purchase-Report
+          path: /tmp/tala-eats-purchase-simulation.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Fail closed for LIVE credentials
         run: |
           ! grep -ER --include='*.ts' -E 'sk_live_|rk_live_|DATABASE_URL_PRODUCTION' src
