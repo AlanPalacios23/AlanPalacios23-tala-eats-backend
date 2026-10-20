@@ -45,7 +45,7 @@ async function fixture(tx:{
   catch{return false;}
 }
 const profileByUser=async(userId:number)=>db.marketplaceDriverProfile.upsert({
-  where:{userId},create:{userId},update:{},
+  where:{userId},create:{userId,isVerified:false},update:{},
 });
 async function redisLocation(driverId:number):Promise<{lat:number;lng:number}|null>{
   const redis=redisClient();
