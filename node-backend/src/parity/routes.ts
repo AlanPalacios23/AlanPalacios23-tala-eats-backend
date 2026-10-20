@@ -462,8 +462,14 @@ const catalogAbsoluteUrl=(filename:string)=>STAGE_CATALOG_ORIGIN+'/api/v1/upload
 
 // Files J1: bounded single-file multipart, magic bytes, private owner/assignment.
 // No base64-in-JSON workaround; maintains real upload binary contracts.
+// The stage service owns a durable private home directory (and its backups).
+// In disposable CI tests, use /tmp rather than the Kali service account path.
+// Keep reading older /tmp assets during a controlled one-time migration.
+const LEGACY_MEDIA_ROOT='/tmp/tala-node-stage-media';
+const DEFAULT_MEDIA_ROOT=process.env.HOME==='/home/tala-node-stage'
+ ? '/home/tala-node-stage/media' : LEGACY_MEDIA_ROOT;
 const ROOT=path.resolve(process.env.TALA_NODE_STAGE_MEDIA_DIR||
- '/tmp/tala-node-stage-media');
+ DEFAULT_MEDIA_ROOT);
 if(!(ROOT==='/tmp/tala-node-stage-media'||
  ROOT.startsWith('/tmp/tala-node-stage-media/')||
  ROOT==='/home/tala-node-stage/media'||
@@ -532,7 +538,23 @@ async function mediaResponse(res:Response,category:string,name:string,publicCach
  const asset=await db.stageMediaAsset.findUnique({where:{filename:name}});
  if(!asset||asset.category!==category)return bad(404,'Archivo no encontrado');
  let bytes:Buffer;
- try{bytes=await readFile(path.join(ROOT,category,name));}catch{return bad(404,'Archivo no encontrado');}
+ try{
+  bytes=await readFile(path.join(ROOT,category,name));
+ }catch{
+  if(ROOT===LEGACY_MEDIA_ROOT)return bad(404,'Archivo no encontrado');
+  // Backward-compatibility for assets saved by earlier staging releases.
+  // Copy safely to durable storage; never follow a path from the request.
+  try{
+   bytes=await readFile(path.join(LEGACY_MEDIA_ROOT,category,name));
+  }catch{return bad(404,'Archivo no encontrado');}
+  try{
+   await mkdir(path.join(ROOT,category),{recursive:true,mode:0o700});
+   await writeFile(path.join(ROOT,category,name),bytes,{flag:'wx',mode:0o600});
+  }catch{
+   // Concurrent migration may have written the same file. The current
+   // response can still serve the bytes; files will be reviewed in QA.
+  }
+ }
  res.setHeader('Cache-Control',publicCache?'public, max-age=31536000, immutable':'private, no-store');
  res.type(asset.mime);res.send(bytes);
 }
