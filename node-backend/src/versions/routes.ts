@@ -44,7 +44,8 @@ async function redisProbe(){
  try{
   await client.connect();
   const pong=await client.ping();
-  const worker=await client.get('talaeats:worker:heartbeat');
+  // Must match the independent PM2 worker's TTL key exactly.
+  const worker=await client.get('tala:node:stage:worker:heartbeat');
   return {ok:pong==='PONG',worker:Boolean(worker)};
  }catch{return {ok:false,worker:false};}
  finally{client.disconnect();}
