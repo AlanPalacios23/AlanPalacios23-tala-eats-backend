@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {enrollAdminQa} from './ci-admin-totp-helper.mjs';
 import pgLib from 'pg';
 import {Redis} from 'ioredis';
 const url=String(process.env.DATABASE_URL??''),rurl=String(process.env.REDIS_URL??'');
@@ -22,6 +23,7 @@ async function change(x,role){
 const admin=await user('admin'),buyer=await user('buyer'),
  merchant=await user('merchant'),outsider=await user('outsider');
 await change(admin,'admin');await change(merchant,'restaurant');
+await enrollAdminQa(admin,api,'H1-Private-CI-Only!');
 const go=(u,p,m='GET',body)=>api(p,{token:u?.token,method:m,body});
 const store=(await db.query("INSERT INTO restaurants(name,address,owner_id) VALUES('H1 Test Store','Tala',$1) RETURNING id",[merchant.id])).rows[0].id;
 async function menu(name,price){
