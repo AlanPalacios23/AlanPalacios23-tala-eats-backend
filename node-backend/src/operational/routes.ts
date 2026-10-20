@@ -318,13 +318,14 @@ operationsRouter.post('/onboarding',async(req,res)=>{
  const p=payload(onboardingSchema,req.body);
  // Only attach an exact private onboarding upload belonging to this account.
  // Match Python's /api/v1/uploads/onboarding-document/u<ID>-<random>.<ext>.
- const owned=/^\\/api\\/v1\\/uploads\\/onboarding-document\\/(u([1-9]\\d*)-[A-Za-z0-9_-]{32}\\.(?:jpg|png|webp|pdf))$/;
+ const prefix='/api/v1/uploads/onboarding-document/';
  const fileNames:string[]=[];
  for(const url of p.documents){
-  const matched=owned.exec(url);
-  if(!matched||Number(matched[2])!==who.id)
+  const fileName=url.startsWith(prefix)?url.slice(prefix.length):'';
+  const matched=/^u([1-9][0-9]*)-[A-Za-z0-9_-]{32}[.](jpg|png|webp|pdf)$/.exec(fileName);
+  if(!matched||Number(matched[1])!==who.id)
    return bad(403,'Documento ajeno o referencia no permitida');
-  fileNames.push(matched[1]!);
+  fileNames.push(fileName);
  }
  if(new Set(fileNames).size!==fileNames.length)
   return bad(422,'Lista de documentos duplicados');
