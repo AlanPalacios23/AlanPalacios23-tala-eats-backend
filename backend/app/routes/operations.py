@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..config import settings
 from ..db import get_db
+from ..cache import bump_catalog_version
 from ..deps import get_current_user, require_role
 from ..geo import haversine_km
 from ..monetization import DEFAULTS, get_decimal_setting, money, commercial_value, commercial_v152_active, commercial_v162_active
@@ -175,6 +176,28 @@ def update_commercial_config(restaurant_id:int, payload:schemas.CommercialConfig
     db.commit();db.refresh(row)
     return {"id":row.id,"commercial_plan":row.commercial_plan,"commission_rate":str(row.commission_rate),"service_fee_rate":str(row.service_fee_rate),"service_fee_fixed":str(row.service_fee_fixed),"payout_account_ref":row.payout_account_ref}
 
+
+
+
+@router.patch("/admin/restaurants/{restaurant_id}/market", response_model=schemas.RestaurantPublic)
+def assign_restaurant_market(
+    restaurant_id: int,
+    payload: schemas.MarketAssignment,
+    admin: models.User = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    """Assign a verified geographic market; never infer a city from default GPS."""
+    row = db.get(models.Restaurant, restaurant_id)
+    if not row:
+        raise HTTPException(404, "Establecimiento no encontrado")
+    previous = row.market_code
+    row.market_code = payload.market_code
+    audit(db, admin.id, "restaurant.market.update", "restaurant", str(row.id),
+          f"{previous} -> {payload.market_code}")
+    db.commit()
+    bump_catalog_version()
+    db.refresh(row)
+    return row
 
 
 @router.get("/admin/commercial-pricing")
