@@ -1,6 +1,7 @@
 // J1: 52 Python route contracts. All writes here target disposable PG15/Redis8.
 // Some financial routes intentionally fail closed (503), NOT functionally done.
 import assert from 'node:assert/strict';
+import {enrollAdminQa} from './ci-admin-totp-helper.mjs';
 import pgLib from 'pg';
 import {Redis} from 'ioredis';
 const url=String(process.env.DATABASE_URL??''),rurl=String(process.env.REDIS_URL??'');
@@ -41,6 +42,7 @@ const admin=await user('admin'),customer=await user('customer'),
  driver=await user('driver'),driverTwo=await user('driver2');
 await promote(admin,'admin');await promote(merchant,'restaurant');
 await promote(driver,'driver');await promote(driverTwo,'driver');
+await enrollAdminQa(admin,request,secret);
 const go=(x,p,method='GET',body)=>request(p,{token:x?.token,method,body});
 const shop=(await db.query(
  "INSERT INTO restaurants(name,address,owner_id,lat,lng)"+
