@@ -106,7 +106,16 @@ function idParam(req:Request, name:string) {
 // Python restaurants.py: paginated public list + menu detail.
 marketplaceRouter.get('/',async(req,res)=>{
   const {limit,offset}=page(req);
+  // Flutter Usuarios verifies market_code on every page. Filtering MUST
+  // happen in PostgreSQL before OFFSET/LIMIT, never in the Flutter client
+  // or after pagination (which would mix cities or truncate results).
+  const raw=req.query.market_code;
+  if(raw!==undefined&&(typeof raw!=='string'||
+     !/^[A-Z][A-Z0-9-]{2,39}$/.test(raw)))
+    throw new RouteError(422,'Código de localidad inválido');
+  const marketCode=typeof raw==='string'?raw:undefined;
   const rows=await db.marketplaceRestaurant.findMany({
+    ...(marketCode?{where:{marketCode}}:{}),
     orderBy:[{isOpen:'desc'},{name:'asc'},{id:'asc'}],skip:offset,take:limit,
   });
   res.json(rows.map(restaurantPublic));
