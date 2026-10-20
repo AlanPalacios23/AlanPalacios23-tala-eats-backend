@@ -1,0 +1,144 @@
+name: TALA EATS | Kali SSH Auto-Deploy (gated)
+
+on:
+  workflow_run:
+    workflows: ['TALA EATS Backend | QA aislado']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Comprobar conexión SSH sin desplegar'
+        required: true
+        type: choice
+        options: [probe]
+        default: probe
+
+# NO use un PR ni artefactos no confiables. Solo SHA exacto en main.
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: talaeats-kali-production-ssh-cd
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Comprobar commit main y cinco gates CI del mismo SHA
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'success') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    outputs:
+      sha: ${{ steps.gate.outputs.sha }}
+    steps:
+      - name: Rechazar sha obsoleto y verificar CI completo sin secretos
+        id: gate
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (context.eventName === 'workflow_dispatch') {
+              core.setOutput('sha', 'probe');
+              return;
+            }
+            const { owner, repo } = context.repo;
+            const triggering = context.payload.workflow_run;
+            const sha = triggering?.head_sha;
+            if (triggering?.event !== 'push' ||
+                triggering?.head_branch !== 'main' ||
+                triggering?.conclusion !== 'success' ||
+                triggering?.head_repository?.full_name !== owner + '/' + repo ||
+                !/^[0-9a-f]{40}$/.test(sha || '')) {
+              return core.setFailed('Evento, repo o SHA no autorizado');
+            }
+            const main = await github.rest.repos.getBranch({
+              owner, repo, branch: 'main'
+            });
+            if (main.data.commit.sha !== sha) {
+              return core.setFailed('SHA obsoleto: main ya cambió. No auto deploy');
+            }
+            const required = [
+              'TALA EATS Backend | QA aislado',
+              'TALA EATS Backend | PostgreSQL Redis Gate',
+              'TALA EATS Backend | Finanzas PostgreSQL + Redis (CI aislado)',
+              'TALA EATS Backend | Container Build Gate',
+              'TALA EATS Backend | Security Audit',
+            ];
+            let pending = [];
+            for (let attempt = 0; attempt < 32; attempt++) {
+              const runs = await github.paginate(
+                github.rest.actions.listWorkflowRunsForRepo,
+                { owner, repo, head_sha: sha, event: 'push', per_page: 100 },
+                response => response.data.workflow_runs
+              );
+              pending = required.filter(name => !runs.some(r =>
+                r.name === name && r.head_sha === sha &&
+                r.head_branch === 'main' && r.event === 'push' &&
+                r.conclusion === 'success'));
+              const failed = runs.filter(r =>
+                required.includes(r.name) && r.head_sha === sha &&
+                r.status === 'completed' && r.conclusion !== 'success');
+              if (failed.length) {
+                return core.setFailed('Un control CI falló/canceló en SHA exacto');
+              }
+              if (!pending.length) {
+                core.info('Cinco controles CI PASS en SHA ' + sha.slice(0, 12));
+                core.setOutput('sha', sha);
+                return;
+              }
+              if (attempt < 31) await new Promise(resolve => setTimeout(resolve, 25000));
+            }
+            core.setFailed('NO-GO: controles CI ausentes: ' + pending.join(', '));
+
+  ssh:
+    name: Conexión restringida a Kali por SSH (sin credenciales productivas)
+    needs: verify
+    if: needs.verify.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: talaeats-production
+    env:
+      TARGET_SHA: ${{ needs.verify.outputs.sha }}
+      CD_ENABLED: ${{ vars.TALAEATS_CD_ENABLED }}
+      SSH_HOST: ${{ secrets.TALAEATS_KALI_SSH_HOST }}
+      SSH_PORT: ${{ secrets.TALAEATS_KALI_SSH_PORT }}
+      SSH_USER: ${{ secrets.TALAEATS_KALI_SSH_USER }}
+      SSH_KEY: ${{ secrets.TALAEATS_KALI_SSH_PRIVATE_KEY }}
+      SSH_HOST_KEY: ${{ secrets.TALAEATS_KALI_SSH_KNOWN_HOSTS }}
+    steps:
+      - name: Verificar configuración segura y opciones
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" ]]; then
+            [[ "$CD_ENABLED" == "YES" ]] || { echo 'TALA_CD_DISABLED: protección activa'; exit 2; }
+            [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
+          fi
+          [[ -n "$SSH_HOST" && -n "$SSH_USER" && -n "$SSH_KEY" && -n "$SSH_HOST_KEY" ]]
+          [[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ ]]
+          (( 10#$SSH_PORT >= 1 && 10#$SSH_PORT <= 65535 ))
+          mkdir -p "$RUNNER_TEMP/tala-ssh"
+          chmod 700 "$RUNNER_TEMP/tala-ssh"
+          printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/tala-ssh/id_ed25519"
+          printf '%s\n' "$SSH_HOST_KEY" > "$RUNNER_TEMP/tala-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/tala-ssh/id_ed25519"
+          chmod 600 "$RUNNER_TEMP/tala-ssh/known_hosts"
+      - name: SSH restringido (probe o deploy con SHA verificado)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            remote_command="talaeats-cd probe"
+          else
+            remote_command="talaeats-cd deploy $TARGET_SHA"
+          fi
+          ssh -T -i "$RUNNER_TEMP/tala-ssh/id_ed25519" \
+            -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/tala-ssh/known_hosts" \
+            -o ConnectTimeout=12 -o ServerAliveInterval=10 \
+            -p "$SSH_PORT" -- "$SSH_USER@$SSH_HOST" "$remote_command"
+      - name: Eliminar material SSH efímero
+        if: always()
+        shell: bash
+        run: rm -rf -- "$RUNNER_TEMP/tala-ssh"
