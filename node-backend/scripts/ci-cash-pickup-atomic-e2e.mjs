@@ -36,6 +36,12 @@ const a=await createCustomer('a');
 const b=await createCustomer('b');
 const c=await createCustomer('c');
 const merchant=await createCustomer('merchant');
+const capabilities=await call('/orders/payment-methods',{token:a.token});
+assert.equal(capabilities.status,200,JSON.stringify(capabilities.json));
+assert.equal(capabilities.json.cash_available_in_staging,true);
+assert.equal(capabilities.json.methods.find(x=>x.id==='cash').enabled,true);
+assert.equal(capabilities.json.methods.find(x=>x.id==='stripe').enabled,false);
+
 await client.query("UPDATE users SET role='restaurant' WHERE id=$1",[merchant.id]);
 const fresh=await call('/auth/login',{method:'POST',body:{email:merchant.email,password}});
 assert.equal(fresh.status,200);
