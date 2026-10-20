@@ -223,6 +223,20 @@ await db.query(
 assert.equal((await go(customer,chat.json.url)).status,200);
 assert.equal((await go(outsider,chat.json.url)).status,403);
 assert.equal((await media(customer,'/uploads/chat-media/99999999')).status,404);
+// A legitimate PNG with bytes added after the multipart closing boundary
+// must never be accepted as a single-file upload.
+const boundary='QaBoundary0123456789';
+const multipart=Buffer.concat([
+ Buffer.from('--'+boundary+'\r\nContent-Disposition: form-data; name="file"; filename="test.png"\r\nContent-Type: image/png\r\n\r\n'),
+ png,
+ Buffer.from('\r\n--'+boundary+'--\r\nMALICIOUS-TRAILING-DATA'),
+]);
+const trailing=await request('/uploads/delivery-proof',{
+ token:driver.token,method:'POST',
+ headers:{'content-type':'multipart/form-data; boundary='+boundary},
+ binary:multipart,
+});
+assert.equal(trailing.status,400,JSON.stringify(trailing.json));
 const fake=await media(driver,'/uploads/delivery-proof','image/png',Buffer.from('NOT A PNG'));
 assert.equal(fake.status,415);
 console.log('NODE_J1_MULTIPART_MAGIC_MEDIA_PRIVATE_AUTH_PUBLIC_CATALOG=PASS');
