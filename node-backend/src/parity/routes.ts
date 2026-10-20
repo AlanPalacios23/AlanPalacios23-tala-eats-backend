@@ -62,9 +62,13 @@ async function payee(req:Request){
 parityRouter.get('/platform/features',(_req,res)=>{
  res.json({version:'0.1.0-node-stage',feature_count:8,features:[
   {id:1,name:'Catálogo local',area:'catalog',mode:'staging',description:'Restaurantes y productos en PostgreSQL'},
-  {id:2,name:'Órdenes con efectivo y recoger',area:'checkout',mode:'staging',description:'Flujo sintético aislado'},
+  {id:2,name:'Órdenes con efectivo y recoger',area:'checkout',
+   mode:config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true'?'staging':'disabled',
+   description:'Sólo pedidos de prueba con efectivo y recoger'},
   {id:3,name:'Comercio y KDS',area:'merchant',mode:'staging',description:'Acciones con autorización'},
-  {id:4,name:'Repartidores',area:'driver',mode:'staging',description:'Despacho limitado a efectivo'},
+  {id:4,name:'Repartidores',area:'driver',
+   mode:config.STAGE_DRIVER_DELIVERY_ENABLED==='true'?'staging':'disabled',
+   description:'Despacho limitado a entregas cash sintéticas'},
   {id:5,name:'Wallet y puntos',area:'loyalty',mode:'restricted',description:'Sin pasarela de monetización real'},
   {id:6,name:'Pagos digitales',area:'payment',mode:'disabled',description:'Stripe TEST pendiente; ningún otro PSP'},
   {id:7,name:'Retiros y conciliación',area:'finance',mode:'disabled',description:'Sin transferencias financieras reales'},
@@ -72,8 +76,11 @@ parityRouter.get('/platform/features',(_req,res)=>{
 });
 parityRouter.get('/orders/payment-methods',async(req,res)=>{
  await account(req);
- res.json({digital_provider:'stripe',cash_available_in_staging:true,methods:[
-  {id:'cash',label:'Efectivo',enabled:true,mode:'stage-cash-pickup'},
+ const cashEnabled=config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true';
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({digital_provider:'stripe',cash_available_in_staging:cashEnabled,methods:[
+  {id:'cash',label:'Efectivo',enabled:cashEnabled,mode:'stage-cash-pickup',
+   ...(cashEnabled?{}:{reason:'staging-cash-pickup-disabled'})},
   {id:'stripe',label:'Tarjeta (Stripe)',enabled:false,reason:'stripe-test-payments-not-yet-implemented'},
   {id:'wallet',label:'Wallet',enabled:false,reason:'wallet-not-reconciled'}],
   production_ready:false});
