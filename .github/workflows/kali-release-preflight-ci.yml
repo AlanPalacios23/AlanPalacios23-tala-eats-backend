@@ -11,6 +11,7 @@ on:
       - 'scripts/phase2_external_ready_probe.py'
       - 'scripts/phase2_pricing_runtime_readonly.py'
       - 'scripts/kali_release_candidate_plan_readonly.py'
+      - 'scripts/kali_release_operator.py'
       - 'scripts/kali_pin_rollback_images.py'
       - 'scripts/kali_backup_encrypted.sh'
       - 'docs/KALI_GITHUB_RELEASE_ROLLBACK.md'
@@ -49,13 +50,14 @@ jobs:
         run: python3 scripts/security_preflight.py --root .
       - name: Python compilación y sanitización de Compose
         run: |
-          python3 -m py_compile scripts/kali_compose_topology_readonly.py scripts/kali_release_candidate_plan_readonly.py scripts/kali_pin_rollback_images.py scripts/kali_proxy_trust_readonly.py scripts/attest_kali_live_readonly.py scripts/phase2_pricing_runtime_readonly.py
+          python3 -m py_compile scripts/kali_compose_topology_readonly.py scripts/kali_release_candidate_plan_readonly.py scripts/kali_pin_rollback_images.py scripts/kali_proxy_trust_readonly.py scripts/attest_kali_live_readonly.py scripts/phase2_pricing_runtime_readonly.py scripts/kali_release_operator.py
           python3 scripts/kali_compose_topology_readonly.py --self-test
           python3 scripts/kali_proxy_trust_readonly.py --self-test
           python3 scripts/kali_release_candidate_plan_readonly.py --self-test
           python3 scripts/attest_kali_live_readonly.py --self-test
           python3 scripts/phase2_pricing_runtime_readonly.py --self-test
           python3 scripts/kali_pin_rollback_images.py --self-test
+          python3 scripts/kali_release_operator.py --self-test
       - name: F2.05 autopruebas de /ready y WAF sin red
         run: python3 scripts/phase2_external_ready_probe.py --self-test
       - name: F2.05 prueba externa de /ready solo por activacion manual
