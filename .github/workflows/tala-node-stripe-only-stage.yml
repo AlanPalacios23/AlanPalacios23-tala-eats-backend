@@ -130,6 +130,11 @@ jobs:
       - name: Kali manual PM2 updater syntax and non-stage fail-closed
         run: |
           bash -n scripts/actualizar.sh
+          bash -n scripts/kali-stage-postdeploy-smoke.sh
+          if bash scripts/kali-stage-postdeploy-smoke.sh "0000000000000000000000000000000000000000" > /tmp/tala-unsafe-smoke.log 2>&1; then
+            echo "ERROR: Kali stage smoke accepted GitHub runner"; exit 1
+          fi
+          grep -q 'ABORT_STAGE_USER_ONLY' /tmp/tala-unsafe-smoke.log
           if bash scripts/actualizar.sh --plan >/tmp/tala-unsafe-stage-invocation.log 2>&1; then
             echo "ERROR: Kali stage updater accepted GitHub runner"; exit 1
           fi
