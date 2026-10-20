@@ -87,6 +87,14 @@ assert.equal((await api(driver1,'/location','PATCH',{lat:190,lng:0})).status,422
 const gps=await api(driver1,'/location','PATCH',{lat:20.6534,lng:-103.704});
 assert.equal(gps.status,200,JSON.stringify(gps.json));
 assert.equal(gps.json.current_lat,20.6534);
+// Driver profiles must be verified before accepting a shift.
+const unapproved=await api(driver1,'/availability','PATCH',{is_online:true});
+assert.equal(unapproved.status,403,JSON.stringify(unapproved.json));
+assert.equal((await api(driver1,'/available')).json.length,0);
+await api(driver2,'/profile');
+await client.query(
+ 'UPDATE driver_profiles SET is_verified=true WHERE user_id=ANY($1::int[])',
+ [[driver1.id,driver2.id]]);
 assert.equal((await api(driver1,'/availability','PATCH',{is_online:'true'})).status,422);
 const online=await Promise.all([
  api(driver1,'/availability','PATCH',{is_online:true}),
