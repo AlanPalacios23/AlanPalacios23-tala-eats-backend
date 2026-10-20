@@ -87,6 +87,13 @@ const blockedCoordinates=await create(a,{...mobilePayload('coords-blocked'),deli
 assert.equal(blockedCoordinates.status,503);
 const blockedOwner=await create(merchant,payload('merchant-blocked'));
 assert.equal(blockedOwner.status,403);
+await client.query("UPDATE restaurants SET verification_status='suspended' WHERE id=$1",[rid]);
+const blockedShop=await create(a,mobilePayload('blocked-shop'));
+assert.equal(blockedShop.status,404,JSON.stringify(blockedShop.json));
+const openAttempt=await call('/owner/restaurant',{method:'PATCH',token:merchant.token,body:{is_open:true}});
+assert.equal(openAttempt.status,403);
+assert.equal((await client.query('SELECT stock FROM menu_items WHERE id=$1',[mid])).rows[0].stock,2);
+await client.query("UPDATE restaurants SET verification_status='verified' WHERE id=$1",[rid]);
 const first=await create(a,mobilePayload('checkout-uniq'));
 assert.equal(first.status,201,JSON.stringify(first.json));
 const orderId=first.json.id;
