@@ -159,7 +159,7 @@ operationsRouter.get('/admin/command-center',async(req,res)=>{
   db.marketplaceRestaurant.count({where:{isOpen:true}}),
   db.marketplaceDriverProfile.count({where:{isOnline:true}}),
   db.opsIncident.count({where:{status:'open'}}),
-  db.platformSupportTicket.count({where:{status:'open'}}),
+  db.platformSupportTicket.count({where:{status:{in:['open','in_progress']}}}),
  ]);
  const sum=(key:'total'|'platformRevenue'|'contributionMargin')=>cash(delivered.reduce((p,q)=>p+cents(q[key]),0n));
  res.setHeader('Cache-Control','private, no-store');
@@ -230,7 +230,7 @@ adminRouter.get('/stats',async(req,res)=>{
   db.marketOrder.count({where:{status:{in:ACTIVE}}}),
   db.marketOrder.findMany({where:{status:{not:'cancelled'}},
    select:{total:true,platformCommission:true}}),
-  db.platformSupportTicket.count({where:{status:'open'}}),
+  db.platformSupportTicket.count({where:{status:{in:['open','in_progress']}}}),
   db.opsFraudFlag.count({where:{resolved:false}}),
   db.authLoyaltyAccount.count({where:{plusMember:true}}),
  ]);
