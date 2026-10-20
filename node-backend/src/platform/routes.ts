@@ -13,8 +13,12 @@ class PlatformError extends Error {
 }
 const fail=(code:number,message:string):never=>{throw new PlatformError(code,message);};
 async function user(req:Request, roles?:string[]){
-  const {user:account}=await current(req);
+  const {user:account,mfaVerified}=await current(req);
   if(roles && !roles.includes(account.role))fail(403,'No tienes permisos');
+  // No privilege inherited from an old pre-TOTP JWT. The same check covers
+  // support, wallets, notifications and every ADMIN-visible platform query.
+  if(account.role==='admin'&&(!account.twoFactorEnabled||!mfaVerified))
+    fail(403,'ADMIN requiere iniciar sesión con verificación 2FA');
   return account;
 }
 function idParam(req:Request,key:string):number{
