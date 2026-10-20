@@ -127,6 +127,20 @@ jobs:
           node scripts/ci-first200-h3-growth-security.mjs
           node scripts/ci-first200-h3-kds-dispatch.mjs
           node scripts/ci-last52-j1-e2e.mjs
+      - name: Preproduction release gate and read-only API + worker smoke
+        run: |
+          set -euo pipefail
+          npm run release:stage:check
+          if npm run release:production:check > /tmp/tala-preprod-no-go.log 2>&1; then
+            echo "ERROR: incomplete Node staging incorrectly passed as production"; exit 1
+          fi
+          grep -q 'TALA_NODE_RELEASE_CLASSIFICATION=PRODUCTION_NO_GO' /tmp/tala-preprod-no-go.log
+          node dist/server.js >/tmp/tala-node-preprod-readonly-api.log 2>&1 &
+          api_pid=$!
+          node dist/worker.js >/tmp/tala-node-preprod-readonly-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'kill "$api_pid" "$worker_pid" 2>/dev/null || true' EXIT
+          npm run smoke:stage
       - name: Kali manual PM2 updater syntax and non-stage fail-closed
         run: |
           bash -n scripts/actualizar.sh
