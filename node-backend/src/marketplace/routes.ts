@@ -106,6 +106,8 @@ function idParam(req:Request, name:string) {
 // Python restaurants.py: paginated public list + menu detail.
 marketplaceRouter.get('/',async(req,res)=>{
   const {limit,offset}=page(req);
+  if(Object.keys(req.query).some(key=>!['limit','offset','market_code'].includes(key)))
+    throw new RouteError(422,'Parámetro de catálogo inválido');
   // Flutter Usuarios verifies market_code on every page. Filtering MUST
   // happen in PostgreSQL before OFFSET/LIMIT, never in the Flutter client
   // or after pagination (which would mix cities or truncate results).
