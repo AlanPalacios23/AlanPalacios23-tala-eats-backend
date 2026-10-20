@@ -5,6 +5,7 @@ import {randomBytes,createHash} from 'node:crypto';
 import {mkdir,writeFile,readFile,unlink} from 'node:fs/promises';
 import path from 'node:path';
 import {z} from 'zod';
+import {Redis} from 'ioredis';
 import {db} from '../db.js';
 import {account,bad,param} from '../operational/routes.js';
 import {config} from '../config.js';
@@ -484,6 +485,23 @@ const TYPES:Record<string,{ext:string;magic:(p:Buffer)=>boolean}>={
 };
 const fnOk=(s:string)=>/^[a-zA-Z0-9_-]{12,130}\.(jpg|png|webp|pdf)$/.test(s);
 const MAX_BYTES=5*1024*1024;
+let mediaLimiter:Redis|null=null;
+async function limitMediaUploads(userId:number){
+ if(!mediaLimiter)mediaLimiter=new Redis(config.REDIS_URL,{
+  lazyConnect:true,connectTimeout:2000,maxRetriesPerRequest:1,
+  retryStrategy:()=>null,
+ });
+ let hits:unknown;
+ try{
+  hits=await mediaLimiter.eval(
+   "local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call('EXPIRE',KEYS[1],3600) end; return n",
+   1,'tala:node:stage:uploads:account:'+userId,
+  );
+ }catch{return bad(503,'Protección de subida no disponible');}
+ if(typeof hits!=='number')return bad(503,'Protección de subida no disponible');
+ if(hits>120)return bad(429,'Demasiadas imágenes en una hora');
+}
+
 async function singleUpload(req:Request,pdf=false){
  const type=req.header('content-type')??'';
  const marker=type.match(/^multipart\/form-data;\s*boundary=(?:"([^"]{1,80})"|([^;\s]{1,80}))(?:\s*;.*)?$/i);
@@ -519,6 +537,7 @@ async function singleUpload(req:Request,pdf=false){
 }
 async function saveMedia(req:Request,owner:number,category:string,
  prefix:string,opts:{pdf?:boolean;orderId?:number;restaurantId?:number;menuItemId?:number}={}){
+ await limitMediaUploads(owner);
  const data=await singleUpload(req,opts.pdf);
  const filename=prefix+'-'+randomBytes(24).toString('base64url')+data.ext;
  const dir=path.join(ROOT,category);
