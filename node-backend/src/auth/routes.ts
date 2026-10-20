@@ -233,7 +233,7 @@ authRouter.post('/logout', async (req,res) => {
       where:{sessionHash:sha256Hex(token)}, data:{active:false},
     });
   }
-  res.clearCookie(AUTH_COOKIE,{httpOnly:true,secure:false,sameSite:'lax',path:'/'});
+  res.clearCookie(AUTH_COOKIE,{httpOnly:true,secure:true,sameSite:'lax',path:'/'});
   res.status(204).end();
 });
 authRouter.get('/me', async (req,res) => {
