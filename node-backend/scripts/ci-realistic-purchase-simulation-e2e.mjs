@@ -85,7 +85,7 @@ assert.equal(catalog.status,200);
 assert.ok(catalog.json.some(x=>x.id===restaurant));
 const detail=await request('/restaurants/'+restaurant);
 assert.equal(detail.status,200);
-assert.ok(detail.json.menu.some(x=>x.id===menuId));
+assert.ok(detail.json.menu_items.some(x=>x.id===menuId));
 passed('menú publicado y catálogo de Tala verificado');
 const paymentMethods=await request('/orders/payment-methods',{token:customer.token});
 assert.equal(paymentMethods.status,200);
