@@ -107,6 +107,7 @@ function idParam(req:Request, name:string) {
 marketplaceRouter.get('/',async(req,res)=>{
   const {limit,offset}=page(req);
   const rows=await db.marketplaceRestaurant.findMany({
+    where:{verificationStatus:{not:'archived'}},
     orderBy:[{isOpen:'desc'},{name:'asc'},{id:'asc'}],skip:offset,take:limit,
   });
   res.json(rows.map(restaurantPublic));
@@ -115,14 +116,15 @@ marketplaceRouter.get('/:restaurantId',async(req,res)=>{
   const row=await db.marketplaceRestaurant.findUnique({
     where:{id:idParam(req,'restaurantId')},include:{menuItems:true},
   });
-  if(!row) return notFound('Restaurante no encontrado');
+  if(!row||row.verificationStatus==='archived') return notFound('Restaurante no encontrado');
   res.json(restaurantDetail(row));
 });
 
 // Python owner.py: ownership and profile/menu; never trust a merchant-supplied owner_id.
 async function ownRestaurant(req:Request) {
   const account=await user(req,['restaurant','admin']);
-  const row=await db.marketplaceRestaurant.findFirst({where:{ownerId:account.id}});
+  const row=await db.marketplaceRestaurant.findFirst({
+    where:{ownerId:account.id,verificationStatus:{not:'archived'}}});
   if(!row) return notFound('No tienes un restaurante asignado');
   return {account,row};
 }

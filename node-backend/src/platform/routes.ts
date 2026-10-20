@@ -130,7 +130,7 @@ platformRouter.get('/favorites',async(req,res)=>{
     where:{userId:account.id},select:{restaurantId:true},orderBy:{id:'asc'},
   });
   const found=favorites.length?await db.marketplaceRestaurant.findMany({
-    where:{id:{in:favorites.map(v=>v.restaurantId)}},
+    where:{id:{in:favorites.map(v=>v.restaurantId)},verificationStatus:{not:'archived'}},
   }):[];
   const byId=new Map(found.map(row=>[row.id,row]));
   res.setHeader('Cache-Control','private, no-store');
@@ -367,10 +367,12 @@ const supportCreate=z.strictObject({
 });
 function supportPublic(row:{
   id:number;orderId:number|null;category:string;message:string;
-  status:string;createdAt:Date;
+  status:string;adminReply:string;respondedAt:Date|null;createdAt:Date;
 }){
   return {id:row.id,order_id:row.orderId,category:row.category,
-    message:row.message,status:row.status,created_at:row.createdAt.toISOString()};
+    message:row.message,status:row.status,admin_reply:row.adminReply,
+    responded_at:row.respondedAt?.toISOString()??null,
+    created_at:row.createdAt.toISOString()};
 }
 platformRouter.get('/support',async(req,res)=>{
   const account=await user(req);
@@ -442,7 +444,7 @@ platformRouter.get('/recommendations',async(req,res)=>{
   // Python reference is a rule engine: open + sponsored then rating, limit 6.
   // This is NOT a personalized LLM and does not call any external provider.
   const restaurants=await db.marketplaceRestaurant.findMany({
-    where:{isOpen:true},
+    where:{isOpen:true,verificationStatus:{not:'archived'}},
     orderBy:[{sponsored:'desc'},{rating:'desc'},{id:'asc'}],take:6,
   });
   res.setHeader('Cache-Control','private, no-store');

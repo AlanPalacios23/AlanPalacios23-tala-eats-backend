@@ -749,9 +749,11 @@ adminRouter.patch('/restaurants/:restaurantId/verification',async(req,res)=>{
   return bad(400,'Estado inválido');
  const row=await db.marketplaceRestaurant.findUnique({where:{id}});
  if(!row)return bad(404,'Restaurante no encontrado');
+ if(row.verificationStatus==='archived')return bad(409,'Restaurante archivado');
  const updated=await db.$transaction(async tx=>{
   const result=await tx.marketplaceRestaurant.update({where:{id},data:{
-   verificationStatus:status}});
+   verificationStatus:status,
+   ...(status==='suspended'?{isOpen:false,sponsored:false,pickupEnabled:false}:{})}});
   await tx.authAuditEvent.create({data:{userId:who.id,action:'restaurant.verify',
    entityType:'restaurant',entityId:String(id),detail:status}});
   return result;
@@ -795,3 +797,140 @@ export function opsErrors(err:unknown,_req:Request,res:Response,next:NextFunctio
  if(err instanceof OpsError){res.status(err.code).json({detail:err.message});return;}
  next(err);
 }
+
+
+// ADMIN operations: reuse support_tickets created by Usuarios.
+// Replies are immutable after resolution, atomic, audited and sent to
+// existing customer notifications (no new messaging infrastructure).
+adminRouter.get('/support',async(req,res)=>{
+ const who=await account(req,['admin']);
+ const limit=query(req,'limit',100,1,200);
+ const status=req.query.status;
+ if(status!==undefined&&
+    (typeof status!=='string'||!['open','in_progress','resolved','all'].includes(status)))
+   return bad(422,'Filtro inválido');
+ const tickets=await db.platformSupportTicket.findMany({
+   where:!status||status==='all'?{}:{status},
+   orderBy:[{createdAt:'desc'},{id:'desc'}],take:limit,
+ });
+ const ids=[...new Set(tickets.map(t=>t.userId))];
+ const customers=ids.length?await db.authUser.findMany({
+   where:{id:{in:ids}},select:{id:true,name:true,email:true}
+ }):[];
+ const byUser=new Map(customers.map(u=>[u.id,u]));
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(tickets.map(t=>({
+   id:t.id,user_id:t.userId,customer_name:byUser.get(t.userId)?.name??'',
+   customer_email:byUser.get(t.userId)?.email??'',
+   order_id:t.orderId,category:t.category,message:t.message,
+   status:t.status,admin_reply:t.adminReply,
+   responded_at:t.respondedAt?.toISOString()??null,
+   created_at:t.createdAt.toISOString(),
+ })));
+});
+
+// PATCH prevents duplicate replies/notifications and never allows an admin
+// to impersonate a customer. Reply is only sent on resolution.
+adminRouter.patch('/support/:ticketId',async(req,res)=>{
+ const who=await account(req,['admin']);
+ const id=param(req,'ticketId');
+ const p=payload(z.strictObject({
+   status:z.enum(['in_progress','resolved']),
+   reply:z.string().trim().min(10).max(3000).optional(),
+ }),req.body);
+ if(p.status==='resolved'&&!p.reply)
+   return bad(422,'Para resolver debes escribir una respuesta de al menos 10 caracteres');
+ if(p.status==='in_progress'&&p.reply)
+   return bad(422,'La respuesta solo se envía al resolver el ticket');
+ const row=await db.$transaction(async tx=>{
+   const locks=await tx.$queryRawUnsafe(
+     'SELECT id FROM support_tickets WHERE id=$1 FOR UPDATE',id);
+   if(!Array.isArray(locks)||!locks.length)return bad(404,'Ticket no encontrado');
+   const ticket=await tx.platformSupportTicket.findUnique({where:{id}});
+   if(!ticket)return bad(404,'Ticket no encontrado');
+   if(ticket.status==='resolved')return bad(409,'Este ticket ya está resuelto');
+   const updated=await tx.platformSupportTicket.update({where:{id},data:{
+     status:p.status,
+     ...(p.status==='resolved'?{adminReply:p.reply!,respondedAt:new Date()}:{})
+   }});
+   if(p.status==='resolved'){
+     await tx.authNotification.create({data:{
+       userId:ticket.userId,kind:'support',title:'Respuesta de Tala Eats · Ticket #'+id,
+       message:p.reply!,
+     }});
+   }
+   await tx.authAuditEvent.create({data:{
+     userId:who.id,action:'support.ticket.'+p.status,
+     entityType:'support_ticket',entityId:String(id),
+     detail:p.status==='resolved'?'Customer notified':'Assigned for review',
+   }});
+   return updated;
+ },{maxWait:10000,timeout:20000});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({id:row.id,status:row.status,admin_reply:row.adminReply,
+   responded_at:row.respondedAt?.toISOString()??null});
+});
+
+// Administrative restaurant roster includes inactive/archived records.
+// Historical orders are intentionally never deleted.
+adminRouter.get('/restaurants',async(req,res)=>{
+ await account(req,['admin']);
+ const limit=query(req,'limit',50,1,100),offset=query(req,'offset',0,0,1000000);
+ const filter=req.query.filter??'all';
+ if(typeof filter!=='string'||!['all','inactive','archived'].includes(filter))
+   return bad(422,'Filtro inválido');
+ const where=filter==='inactive'?{isOpen:false,verificationStatus:{not:'archived'}}:
+   filter==='archived'?{verificationStatus:'archived'}:{};
+ const shops=await db.marketplaceRestaurant.findMany({
+   where,
+   select:{id:true,name:true,ownerId:true,isOpen:true,verificationStatus:true,
+     onboardingStatus:true,marketCode:true,createdAt:true,
+     orders:{orderBy:{createdAt:'desc'},take:1,select:{createdAt:true}},
+     _count:{select:{orders:{where:{status:{notIn:['delivered','cancelled']}}}}},
+   },
+   orderBy:[{createdAt:'desc'},{id:'desc'}],skip:offset,take:limit,
+ });
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(shops.map(s=>({
+   id:s.id,name:s.name,owner_id:s.ownerId,is_open:s.isOpen,
+   verification_status:s.verificationStatus,onboarding_status:s.onboardingStatus,
+   market_code:s.marketCode,active_orders:s._count.orders,
+   last_order_at:s.orders[0]?.createdAt.toISOString()??null,
+   can_archive:!s.isOpen&&s.verificationStatus!=='archived'&&s._count.orders===0,
+ })));
+});
+
+// "Eliminar" from the ADMIN UI = reversible-by-authorized-recovery archive.
+// No destructive SQL, no cascade deleting orders, ledger, reviews or media.
+adminRouter.patch('/restaurants/:restaurantId/archive',async(req,res)=>{
+ const who=await account(req,['admin']),id=param(req,'restaurantId');
+ const p=payload(z.strictObject({
+   confirm_name:z.string().min(2).max(150),
+   reason:z.string().trim().min(10).max(300),
+ }),req.body);
+ const result=await db.$transaction(async tx=>{
+   const locks=await tx.$queryRawUnsafe('SELECT id FROM restaurants WHERE id=$1 FOR UPDATE',id);
+   if(!Array.isArray(locks)||!locks.length)return bad(404,'Restaurante no encontrado');
+   const shop=await tx.marketplaceRestaurant.findUnique({where:{id}});
+   if(!shop)return bad(404,'Restaurante no encontrado');
+   if(shop.verificationStatus==='archived')return bad(409,'Restaurante ya archivado');
+   if(shop.name!==p.confirm_name)return bad(422,'El nombre de confirmación no coincide');
+   if(shop.isOpen)return bad(409,'Primero cierra el restaurante');
+   const pending=await tx.marketOrder.count({
+     where:{restaurantId:id,status:{notIn:['delivered','cancelled']}}
+   });
+   if(pending>0)return bad(409,'El restaurante tiene '+pending+' pedidos sin finalizar');
+   const saved=await tx.marketplaceRestaurant.update({where:{id},data:{
+     isOpen:false,pickupEnabled:false,sponsored:false,
+     verificationStatus:'archived',onboardingStatus:'archived',
+   }});
+   await tx.authAuditEvent.create({data:{
+     userId:who.id,action:'restaurant.archive',entityType:'restaurant',
+     entityId:String(id),detail:p.reason,
+   }});
+   return saved;
+ },{maxWait:10000,timeout:20000});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({id:result.id,name:result.name,archived:true,
+   verification_status:result.verificationStatus});
+});
