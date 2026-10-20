@@ -55,6 +55,10 @@ jobs:
           python3 scripts/node_route_coverage.py --check
           python3 scripts/node_route_coverage.py --json > /tmp/tala-node-first100.json
           python3 -c 'import json; p=json.load(open("/tmp/tala-node-first100.json")); assert p["structural_matches"]==249, p["structural_matches"]; assert p["python_routes_without_node_declaration"]==3, p["python_routes_without_node_declaration"]; expected={("POST","/api/v1/payments/mercadopago/orders/{order_id}/checkout"),("POST","/api/v1/payments/mercadopago/webhook"),("POST","/api/v1/payments/mercadopago/orders/{order_id}/refund")}; actual={(x["method"],x["path"]) for x in p["not_declared"]}; assert actual==expected, actual'
+      - name: No-destructive SQL static migration gate and negative tests
+        run: |
+          python3 scripts/kali-stage-migration-static-audit.py --check
+          python3 scripts/test_kali_stage_migration_static_audit.py
       - name: Frozen dependencies and disposable PG15 migrations
         run: |
           npm ci --no-audit --no-fund
