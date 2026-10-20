@@ -55,6 +55,7 @@ export type Claims = {
   jti?: string;
   device?: string;
   typ?: string;
+  mfa?: boolean; // signed evidence from a successful TOTP login
 };
 
 function hmac(secret: string, body: string): Buffer {
@@ -62,7 +63,8 @@ function hmac(secret: string, body: string): Buffer {
 }
 
 export function signAccessToken(userId: number, role: string, secret: string,
-  nowSeconds = Math.floor(Date.now() / 1000), lifetimeSeconds = 480 * 60): string {
+  nowSeconds = Math.floor(Date.now() / 1000), lifetimeSeconds = 480 * 60,
+  mfaVerified = false): string {
   if (!Number.isSafeInteger(userId) || userId <= 0 || secret.length < 40 ||
       !Number.isSafeInteger(lifetimeSeconds) || lifetimeSeconds <= 0) {
     throw new Error('INVALID_STAGE_JWT_CONFIG');
@@ -70,6 +72,7 @@ export function signAccessToken(userId: number, role: string, secret: string,
   const payload: Claims = {
     sub: String(userId), role, iat: nowSeconds, exp: nowSeconds + lifetimeSeconds,
     jti: randomBytes(18).toString('base64url'),
+    ...(mfaVerified?{mfa:true}:{}),
   };
   const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
   const message = header + '.' + b64url(JSON.stringify(payload));
