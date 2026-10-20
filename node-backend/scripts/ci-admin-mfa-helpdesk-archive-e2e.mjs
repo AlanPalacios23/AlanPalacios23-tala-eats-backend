@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
 import pg from 'pg';
+import {Redis} from 'ioredis';
 const url=String(process.env.DATABASE_URL??'');
 if(process.env.GITHUB_ACTIONS!=='true' ||
  !url.includes('127.0.0.1:15435/tala_node_stage') ||
@@ -63,7 +64,17 @@ await db.query("UPDATE users SET role='restaurant' WHERE id=$1",[owner.id]);
 admin.token=(await login(admin)).json?.access_token;
 owner.token=(await login(owner)).json?.access_token;
 assert.ok(admin.token && owner.token);
+// Test a private customer order against a pre-TOTP ADMIN bearer. The route
+// must NOT accidentally trust the admin role outside the /admin namespace.
+const preMfaShop=(await db.query(
+ "INSERT INTO restaurants(name,is_open,market_code) VALUES('QA Protected Shop',true,'TALA-JAL') RETURNING id"
+)).rows[0].id;
+const preMfaOrder=(await db.query(
+ "INSERT INTO orders(user_id,restaurant_id,status,address) VALUES($1,$2,'received','QA private') RETURNING id",
+ [customer.id,preMfaShop])).rows[0].id;
 assert.equal((await call('/admin/stats',{token:admin.token})).status,403);
+assert.equal((await call('/resilience/status',{token:admin.token})).status,403);
+assert.equal((await call('/orders/'+preMfaOrder,{token:admin.token})).status,403);
 assert.equal((await call('/admin/support',{token:customer.token})).status,403);
 const setup=await call('/v9/security/2fa/setup',{token:admin.token,method:'POST'});
 assert.equal(setup.status,200,JSON.stringify(setup.json));
@@ -73,12 +84,33 @@ const confirm=await call('/v9/security/2fa/confirm',{
 assert.equal(confirm.status,200,JSON.stringify(confirm.json));
 assert.equal((await call('/admin/stats',{token:admin.token})).status,403,
  'Old pre-enrollment JWT MUST NOT grant admin access');
+assert.equal((await call('/resilience/status',{token:admin.token})).status,403);
+assert.equal((await call('/orders/'+preMfaOrder,{token:admin.token})).status,403);
 assert.equal((await login(admin)).status,401);
 assert.equal((await login(admin,'999999')).status,401);
 const verified=await login(admin,totp(setup.json.secret));
 assert.equal(verified.status,200,JSON.stringify(verified.json));
 admin.token=verified.json.access_token;
 assert.equal((await call('/admin/stats',{token:admin.token})).status,200);
+assert.equal((await call('/resilience/status',{token:admin.token})).status,200);
+const ownOrderView=await call('/orders/'+preMfaOrder,{token:customer.token});
+assert.equal(ownOrderView.status,200,JSON.stringify(ownOrderView.json));
+assert.equal((await call('/orders/'+preMfaOrder,{token:admin.token})).status,200);
+const redis=new Redis(process.env.REDIS_URL);
+const hbKey='tala:node:stage:worker:heartbeat';
+try{
+ await redis.del(hbKey);
+ const without=await call('/v10/runtime',{token:customer.token});
+ assert.equal(without.status,200,JSON.stringify(without.json));
+ assert.equal(without.json.worker,'starting');
+ await redis.set(hbKey,'online','EX',45);
+ const withWorker=await call('/v10/runtime',{token:customer.token});
+ assert.equal(withWorker.status,200,JSON.stringify(withWorker.json));
+ assert.equal(withWorker.json.worker,'ok');
+}finally{
+ await redis.del(hbKey);
+ redis.disconnect();
+}
 const created=await call('/platform/support',{token:customer.token,method:'POST',body:{
  category:'general',message:'El pedido de pruebas necesita una respuesta profesional.'}});
 assert.equal(created.status,201,JSON.stringify(created.json));
