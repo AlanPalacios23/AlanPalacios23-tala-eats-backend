@@ -34,7 +34,8 @@ const resetSchema = z.strictObject({
 const RESET_GENERIC_REPLY = 'Si el correo está registrado, enviaremos instrucciones para restablecer la contraseña.';
 const RESET_INVALID_REPLY = 'El enlace de recuperación es inválido o expiró';
 const RESET_MINUTES = 30; // backend/app/config.py default; staging-only.
-const RESET_STAGE_FRONTEND = 'http://127.0.0.1:5173'; // Not delivered without SMTP.
+// Registered Android App Link; the staging APK must be installed on the device.
+const RESET_STAGE_FRONTEND = 'https://talaeats.alan-palacios-dev.com';
 
 const DUMMY_HASH = 'pbkdf2_sha256$600000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 const AUTH_COOKIE = 'talaeats_session';
@@ -150,7 +151,7 @@ async function issue(req: Request, res: Response, user: Awaited<ReturnType<typeo
     },
   });
   res.cookie(AUTH_COOKIE, token, {
-    httpOnly:true, secure:false, sameSite:'lax', path:'/', maxAge:TOKEN_LIFE_SECONDS*1000,
+    httpOnly:true, secure:true, sameSite:'lax', path:'/', maxAge:TOKEN_LIFE_SECONDS*1000,
   });
   return {
     access_token:token, token_type:'bearer', user:publicUser(user),
@@ -300,10 +301,14 @@ authRouter.get('/google/config', (_req,res)=>{
 authRouter.post('/google', (_req,res)=>{
   res.status(503).json({detail:'Google Sign-In aún no está configurado en staging'});
 });
-// Stage-only: durable outbox means QUEUED, never "email sent" or human receipt.
-// No real SMTP transport is enabled; do not expose staging recovery to customers.
+// The outbox is queued for a restricted staging email sender, never delivered
+// by the HTTP request itself. In CI only, recovery queues without a provider.
 authRouter.post('/password/forgot', async (req,res) => {
   await rateLimit(req,'password-forgot');
+  // Apply the same response for every identity when delivery is unavailable.
+  // Never claim a recovery email was sent while staging has no mail provider.
+  if(config.STAGE_EMAIL_DELIVERY_MODE!=='resend' && process.env.CI!=='true')
+    throw new HttpFailure(503,'Recuperación por correo no disponible en staging. Contacta a soporte.');
   const parsed = forgotSchema.safeParse(req.body);
   if (!parsed.success) throw new HttpFailure(422, 'Correo inválido');
   const email = normalizedEmail(parsed.data.email);
