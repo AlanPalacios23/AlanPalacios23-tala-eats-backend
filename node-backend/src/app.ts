@@ -43,7 +43,7 @@ if (config.MARKETPLACE_B_ENABLED === 'true') {
   app.use(marketplaceErrors);
 }
 app.get('/api/v1/health', (_req, res) => {
-  res.json({ status: 'ok', version: '0.1.0-node-stage', production: false });
+  res.json({ status: 'ok', version: '0.1.0-node-stripe-only-stage', production: false, digital_payment_provider: 'stripe', online_payment_writes: false });
 });
 app.get('/api/v1/ready', async (_req, res) => {
   const redis = new Redis(config.REDIS_URL, {
@@ -54,7 +54,7 @@ app.get('/api/v1/ready', async (_req, res) => {
     await db.$queryRawUnsafe('SELECT 1');
     await redis.connect();
     if (await redis.ping() !== 'PONG') throw new Error('redis_not_ready');
-    res.json({ ready: true, database: true, redis: true, financialWrites: false });
+    res.json({ ready: true, database: true, redis: true, financialWrites: false, digitalPaymentProvider: 'stripe', onlinePaymentsEnabled: false });
   } catch {
     res.status(503).json({ ready: false });
   } finally {

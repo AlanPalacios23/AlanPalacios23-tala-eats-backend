@@ -47,7 +47,7 @@ assert.equal((await db.query(
  'SELECT count(*)::int n FROM event_outbox WHERE event_key=$1',['dlq-retry:'+row])).rows[0].n,1);
 await db.query(
  "INSERT INTO payment_reconciliations(provider,provider_payment_id,status)"+
- " VALUES('mercadopago','ci-h2','mismatch')");
+ " VALUES('stripe','ci-h2','mismatch')");
 const eval1=await go(admin,'/alerts/evaluate','POST');
 assert.equal(eval1.status,200,JSON.stringify(eval1.json));
 assert.ok(eval1.json.created+eval1.json.updated>=1);

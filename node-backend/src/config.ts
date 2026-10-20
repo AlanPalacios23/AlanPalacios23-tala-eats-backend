@@ -22,6 +22,13 @@ const schema = z.object({
   SCHEDULE_PREP_LEAD_MINUTES: z.coerce.number().int().min(5).max(360).default(45),
   AUTH_JWT_SECRET: z.string().min(40).optional(),
 });
+// Stripe is the only online payment provider in this Node release.
+// Reject accidentally imported Mercado Pago secrets even with writes off.
+const forbiddenPaymentKeys = Object.keys(process.env).filter(k =>
+  /^MERCADOPAGO_/i.test(k) || /^(MP_ACCESS_TOKEN|MP_PUBLIC_KEY|MP_WEBHOOK_SECRET)$/i.test(k));
+if (forbiddenPaymentKeys.length) {
+  throw new Error('STAGING_STRIPE_ONLY_FORBIDS_MERCADOPAGO_ENV');
+}
 export const config = schema.parse(process.env);
 const pg = new URL(config.DATABASE_URL);
 const redis = new URL(config.REDIS_URL);
