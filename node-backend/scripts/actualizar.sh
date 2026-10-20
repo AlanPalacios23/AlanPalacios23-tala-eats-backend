@@ -213,6 +213,12 @@ const a=JSON.parse(s); const names=a.map(x=>x.name).sort();
 if(JSON.stringify(names)!==JSON.stringify(["tala-node-stage-api","tala-node-stage-worker"]) ||
 a.some(x=>x.pm2_env?.status!=="online"))process.exit(1)
 })'
+# The real mobile app depends on the worker, public catalog separation,
+# upload serving and payment locks. A raw Redis/PG ping alone is insufficient.
+# This smoke only issues GET requests and aborts into PM2 rollback on failure.
+node scripts/stage-readonly-smoke.mjs http://127.0.0.1:18190/api/v1 ||
+  { echo "ABORT_STAGE_READONLY_SMOKE_FAILED_ROLLBACK"; false; }
+echo "STAGE_REAL_API_WORKER_READONLY_SMOKE=PASS"
 pm2 save
 ROLLOUT_OK=yes
 trap - ERR EXIT
