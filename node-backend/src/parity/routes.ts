@@ -448,6 +448,11 @@ parityRouter.post('/v9/admin/dispatch/:orderId/reassign',async(req,res)=>{
 });
 
 
+// Fixed staging origin avoids Host/X-Forwarded-Host injection into asset URLs.
+// The Flutter Restaurante client requires an HTTPS URL for public catalog media.
+const STAGE_CATALOG_ORIGIN='https://api-stage-talaeats.alan-palacios-dev.com';
+const catalogAbsoluteUrl=(filename:string)=>STAGE_CATALOG_ORIGIN+'/api/v1/uploads/catalog/'+filename;
+
 // Files J1: bounded single-file multipart, magic bytes, private owner/assignment.
 // No base64-in-JSON workaround; maintains real upload binary contracts.
 const ROOT=path.resolve(process.env.TALA_NODE_STAGE_MEDIA_DIR||
@@ -573,7 +578,7 @@ parityRouter.post('/uploads/catalog/restaurant-cover',async(req,res)=>{
  const who=await account(req,['restaurant']),shop=await ownsRestaurant(who);
  const asset=await saveMedia(req,who.id,'catalog','r'+shop.id,
   {restaurantId:shop.id});
- const url='/api/v1/uploads/catalog/'+asset.filename;
+ const url=catalogAbsoluteUrl(asset.filename);
  await db.$transaction(async tx=>{
   await tx.marketplaceRestaurant.update({where:{id:shop.id},
    data:{coverImageUrl:url}});
@@ -588,7 +593,7 @@ parityRouter.post('/uploads/catalog/menu/:itemId',async(req,res)=>{
  if(!item||item.restaurantId!==shop.id)return bad(404,'Producto ajeno');
  const asset=await saveMedia(req,who.id,'catalog','r'+shop.id+'-p'+id,
   {restaurantId:shop.id,menuItemId:id});
- const url='/api/v1/uploads/catalog/'+asset.filename;
+ const url=catalogAbsoluteUrl(asset.filename);
  await db.$transaction(async tx=>{
   await tx.marketplaceMenuItem.update({where:{id},data:{imageUrl:url}});
   await tx.stageMediaAsset.update({where:{id:asset.id},data:{attached:true}});
@@ -600,11 +605,12 @@ parityRouter.get('/uploads/catalog/:filename',async(req,res)=>{
  const asset=await db.stageMediaAsset.findUnique({where:{filename:name}});
  if(!asset||!asset.attached||asset.category!=='catalog')
   return bad(404,'Imagen no publicada');
- const url='/api/v1/uploads/catalog/'+name;
+ const url=catalogAbsoluteUrl(name);
+ const legacyUrl='/api/v1/uploads/catalog/'+name;
  const [shop,item]=await Promise.all([
-  db.marketplaceRestaurant.findFirst({where:{coverImageUrl:url},
+  db.marketplaceRestaurant.findFirst({where:{coverImageUrl:{in:[url,legacyUrl]}},
    select:{id:true}}),
-  db.marketplaceMenuItem.findFirst({where:{imageUrl:url},
+  db.marketplaceMenuItem.findFirst({where:{imageUrl:{in:[url,legacyUrl]}},
    select:{id:true}})]);
  if(!shop&&!item)return bad(404,'Imagen no publicada');
  await mediaResponse(res,'catalog',name,true);
