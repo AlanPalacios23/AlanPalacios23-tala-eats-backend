@@ -154,9 +154,10 @@ assert.equal((await call('/orders/by-reference/invalid!ref',opts(buyer.token))).
 const mine=await call('/orders/mine',opts(buyer.token));
 assert.equal(mine.status,200);
 assert.equal(mine.body.length,1);
+// A signed ADMIN role WITHOUT verified TOTP is not authorized to read a
+// customer's order. MFA coverage is also tested after enrollment in admin QA.
 const forbidden=await call('/orders/'+oid,opts(otherOwner.token));
-assert.equal(forbidden.status,200); // Python permits ADMIN details.
-assert.equal(Object.hasOwn(forbidden.body,'delivery_pin'),false);
+assert.equal(forbidden.status,403);
 const customerDetail=await call('/orders/'+oid,opts(buyer.token));
 assert.equal(customerDetail.body.delivery_pin,'1234');
 const ownerOrders=await call('/owner/orders',opts(owner.token));
