@@ -60,6 +60,15 @@ curl --silent --show-error --fail --max-time 5 http://127.0.0.1:18190/api/v1/rea
       ?0:1)}catch{process.exit(1)}
   })' || { echo "ABORT_STAGE_READINESS_CONTRACT"; exit 1; }
 echo "PG15_REDIS8_READINESS_STRIPE_TEST_NO_FINANCIAL_WRITES=PASS"
+# The stronger smoke checks a real, fresh worker Redis heartbeat, catalog
+# isolation, invalid market filters and effective Stripe TEST-only methods.
+# Keep it in the postdeployment rollback path, not just in GitHub Actions.
+node "$ACTIVE_DIR/scripts/stage-readonly-smoke.mjs" \
+  http://127.0.0.1:18190/api/v1 || {
+  echo "ABORT_STAGE_API_WORKER_OR_CATALOG_SMOKE"
+  exit 1
+}
+echo "STAGE_API_WORKER_CATALOG_STRIPE_SMOKE=PASS"
 # No logs, tokens, environment secrets or production data printed.
 echo "KALI_NODE_PM2_STAGE_POSTDEPLOY_SMOKE=PASS"
 echo "LIVE_PRODUCTION_TOUCHED=NO"
