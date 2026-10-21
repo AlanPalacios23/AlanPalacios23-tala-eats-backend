@@ -16,10 +16,13 @@ test('RC6 release gate refuses unknown mode',()=>{
  const r=spawnSync(process.execPath,[gate,'--production'],{encoding:'utf8',cwd:root});
  assert.equal(r.status,2);
 });
-test('Kali RC6 plan fails closed for non-stage local CI identity',()=>{
+test('Kali RC6 plan rejects a fake SHA on CI and on the real stage user',()=>{
+ // In CI, the identity guard must fail. On Kali, the actual stage user
+ // passes identity validation but must reject a deliberately fake SHA
+ // because its worktree is pinned to a different commit.
  const r=spawnSync('bash',[script,'--plan','a'.repeat(40)],{encoding:'utf8',cwd:root});
- assert.equal(r.status,1);
- assert.match(r.stdout,/ABORT_STAGE_USER_ONLY/);
+ assert.equal(r.status,1,r.stdout+'\n'+r.stderr);
+ assert.match(r.stdout,/^(?:ABORT_STAGE_USER_ONLY|ABORT_RC6_MUST_RUN_FROM_SHA_PINNED_WORKTREE)\s*$/);
 });
 test('Kali RC6 plan rejects absent or shortened SHA',()=>{
  const r=spawnSync('bash',[script,'--plan','deadbeef'],{encoding:'utf8',cwd:root});
