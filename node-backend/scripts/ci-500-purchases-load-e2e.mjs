@@ -83,7 +83,7 @@ const metricsFor=(begin)=>{
   max:percentile(timings,1)}};
 };
 const generate=()=>{
- const all=samples.filter(s=>s.code!==0);
+ const all=samples.filter(s=>s.code!==0&&s.route!=='/ready');
  const pgCounts=Object.fromEntries([...new Set(samples.map(s=>s.code))].map(n=>[
   String(n),samples.filter(s=>s.code===n).length]));
  return{title:'Tala Eats Node RC4 — 500 simulated orders under bounded concurrency',
@@ -93,6 +93,8 @@ const generate=()=>{
   delivered_orders:delivered.length,cancelled_orders:cancelled.length,
   fake_customers:7,fake_restaurants:5,
   total_http_requests:samples.length,response_codes:pgCounts,
+  readiness_connection_attempts:samples.filter(s=>s.code===0&&s.route==='/ready').length,
+  load_network_errors:samples.filter(s=>s.code===0&&s.route!=='/ready').length,
   duration_ms:Number((performance.now()-started).toFixed(1)),
   latency_ms:{p50:percentile(all.map(s=>s.ms),.5),
    p95:percentile(all.map(s=>s.ms),.95),
@@ -324,7 +326,7 @@ try{
  assert.equal((await db.query(
   "SELECT COUNT(*)::int n FROM orders WHERE restaurant_id=ANY($1::int[])",[shopIds])).rows[0].n,500);
  checks.push('Autorización entre compradores y Stripe bloqueado');
- const bad=samples.filter(s=>s.code===0||s.code>=500&&s.code!==503);
+ const bad=samples.filter(s=>(s.code===0&&s.route!=='/ready')||(s.code>=500&&s.code!==503));
  assert.equal(bad.length,0,'Unexpected 5xx or network errors');
  checks.push('Cero errores HTTP 5xx inesperados y cero cargos reales');
  console.log('FIVE_HUNDRED_ORDER_LOAD_PASS=500');
