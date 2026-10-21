@@ -1,0 +1,91 @@
+name: Tala Eats | 500 Compras Ficticias PG15 Redis8
+on:
+  pull_request:
+    branches: [feat/node-kali-direct-pm2-release-20261020]
+    paths:
+      - 'node-backend/scripts/ci-500-purchases-load-e2e.mjs'
+      - '.github/workflows/tala-node-500-purchases-qa.yml'
+permissions:
+  contents: read
+jobs:
+  five-hundred-purchases:
+    name: 500 synthetic purchases, inventory and ledger stress
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: tala_node_stage
+          POSTGRES_PASSWORD: stage-ci-pass
+          POSTGRES_DB: tala_node_stage
+        ports: ['15435:5432']
+        options: >-
+          --health-cmd "pg_isready -U tala_node_stage -d tala_node_stage"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+      redis:
+        image: redis:8
+        ports: ['16379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      NODE_ENV: staging
+      HOST: '127.0.0.1'
+      PORT: '18190'
+      DATABASE_URL: postgresql://tala_node_stage:stage-ci-pass@127.0.0.1:15435/tala_node_stage
+      REDIS_URL: redis://:stage-ci-redis@127.0.0.1:16379/0
+      AUTH_V02_ENABLED: 'true'
+      MARKETPLACE_B_ENABLED: 'true'
+      STAGE_PICKUP_CASH_CHECKOUT_ENABLED: 'true'
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+      AUTH_JWT_SECRET: ci-only-500-orders-auth-secret-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Frozen dependencies and disposable PG migrations
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:validate
+          npm run db:migrate:deploy
+          npm run build
+          node --check scripts/ci-500-purchases-load-e2e.mjs
+      - name: Password-protect isolated test Redis
+        run: |
+          node --input-type=module -e '
+            import { Redis } from "ioredis";
+            const r=new Redis("redis://127.0.0.1:16379");
+            await r.config("SET","requirepass","stage-ci-redis");
+            r.disconnect();
+            const s=new Redis(process.env.REDIS_URL);
+            if(await s.ping()!=="PONG")process.exitCode=1;
+            s.disconnect();
+          '
+      - name: Execute 500 staged orders and collect CPU/RSS
+        run: |
+          set -euo pipefail
+          node dist/server.js > /tmp/tala-500-purchases-backend.log 2>&1 &
+          api_pid=$!
+          trap 'kill "$api_pid" 2>/dev/null || true' EXIT
+          STRESS_SERVER_PID="$api_pid" node scripts/ci-500-purchases-load-e2e.mjs
+          echo "FIVE_HUNDRED_SYNTHETIC_PURCHASES=PASS"
+      - name: Publish synthetic metrics only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TalaEats-500-Synthetic-Orders-Load-Report
+          path: /tmp/talaeats-500-orders-load-report.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Verify provider LIVE credentials never enabled
+        run: |
+          ! grep -ER --include='*.ts' -E 'sk_live_|rk_live_|DATABASE_URL_PRODUCTION' src
