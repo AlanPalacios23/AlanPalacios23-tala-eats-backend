@@ -6,6 +6,33 @@
 **Rama candidata:** `release/node-production-readiness-safety-20261021`  
 **Objetivo:** preparar un release instalable y reversible para el Kali de pruebas sin dinero real.
 
+## RC6 revisado: plan SHA-fijado, sin efectos laterales
+
+**La compuerta adicional de RC6** está en `scripts/rc6-schema-gate.mjs --check` y tiene su workflow específico `tala-node-rc6-kali-gates.yml`. Exige SQL idéntico al autorizado para las dos migraciones acumuladas, `driver_profiles.is_verified DEFAULT FALSE`, Stripe desactivado, y los scripts de copia/restauración/smoke en el circuito de promoción.
+
+**No usar simplemente `actualizar.sh --apply`** desde un RC anterior: detectará cambios Prisma y abortará. No eliminar esa comprobación.
+
+### Obtener el SHA aprobado
+
+Solo cuando **todas** las ejecuciones de GitHub Actions estén verdes para la rama de release ya fusionada, inspeccionar el último commit en GitHub y fijarlo en el operador de Kali. El nombre de rama por sí solo NO garantiza qué código está instalado.
+
+En Kali, como el usuario `tala-node-stage`, crear el worktree candidato mediante el flujo Git manual revisado; el destino debe ser estrictamente `/home/tala-node-stage/tala-node-releases/<SHA_COMPLETO>`. Con el worktree creado y las dependencias instaladas, ejecutar **solo lectura**:
+
+```bash
+cd "/home/tala-node-stage/tala-node-releases/<SHA_COMPLETO>/node-backend"
+bash scripts/kali-rc6-release-plan.sh --plan "<SHA_COMPLETO>"
+```
+
+El plan confirma identidad del usuario, SHA fijo, árbol sin modificaciones, ruta segura, Node 24, archivo de entorno privado, PostgreSQL y Redis aislados, PM2 actual sano, puertos locales, requisitos SQL y código. **No instala, migra, cobra ni reinicia servicios.** Los cambios siguientes requieren autorización humana y se realizan en las etapas 5–9 de este documento.
+
+Para repetir el control en cualquier máquina de desarrollo, sin acceder a Kali: `cd node-backend && node scripts/rc6-schema-gate.mjs --check`.
+
+### Política de restauración
+- **No es suficiente crear un archivo de backup.** Ejecutar y verificar restauración aislada PG15 antes de la migración real de staging.
+- Preservar datos de documentos/fotos y respaldar media de `/home/tala-node-stage/media` y del legado en `/tmp/tala-node-stage-media` si aún existe, con los permisos del usuario de staging.
+- No atribuir `PRODUCTION_READY` a un `ready=true`, ni enrutar `talaeats.alan-palacios-dev.com` hacia Node. Python permanece sin cambios.
+- La aprobación del equipo para operar comercialmente es independiente de las pruebas en GitHub y de la promoción PM2.
+
 ## Qué significa pasar de RC5 a RC6
 
 - **Aprobación de repartidores a prueba de omisiones**: `driver_profiles.is_verified` pasa de DEFAULT TRUE a DEFAULT FALSE tanto en Prisma como en PostgreSQL. Un `INSERT` SQL sin especificar el campo debe quedar **no verificado**.
