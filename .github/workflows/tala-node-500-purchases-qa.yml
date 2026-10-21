@@ -4,6 +4,7 @@ on:
     branches: [feat/node-kali-direct-pm2-release-20261020]
     paths:
       - 'node-backend/scripts/ci-500-purchases-load-e2e.mjs'
+      - 'node-backend/scripts/ci-order-races-qa.mjs'
       - '.github/workflows/tala-node-500-purchases-qa.yml'
 permissions:
   contents: read
@@ -77,13 +78,17 @@ jobs:
           api_pid=$!
           trap 'kill "$api_pid" 2>/dev/null || true' EXIT
           STRESS_SERVER_PID="$api_pid" node scripts/ci-500-purchases-load-e2e.mjs
+          node scripts/ci-order-races-qa.mjs
+          echo "RC5_CONCURRENT_STOCK_AND_CANCELLATION_RACES=PASS"
           echo "FIVE_HUNDRED_SYNTHETIC_PURCHASES=PASS"
       - name: Publish synthetic metrics only
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: TalaEats-500-Synthetic-Orders-Load-Report
-          path: /tmp/talaeats-500-orders-load-report.json
+          path: |
+            /tmp/talaeats-500-orders-load-report.json
+            /tmp/tala-rc5-order-races.json
           if-no-files-found: error
           retention-days: 7
       - name: Verify provider LIVE credentials never enabled
