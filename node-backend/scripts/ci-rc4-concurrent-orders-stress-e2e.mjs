@@ -192,7 +192,7 @@ const report={mode:'synthetic-disposable-ci',production_ready:false,real_charges
  checks};
 assert.equal(stats.filter(x=>x.code>=500&&x.code!==503).length,0);
 assert.equal(stats.filter(x=>x.code===503).length,1,'Only Stripe blocked');
-await writeFile('/tmp/tala-eats-rc4-stress-report.json',JSON.stringify(report,null,2)+'\n',{mode:0o600});
+await writeFile('/tmp/tala-eats-rc4-stress-report-'+process.pid+'.json',JSON.stringify(report,null,2)+'\n',{mode:0o600});
 if(process.env.GITHUB_STEP_SUMMARY)await appendFile(process.env.GITHUB_STEP_SUMMARY,[
  '## Tala Eats · estrés de compras ficticias',
  '**'+checks.length+' controles PASS:** 27 compras, 15 recogidas, 12 cancelaciones, 0 cargos reales.',
