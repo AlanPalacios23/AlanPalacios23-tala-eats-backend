@@ -33,7 +33,7 @@ const schema=read('prisma/schema.prisma');
 verify('DRIVER_PRISMA_UNVERIFIED_DEFAULT',
  /isVerified\s+Boolean\s+@default\(false\)\s+@map\("is_verified"\)/.test(schema));
 verify('SUPPORT_REPLY_SCHEMA',
- /adminReply\s+String\s+@default\("")\s+@map\("admin_reply"\)/.test(schema)&&
+ /adminReply\s+String\s+@default\(""\)\s+@map\("admin_reply"\)/.test(schema)&&
  /respondedAt\s+DateTime\?\s+@map\("responded_at"\)/.test(schema));
 const config=read('src/config.ts');
 verify('FINANCIAL_WRITES_DISABLED',
