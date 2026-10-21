@@ -1,0 +1,49 @@
+name: Tala Eats | RC6 Kali staging release safety
+on:
+  pull_request:
+    branches: [feat/node-kali-direct-pm2-release-20261020]
+    paths:
+      - 'node-backend/scripts/rc6-schema-gate.mjs'
+      - 'node-backend/scripts/kali-rc6-release-plan.sh'
+      - 'node-backend/tests/rc6-schema-gate.test.mjs'
+      - 'node-backend/docs/RC6-*'
+      - 'node-backend/prisma/**'
+      - '.github/workflows/tala-node-rc6-kali-gates.yml'
+permissions:
+  contents: read
+jobs:
+  rc6-release-gates:
+    name: RC6 exact migration allowlist, fail-closed Kali plan and no-LIVE
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: node-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Install frozen dependencies and validate source
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:validate
+          npm run build
+      - name: RC6 staging-only release, migration and recovery gates
+        run: |
+          set -euo pipefail
+          node scripts/rc6-schema-gate.mjs --check
+          python3 scripts/kali-stage-migration-static-audit.py --check
+          bash -n scripts/kali-rc6-release-plan.sh
+          node --test tests/rc6-schema-gate.test.mjs
+          npm run release:stage:check
+          if npm run release:production:check > /tmp/tala-rc6-production-no-go.log 2>&1; then
+            echo 'PRODUCTION_BYPASS_DETECTED'; exit 1
+          fi
+          grep -q 'TALA_NODE_RELEASE_CLASSIFICATION=PRODUCTION_NO_GO' /tmp/tala-rc6-production-no-go.log
+          echo 'RC6_KALI_RELEASE_GATES=PASS'
+          echo 'RC6_DEPLOYMENT=NOT_EXECUTED'
