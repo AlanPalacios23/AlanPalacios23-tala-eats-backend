@@ -103,6 +103,11 @@ jobs:
           node scripts/ci-order-lifecycle-c2-e2e.mjs
           node scripts/ci-pickup-complete-c3-e2e.mjs
           node scripts/ci-realistic-purchase-simulation-e2e.mjs
+          # Two independent bounded load rounds; 54 orders total in disposable CI.
+          for round in 1 2; do
+            echo "RC4_SYNTHETIC_STRESS_ROUND=$round"
+            node scripts/ci-rc4-concurrent-orders-stress-e2e.mjs
+          done
           node scripts/ci-python-node-decimal-parity-e2e.mjs
           node scripts/ci-owner-operational-d1-e2e.mjs
       - name: Synthetic driver lifecycle integration (separate feature-flagged process)
@@ -179,7 +184,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: TalaEats-Node-Synthetic-Purchase-Report
-          path: /tmp/tala-eats-purchase-simulation.json
+          path: |
+            /tmp/tala-eats-purchase-simulation.json
+            /tmp/tala-eats-rc4-stress-report-*.json
           if-no-files-found: ignore
           retention-days: 7
       - name: Fail closed for LIVE credentials
