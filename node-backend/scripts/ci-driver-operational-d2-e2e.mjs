@@ -53,6 +53,18 @@ const driver1=await register('one');
 const driver2=await register('two');
 const customer=await register('customer');
 const outsider=await register('outsider');
+// Exercise the PostgreSQL schema default, not just Node's API-level guard.
+// A raw insert without is_verified must be unapproved, and the migration must
+// not rewrite an existing explicit verification decision.
+const rawDriver=await register('rawdefault');
+const defaultValue=await client.query(
+ "INSERT INTO driver_profiles(user_id) VALUES($1) RETURNING is_verified",
+ [rawDriver.id]);
+assert.equal(defaultValue.rows[0].is_verified,false,
+ 'New driver profile without explicit approval must default to FALSE');
+const sqlDefault=await client.query(
+ "SELECT column_default FROM information_schema.columns WHERE table_name='driver_profiles' AND column_name='is_verified'");
+assert.match(sqlDefault.rows[0].column_default,/false/i);
 await promote(driver1,'driver');await promote(driver2,'driver');
 const restaurantId=(await client.query(
  "INSERT INTO restaurants(name,address,lat,lng) VALUES('D2 Tala','Tala Centro',20.6534,-103.704) RETURNING id",

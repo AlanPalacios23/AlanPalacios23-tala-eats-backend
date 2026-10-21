@@ -46,7 +46,16 @@ try{
  requireCheck(ready.body?.productionReady===false&&
   ready.body?.environment==='staging'&&
   ready.body?.financialWrites===false,'NO_LIVE_WRITES');
- requireCheck(ready.body?.workerOnline===true,'PM2_WORKER_HEARTBEAT');
+ // Worker process starts after API. Give it a short, bounded chance to
+ // publish the first heartbeat; never accept "API up" as proof the job
+ // consumer runs. All requests are read-only GETs.
+ let workerOnline=ready.body?.workerOnline===true;
+ for(let attempt=0;!workerOnline&&attempt<20;attempt++){
+  await new Promise(done=>setTimeout(done,350));
+  const retry=await request('/ready');
+  workerOnline=retry.status===200&&retry.body?.workerOnline===true;
+ }
+ requireCheck(workerOnline,'PM2_WORKER_HEARTBEAT');
  const stripe=await request('/payments/stripe/config');
  requireCheck(stripe.status===200&&stripe.body?.enabled===false&&
   stripe.body?.financial_writes_enabled===false,'STRIPE_DISABLED');
