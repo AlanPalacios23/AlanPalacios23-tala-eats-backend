@@ -9,6 +9,15 @@ on:
       - 'node-backend/docs/RC6-*'
       - 'node-backend/prisma/**'
       - '.github/workflows/tala-node-rc6-kali-gates.yml'
+  push:
+    branches: [feat/node-kali-direct-pm2-release-20261020]
+    paths:
+      - 'node-backend/scripts/rc6-schema-gate.mjs'
+      - 'node-backend/scripts/kali-rc6-release-plan.sh'
+      - 'node-backend/tests/rc6-schema-gate.test.mjs'
+      - 'node-backend/docs/RC6-*'
+      - 'node-backend/prisma/**'
+      - '.github/workflows/tala-node-rc6-kali-gates.yml'
 permissions:
   contents: read
 jobs:
