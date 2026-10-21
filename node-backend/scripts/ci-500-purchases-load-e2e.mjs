@@ -258,8 +258,8 @@ try{
  checks.push('60 reintentos de la misma compra sin duplicado + conflicto 409');
  lastStep='cancel 150 orders';
  // 30 per shop: 150 cancelled. Cancelled orders remain in the history.
- const cancelledOrders=created.filter((o)=>o.spec.index%10<3);
- const deliveredOrders=created.filter((o)=>o.spec.index%10>=3);
+ const cancelledOrders=created.filter((o)=>Math.floor(o.spec.index/5)%10<3);
+ const deliveredOrders=created.filter((o)=>Math.floor(o.spec.index/5)%10>=3);
  assert.equal(cancelledOrders.length,150);
  assert.equal(deliveredOrders.length,350);
  const cancellations=await pool(cancelledOrders.map(o=>()=>cancel(o,o.spec.buyer)),12);
