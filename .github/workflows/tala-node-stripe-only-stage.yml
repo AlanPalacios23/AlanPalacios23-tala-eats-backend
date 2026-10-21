@@ -65,7 +65,21 @@ jobs:
           python3 scripts/test_kali_stage_init_native_services.py
       - name: Frozen dependencies and disposable PG15 migrations
         run: |
-          npm ci --no-audit --no-fund
+          set -euo pipefail
+          # Prisma's engine CDN may transiently reset TLS connections.
+          # Retry only verified network failures; never mask install/code errors.
+          for attempt in 1 2 3; do
+            if npm ci --no-audit --no-fund >/tmp/tala-node-npm-ci.log 2>&1; then
+              cat /tmp/tala-node-npm-ci.log
+              break
+            fi
+            if ! grep -Eq 'ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND' /tmp/tala-node-npm-ci.log || [ "$attempt" -eq 3 ]; then
+              cat /tmp/tala-node-npm-ci.log
+              exit 1
+            fi
+            echo "TRANSIENT_PRISMA_DOWNLOAD_FAILURE_RETRY=$attempt"
+            sleep $((attempt * 4))
+          done
           npm run generate
           npm run db:validate
           npm run db:migrate:deploy
