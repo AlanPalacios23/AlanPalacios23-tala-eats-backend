@@ -2,8 +2,8 @@
 
 **Fecha:** 21 de octubre de 2026  
 **Estado:** candidato de **staging**. NO autorizar aún tráfico comercial ni sustituir Python.  
-**Base:** RC5 validado (commit `814287552501f8f1a8d5a0ef6dff6b43cefa3bd1`)  
-**Rama candidata:** `release/node-production-readiness-safety-20261021`  
+**Base histórica:** RC5 validado (commit `814287552501f8f1a8d5a0ef6dff6b43cefa3bd1`); RC6 integrado mediante PR #120 y #121  
+**Rama de lanzamiento:** `feat/node-kali-direct-pm2-release-20261020` (no confundir con `main`, que aún contiene Python)  
 **Objetivo:** preparar un release instalable y reversible para el Kali de pruebas sin dinero real.
 
 ## RC6 revisado: plan SHA-fijado, sin efectos laterales
@@ -13,6 +13,31 @@
 **No usar simplemente `actualizar.sh --apply`** desde un RC anterior: detectará cambios Prisma y abortará. No eliminar esa comprobación.
 
 ### Obtener el SHA aprobado
+
+Las dos compuertas **RC6 Kali staging release safety** y **500 Compras Ficticias PG15 Redis8** deben terminar con `success` también para el **commit de merge definitivo**, no solamente para el `head_sha` del PR. Estos workflows ahora admiten `push` a la rama de lanzamiento. Si GitHub aún no muestra ambas ejecuciones en el SHA definitivo, el lanzamiento queda bloqueado.
+
+La promoción PM2 vuelve a ejecutar `rc6-schema-gate.mjs --check` y `release-readiness.mjs --stage` justo antes de preparar el release, y exige un worktree dentro de `~/tala-node-releases/<SHA>`. No ejecutar ninguna promoción desde un clone genérico ni omitir estas comprobaciones.
+
+**Ejemplo para fijar el commit sin usar el nombre de la rama como release** (como `tala-node-stage`, desde un repositorio de staging ya clonado y auditado; adaptar la ubicación `SRC_REPO` a la instalación existente):
+
+```bash
+export SRC_REPO="$HOME/tala-node-src"
+export RC6_BRANCH="feat/node-kali-direct-pm2-release-20261020"
+test "$(id -un)" = "tala-node-stage"
+git -C "$SRC_REPO" remote get-url origin | grep -Fx "https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend.git"
+git -C "$SRC_REPO" fetch --no-tags origin "$RC6_BRANCH"
+export RC6_SHA="$(git -C "$SRC_REPO" rev-parse --verify FETCH_HEAD)"
+test "$(git -C "$SRC_REPO" ls-remote origin "refs/heads/$RC6_BRANCH" | awk '{print $1}')" = "$RC6_SHA"
+test ! -e "$HOME/tala-node-releases/$RC6_SHA"
+git -C "$SRC_REPO" worktree add --detach "$HOME/tala-node-releases/$RC6_SHA" "$RC6_SHA"
+cd "$HOME/tala-node-releases/$RC6_SHA/node-backend"
+npm ci --no-audit --no-fund
+npm run generate && npm run db:validate && npm run build && npm test
+node scripts/rc6-schema-gate.mjs --check
+bash scripts/kali-rc6-release-plan.sh --plan "$RC6_SHA"
+```
+
+**Importante:** comprobar en GitHub las dos ejecuciones PASS de ese `RC6_SHA` **antes** del primer `git worktree add`; el bloque anterior no instala servicios ni modifica la BD, pero sí descarga dependencias y construye código. `--plan` es la única operación de publicación autorizada en este paso; backup, restauración, migración y PM2 `--apply` siguen siendo pasos separados y supervisados.
 
 Solo cuando **todas** las ejecuciones de GitHub Actions estén verdes para la rama de release ya fusionada, inspeccionar el último commit en GitHub y fijarlo en el operador de Kali. El nombre de rama por sí solo NO garantiza qué código está instalado.
 
