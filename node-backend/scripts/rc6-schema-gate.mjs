@@ -47,6 +47,11 @@ verify('PROMOTION_REQUIRES_RESTORE',
  prom.includes('kali-stage-test-restore.py --apply')&&
  prom.includes('kali-stage-postdeploy-smoke.sh')&&
  prom.includes('ABORT_PRISMA_PENDING_OR_FAILED_RUN_SEPARATE_STAGE_MIGRATION_GATE'));
+verify('PROMOTION_SHA_PINNED',
+ prom.includes('$HOME/tala-node-releases/$EXPECTED_SHA'));
+verify('PROMOTION_RC6_GATES_MANDATORY',
+ prom.includes('node scripts/rc6-schema-gate.mjs --check') &&
+ prom.includes('node scripts/release-readiness.mjs --stage'));
 verify('POSTDEPLOY_WORKER_CHECK',
  read('scripts/stage-readonly-smoke.mjs').includes('PM2_WORKER_HEARTBEAT'));
 for(const c of checks)console.log('RC6_'+c.name+'='+(c.pass?'PASS':'FAIL'));

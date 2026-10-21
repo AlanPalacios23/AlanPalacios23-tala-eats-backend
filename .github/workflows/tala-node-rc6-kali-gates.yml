@@ -5,6 +5,17 @@ on:
     paths:
       - 'node-backend/scripts/rc6-schema-gate.mjs'
       - 'node-backend/scripts/kali-rc6-release-plan.sh'
+      - 'node-backend/scripts/kali-stage-first-pm2-promote.sh'
+      - 'node-backend/tests/rc6-schema-gate.test.mjs'
+      - 'node-backend/docs/RC6-*'
+      - 'node-backend/prisma/**'
+      - '.github/workflows/tala-node-rc6-kali-gates.yml'
+  push:
+    branches: [feat/node-kali-direct-pm2-release-20261020]
+    paths:
+      - 'node-backend/scripts/rc6-schema-gate.mjs'
+      - 'node-backend/scripts/kali-rc6-release-plan.sh'
+      - 'node-backend/scripts/kali-stage-first-pm2-promote.sh'
       - 'node-backend/tests/rc6-schema-gate.test.mjs'
       - 'node-backend/docs/RC6-*'
       - 'node-backend/prisma/**'
@@ -39,6 +50,7 @@ jobs:
           node scripts/rc6-schema-gate.mjs --check
           python3 scripts/kali-stage-migration-static-audit.py --check
           bash -n scripts/kali-rc6-release-plan.sh
+          bash -n scripts/kali-stage-first-pm2-promote.sh
           node --test tests/rc6-schema-gate.test.mjs
           npm run release:stage:check
           if npm run release:production:check > /tmp/tala-rc6-production-no-go.log 2>&1; then

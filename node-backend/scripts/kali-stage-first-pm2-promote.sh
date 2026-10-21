@@ -27,8 +27,8 @@ done
 CANDIDATE_DIR="$(cd "$(dirname "$0")/.." && pwd -P)"
 CANDIDATE_ROOT="$(git -C "$CANDIDATE_DIR" rev-parse --show-toplevel)"
 [[ "$CANDIDATE_DIR" == "$CANDIDATE_ROOT/node-backend" &&
-   "$CANDIDATE_ROOT" == "/home/tala-node-stage/"* &&
-   ! -L "$CANDIDATE_ROOT" ]] || {
+   "$CANDIDATE_ROOT" == "$HOME/tala-node-releases/$EXPECTED_SHA" &&
+   ! -L "$CANDIDATE_ROOT" && ! -L "$CANDIDATE_DIR" ]] || {
   echo "ABORT_CANDIDATE_OUTSIDE_STAGE_HOME_OR_NOT_SOURCE"; exit 1;
 }
 ACTUAL_SHA="$(git -C "$CANDIDATE_ROOT" rev-parse --verify HEAD)"
@@ -86,6 +86,11 @@ fi
   echo "ABORT_STAGE_RESTORE_APPROVAL"; exit 1;
 }
 cd "$CANDIDATE_DIR"
+# RC6 checks are mandatory even when an operator calls promotion directly,
+# bypassing the separate read-only release plan.
+node scripts/rc6-schema-gate.mjs --check
+node scripts/release-readiness.mjs --stage
+echo "RC6_PROMOTION_SOURCE_GATES=PASS"
 # Build independently of the running PM2 cwd. All preflight work is done
 # before stopping either process. Secrets stay outside version control.
 npm ci --no-audit --no-fund
