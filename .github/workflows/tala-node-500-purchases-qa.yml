@@ -7,6 +7,9 @@ on:
       - 'node-backend/scripts/ci-order-races-qa.mjs'
       - 'node-backend/prisma/schema.prisma'
       - 'node-backend/prisma/migrations/**'
+      - 'node-backend/scripts/rc6-schema-gate.mjs'
+      - 'node-backend/scripts/kali-rc6-release-plan.sh'
+      - 'node-backend/docs/RC6-PREPRODUCTION-DEPLOY-RUNBOOK.md'
       - 'node-backend/src/marketplace/**'
       - 'node-backend/src/operational/**'
       - '.github/workflows/tala-node-500-purchases-qa.yml'
@@ -63,6 +66,7 @@ jobs:
           npm run db:validate
           npm run db:migrate:deploy
           npm run build
+          node scripts/rc6-schema-gate.mjs --check
           node --check scripts/ci-500-purchases-load-e2e.mjs
       - name: Password-protect isolated test Redis
         run: |
