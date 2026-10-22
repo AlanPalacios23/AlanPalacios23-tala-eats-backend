@@ -199,9 +199,10 @@ export async function cancelCashPickupStage(
     return order.id;
   },{maxWait:10_000,timeout:20_000});
 }
-export async function moveCashPickupOwnerStage(orderId:number,actor:AuthUser,
+export async function moveStagePickupOwner(orderId:number,actor:AuthUser,
   next:'confirmed'|'preparing'|'ready'):Promise<number>{
-  if(config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true')
+  if(config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true'&&
+     config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true')
     fail(503,'Ciclo de pedidos de staging deshabilitado');
   if(!['restaurant','admin'].includes(actor.role))fail(403,'No autorizado');
   return db.$transaction(async tx=>{
@@ -215,7 +216,20 @@ export async function moveCashPickupOwnerStage(orderId:number,actor:AuthUser,
     if(!order)return notFound();
     if(actor.role!=='admin'&&order.restaurant.ownerId!==actor.id)
       fail(403,'Ese pedido no pertenece a tu restaurante');
-    cashOnly(order);
+    const cash=order.orderType==='pickup'&&order.paymentMethod==='cash'&&
+      order.paymentStatus==='pending'&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true';
+    const stripe=order.orderType==='pickup'&&order.paymentMethod==='stripe'&&
+      order.paymentStatus==='paid'&&config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true';
+    if(!cash&&!stripe)fail(503,'Pago no conciliado o método no disponible');
+    if(stripe){
+      const verified=await tx.stageFinancialLedgerEntry.findFirst({
+        where:{orderId:order.id,kind:'stripe_test_payment',
+          account:'stripe_test_collected',
+          idempotencyKey:'order:'+order.id+':stripe-test:collected'},
+      });
+      if(!verified||verified.amount.toFixed(2)!==order.total.toFixed(2))
+        fail(503,'El pedido carece de cobro Stripe TEST confirmado');
+    }
     const expected:{[key:string]:string}={
       received:'confirmed',confirmed:'preparing',preparing:'ready',
     };
@@ -255,3 +269,5 @@ export async function moveCashPickupOwnerStage(orderId:number,actor:AuthUser,
     return order.id;
   },{maxWait:10_000,timeout:20_000});
 }
+
+export const moveCashPickupOwnerStage=moveStagePickupOwner;
