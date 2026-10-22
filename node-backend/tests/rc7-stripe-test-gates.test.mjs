@@ -29,6 +29,8 @@ test('Stripe TEST is buyer-authenticated, provider-idempotent and webhook-only r
  const worker=read('src/worker.ts');
  assert.match(gateway,/order\.userId!==buyerId/);
  assert.match(gateway,/idempotencyKey:requestKey/);
+ assert.match(gateway,/allowed_payment_method_types:\['card'\]/);
+ assert.match(gateway,/allow_redirects:'never'/);
  assert.match(gateway,/intent\.amount_received!==intent\.amount/);
  assert.match(gateway,/order\.paymentProviderId!==intent\.id/);
  assert.match(gateway,/where:\{id:orderId,paymentStatus:'pending',status:'awaiting_payment'\}/);
