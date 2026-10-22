@@ -163,13 +163,19 @@ export async function cancelCashPickupStage(
     const ledger=await tx.stageFinancialLedgerEntry.findMany({
       where:{orderId:order.id,kind:'order_settlement'},orderBy:{id:'asc'},
     });
-    // Contribution margin can be zero and is then intentionally omitted;
-    // tiny Stripe TEST orders can also have negative margin (debit).
-    // Reversal must not trap uncharged, cancelable orders over that omission.
-    const required=['gmv','restaurant_payable','platform_revenue'];
-    if(!required.every(a=>ledger.some(e=>e.account===a))||
-       new Set(ledger.map(e=>e.account)).size!==ledger.length)
-      fail(503,'Ledger de checkout incompleto o duplicado; no se puede cancelar');
+    // An unpaid Stripe TEST reservation must have ZERO revenue/payable
+    // accruals. Captured Stripe payments are never canceled through this path.
+    if(stripe&&ledger.length!==0)
+      fail(503,'Pedido Stripe sin captura contiene saldos: revisión contable');
+    if(!stripe){
+      // Zero platform income / contribution may be intentionally omitted for
+      // small cash orders. Never require a zero-valued ledger entry.
+      const required=['gmv','restaurant_payable'];
+      if(cents(order.platformRevenue.toString())!==0n)required.push('platform_revenue');
+      if(!required.every(a=>ledger.some(e=>e.account===a))||
+         new Set(ledger.map(e=>e.account)).size!==ledger.length)
+        fail(503,'Ledger de checkout incompleto o duplicado; no se puede cancelar');
+    }
     const feeRate=stripe?0n:actor.role==='customer'?feeRates[order.status]!:0n;
     const cancellationFee=roundHalfEvenBasisPoints(
       cents(order.subtotal.toString())-cents(order.discount.toString()),feeRate);
