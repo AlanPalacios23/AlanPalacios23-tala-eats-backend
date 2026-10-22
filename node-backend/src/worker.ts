@@ -2,6 +2,7 @@ import { Worker } from 'bullmq';
 import { Redis } from 'ioredis';
 import { config } from './config.js';
 import { db } from './db.js';
+import { deliverStageMailBatch } from './email.js';
 
 // Nunca cobra ni transfiere dinero; únicamente marca un evento test verificado.
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
@@ -21,8 +22,34 @@ const worker = new Worker('tala-node-staging-webhooks', async (job) => {
   return { recorded: true };
 }, { connection, concurrency: 2 });
 worker.on('failed', (_job, error) => console.error('STAGING_RECEIPT_FAILED', error.name));
+// A bounded Redis TTL confirms that the real PM2 worker event loop is alive;
+// an API process alone must not be presented as an operationally complete app.
+// Heartbeats never contain user identifiers, tokens or payment information.
+const workerHeartbeatKey='tala:node:stage:worker:heartbeat';
+async function publishWorkerHeartbeat(){
+ try{await connection.set(workerHeartbeatKey,'online','EX',45);}
+ catch{console.error('STAGE_WORKER_HEARTBEAT_UNAVAILABLE');}
+}
+const workerHeartbeatTimer=setInterval(()=>{void publishWorkerHeartbeat();},15_000);
+void publishWorkerHeartbeat();
+// An independent timer drains the existing PG outbox only when a provider is
+// configured explicitly. Do not log addresses, tokens, or message bodies.
+let mailBusy=false;
+async function tickMail(){
+ if(mailBusy)return;
+ mailBusy=true;
+ try{await deliverStageMailBatch();}
+ catch(err){console.error('STAGE_MAIL_DELIVERY_ERROR',
+   err instanceof Error?err.name:'unknown');}
+ finally{mailBusy=false;}
+}
+const mailTimer=config.STAGE_EMAIL_DELIVERY_MODE==='resend'
+ ? setInterval(()=>{void tickMail();},30_000):null;
+if(mailTimer)void tickMail();
 console.log('TALA_STAGE_WORKER_RUNNING');
 async function shutdown() {
+  if(mailTimer)clearInterval(mailTimer);
+  clearInterval(workerHeartbeatTimer);
   await worker.close();
   connection.disconnect();
   await db.$disconnect();

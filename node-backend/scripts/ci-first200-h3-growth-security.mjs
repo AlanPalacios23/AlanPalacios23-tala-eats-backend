@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {enrollAdminQa} from './ci-admin-totp-helper.mjs';
 import {createHmac} from 'node:crypto';
 import pgLib from 'pg';
 import {Redis} from 'ioredis';
@@ -29,6 +30,7 @@ async function makeRole(user,role){
 const buyer=await register('buyer'),admin=await register('admin'),merchant=await register('merchant'),
  other=await register('other');
 await makeRole(admin,'admin');await makeRole(merchant,'restaurant');
+await enrollAdminQa(admin,api,password);
 const go=(u,path,method='GET',body)=>api('/v9'+path,{token:u?.token,method,body});
 const exp=await go(admin,'/admin/experiments','POST',{
  key:'h3.checkout',name:'H3 conversion experiment',

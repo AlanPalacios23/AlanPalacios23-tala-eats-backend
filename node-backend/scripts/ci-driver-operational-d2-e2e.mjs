@@ -53,6 +53,18 @@ const driver1=await register('one');
 const driver2=await register('two');
 const customer=await register('customer');
 const outsider=await register('outsider');
+// Exercise the PostgreSQL schema default, not just Node's API-level guard.
+// A raw insert without is_verified must be unapproved, and the migration must
+// not rewrite an existing explicit verification decision.
+const rawDriver=await register('rawdefault');
+const defaultValue=await client.query(
+ "INSERT INTO driver_profiles(user_id) VALUES($1) RETURNING is_verified",
+ [rawDriver.id]);
+assert.equal(defaultValue.rows[0].is_verified,false,
+ 'New driver profile without explicit approval must default to FALSE');
+const sqlDefault=await client.query(
+ "SELECT column_default FROM information_schema.columns WHERE table_name='driver_profiles' AND column_name='is_verified'");
+assert.match(sqlDefault.rows[0].column_default,/false/i);
 await promote(driver1,'driver');await promote(driver2,'driver');
 const restaurantId=(await client.query(
  "INSERT INTO restaurants(name,address,lat,lng) VALUES('D2 Tala','Tala Centro',20.6534,-103.704) RETURNING id",
@@ -87,6 +99,14 @@ assert.equal((await api(driver1,'/location','PATCH',{lat:190,lng:0})).status,422
 const gps=await api(driver1,'/location','PATCH',{lat:20.6534,lng:-103.704});
 assert.equal(gps.status,200,JSON.stringify(gps.json));
 assert.equal(gps.json.current_lat,20.6534);
+// Driver profiles must be verified before accepting a shift.
+const unapproved=await api(driver1,'/availability','PATCH',{is_online:true});
+assert.equal(unapproved.status,403,JSON.stringify(unapproved.json));
+assert.equal((await api(driver1,'/available')).json.length,0);
+await api(driver2,'/profile');
+await client.query(
+ 'UPDATE driver_profiles SET is_verified=true WHERE user_id=ANY($1::int[])',
+ [[driver1.id,driver2.id]]);
 assert.equal((await api(driver1,'/availability','PATCH',{is_online:'true'})).status,422);
 const online=await Promise.all([
  api(driver1,'/availability','PATCH',{is_online:true}),

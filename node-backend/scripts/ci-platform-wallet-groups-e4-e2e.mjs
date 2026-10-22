@@ -1,5 +1,21 @@
 // E4 functional contracts, CI-only disposable PostgreSQL15/Redis8.
 import assert from 'node:assert/strict';
+import {createHmac} from 'node:crypto';
+function totp(secretBase32){
+ const symbols='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+ let value=0,bits=0;
+ const bytes=[];
+ for(const ch of secretBase32.toUpperCase().replace(/=+$/,'')){
+  const p=symbols.indexOf(ch);if(p<0)throw Error('INVALID_BASE32');
+  value=(value<<5)|p;bits+=5;
+  if(bits>=8){bytes.push((value>>>(bits-=8))&255);value&=(1<<bits)-1;}
+ }
+ const t=Math.floor(Date.now()/30000);
+ const counter=Buffer.alloc(8);counter.writeBigUInt64BE(BigInt(t));
+ const digest=createHmac('sha1',Buffer.from(bytes)).update(counter).digest();
+ const offset=digest[digest.length-1]&15;
+ return String((digest.readUInt32BE(offset)&0x7fffffff)%1000000).padStart(6,'0');
+}
 import pg from 'pg';
 import { Redis } from 'ioredis';
 const dbUrl=String(process.env.DATABASE_URL??'');
@@ -45,6 +61,15 @@ const bob=await register('bob');
 const admin=await register('admin');
 const merchant=await register('merchant');
 await promote(admin,'admin');
+const setup=await call('/v9/security/2fa/setup',{token:admin.token,method:'POST'});
+assert.equal(setup.status,200,JSON.stringify(setup.json));
+const confirm=await call('/v9/security/2fa/confirm',{
+ token:admin.token,method:'POST',body:{code:totp(setup.json.secret)}});
+assert.equal(confirm.status,200,JSON.stringify(confirm.json));
+const verified=await call('/auth/login',{method:'POST',body:{
+ email:admin.email,password:pwd,otp:totp(setup.json.secret)}});
+assert.equal(verified.status,200,JSON.stringify(verified.json));
+admin.token=verified.json.access_token;
 await promote(merchant,'restaurant');
 const api=(who,path)=>call('/platform'+path,{token:who?.token});
 const ref=(await client.query('SELECT referral_code FROM loyalty_accounts WHERE user_id=$1',[alice.id])).rows[0].referral_code;

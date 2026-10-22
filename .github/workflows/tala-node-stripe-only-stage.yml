@@ -1,9 +1,9 @@
 name: TALA EATS | Stripe Only Kali Staging Candidate PG15 Redis8
 on:
   push:
-    branches: [feat/node-stripe-only-kali-stage-release-20261019]
+    branches: [feat/node-stripe-only-kali-stage-release-20261019, feat/node-kali-direct-pm2-release-20261020]
   pull_request:
-    branches: [feat/node-last52-stage-contracts-j1-20261019]
+    branches: [feat/node-last52-stage-contracts-j1-20261019, feat/node-stripe-only-kali-stage-release-20261019, feat/node-kali-direct-pm2-release-20261020, fix/node-stage-mobile-onboarding-password-mail-20261020]
 permissions:
   contents: read
 jobs:
@@ -55,9 +55,31 @@ jobs:
           python3 scripts/node_route_coverage.py --check
           python3 scripts/node_route_coverage.py --json > /tmp/tala-node-first100.json
           python3 -c 'import json; p=json.load(open("/tmp/tala-node-first100.json")); assert p["structural_matches"]==249, p["structural_matches"]; assert p["python_routes_without_node_declaration"]==3, p["python_routes_without_node_declaration"]; expected={("POST","/api/v1/payments/mercadopago/orders/{order_id}/checkout"),("POST","/api/v1/payments/mercadopago/webhook"),("POST","/api/v1/payments/mercadopago/orders/{order_id}/refund")}; actual={(x["method"],x["path"]) for x in p["not_declared"]}; assert actual==expected, actual'
+      - name: No-destructive SQL static migration gate and negative tests
+        run: |
+          python3 scripts/kali-stage-migration-static-audit.py --check
+          python3 scripts/test_kali_stage_migration_static_audit.py
+          python3 scripts/test_kali_stage_restore.py
+          python3 scripts/test_kali_stage_coldstart.py
+          python3 scripts/test_kali_stage_boot_persistence.py
+          python3 scripts/test_kali_stage_init_native_services.py
       - name: Frozen dependencies and disposable PG15 migrations
         run: |
-          npm ci --no-audit --no-fund
+          set -euo pipefail
+          # Prisma's engine CDN may transiently reset TLS connections.
+          # Retry only verified network failures; never mask install/code errors.
+          for attempt in 1 2 3; do
+            if npm ci --no-audit --no-fund >/tmp/tala-node-npm-ci.log 2>&1; then
+              cat /tmp/tala-node-npm-ci.log
+              break
+            fi
+            if ! grep -Eq 'ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND' /tmp/tala-node-npm-ci.log || [ "$attempt" -eq 3 ]; then
+              cat /tmp/tala-node-npm-ci.log
+              exit 1
+            fi
+            echo "TRANSIENT_PRISMA_DOWNLOAD_FAILURE_RETRY=$attempt"
+            sleep $((attempt * 4))
+          done
           npm run generate
           npm run db:validate
           npm run db:migrate:deploy
@@ -94,6 +116,12 @@ jobs:
           node scripts/ci-cash-pickup-atomic-e2e.mjs
           node scripts/ci-order-lifecycle-c2-e2e.mjs
           node scripts/ci-pickup-complete-c3-e2e.mjs
+          node scripts/ci-realistic-purchase-simulation-e2e.mjs
+          # Two independent bounded load rounds; 54 orders total in disposable CI.
+          for round in 1 2; do
+            echo "RC4_SYNTHETIC_STRESS_ROUND=$round"
+            node scripts/ci-rc4-concurrent-orders-stress-e2e.mjs
+          done
           node scripts/ci-python-node-decimal-parity-e2e.mjs
           node scripts/ci-owner-operational-d1-e2e.mjs
       - name: Synthetic driver lifecycle integration (separate feature-flagged process)
@@ -119,6 +147,62 @@ jobs:
           node scripts/ci-first200-h3-growth-security.mjs
           node scripts/ci-first200-h3-kds-dispatch.mjs
           node scripts/ci-last52-j1-e2e.mjs
+      - name: Preproduction release gate and read-only API + worker smoke
+        run: |
+          set -euo pipefail
+          npm run release:stage:check
+          if npm run release:production:check > /tmp/tala-preprod-no-go.log 2>&1; then
+            echo "ERROR: incomplete Node staging incorrectly passed as production"; exit 1
+          fi
+          grep -q 'TALA_NODE_RELEASE_CLASSIFICATION=PRODUCTION_NO_GO' /tmp/tala-preprod-no-go.log
+          node dist/server.js >/tmp/tala-node-preprod-readonly-api.log 2>&1 &
+          api_pid=$!
+          node dist/worker.js >/tmp/tala-node-preprod-readonly-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'kill "$api_pid" "$worker_pid" 2>/dev/null || true' EXIT
+          npm run smoke:stage
+      - name: Kali manual PM2 updater syntax and non-stage fail-closed
+        run: |
+          bash -n scripts/actualizar.sh
+          bash -n scripts/kali-stage-first-release-preflight.sh
+          bash -n scripts/kali-stage-first-pm2-promote.sh
+          if bash scripts/kali-stage-first-pm2-promote.sh --apply 0000000000000000000000000000000000000000 > /tmp/tala-unsafe-first-promote.log 2>&1; then
+            echo "ERROR: Kali first promotion accepted GitHub runner"; exit 1
+          fi
+          grep -q 'ABORT_STAGE_USER' /tmp/tala-unsafe-first-promote.log
+          if bash scripts/kali-stage-first-release-preflight.sh --plan > /tmp/tala-unsafe-preflight.log 2>&1; then
+            echo "ERROR: Kali preflight accepted GitHub runner"; exit 1
+          fi
+          grep -q 'ABORT_STAGE_USER_ONLY' /tmp/tala-unsafe-preflight.log
+          bash -n scripts/kali-stage-postdeploy-smoke.sh
+          if bash scripts/kali-stage-postdeploy-smoke.sh "0000000000000000000000000000000000000000" > /tmp/tala-unsafe-smoke.log 2>&1; then
+            echo "ERROR: Kali stage smoke accepted GitHub runner"; exit 1
+          fi
+          grep -q 'ABORT_STAGE_USER_ONLY' /tmp/tala-unsafe-smoke.log
+          if bash scripts/actualizar.sh --plan >/tmp/tala-unsafe-stage-invocation.log 2>&1; then
+            echo "ERROR: Kali stage updater accepted GitHub runner"; exit 1
+          fi
+          grep -q 'ABORT_STAGE_USER_ONLY' /tmp/tala-unsafe-stage-invocation.log
+          echo "KALI_PM2_MANUAL_UPDATER_STAGE_USER_GUARD=PASS"
+      - name: Python 1.6.2 pricing cap on isolated PostgreSQL Redis (independent process)
+        env:
+          COMMERCIAL_PRICING_V162_ENABLED: 'true'
+        run: |
+          set -euo pipefail
+          node dist/server.js >/tmp/tala-node-v162-stage-e2e.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          node scripts/ci-cash-pickup-v162-e2e.mjs
+      - name: Upload simulated purchase report (synthetic data only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TalaEats-Node-Synthetic-Purchase-Report
+          path: |
+            /tmp/tala-eats-purchase-simulation.json
+            /tmp/tala-eats-rc4-stress-report-*.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Fail closed for LIVE credentials
         run: |
           ! grep -ER --include='*.ts' -E 'sk_live_|rk_live_|DATABASE_URL_PRODUCTION' src

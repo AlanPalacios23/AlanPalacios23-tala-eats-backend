@@ -102,15 +102,28 @@ def report() -> dict[str, object]:
                   "and stage-only features. Not a functional completion percentage.",
     }
 
+# Explicitly approved Node-only administrative contracts. This allowlist
+# does not turn route-signature coverage into evidence of working endpoints.
+# All four operations have separate RBAC/TOTP and transactional E2E gates.
+ADMIN_NODE_ONLY = {
+    ("GET", "/api/v1/admin/support"),
+    ("PATCH", "/api/v1/admin/support/{}"),
+    ("GET", "/api/v1/admin/restaurants"),
+    ("PATCH", "/api/v1/admin/restaurants/{}/archive"),
+}
+
 def main() -> None:
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check",action="store_true")
     parser.add_argument("--json",action="store_true")
     args=parser.parse_args()
     data=report()
-    if args.check and data["node_routes_without_python_match"]:
-        raise ValueError("Node routes absent from Python source: "+
-                         json.dumps(data["node_routes_without_python_match"]))
+    if args.check:
+        observed = {canonical(x["method"], x["path"])
+                    for x in data["node_routes_without_python_match"]}
+        if observed != ADMIN_NODE_ONLY:
+            raise ValueError("Unapproved Node-only route delta: "+
+                             json.dumps(data["node_routes_without_python_match"]))
     if args.json:
         print(json.dumps(data,indent=2,ensure_ascii=False))
     else:

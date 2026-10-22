@@ -269,7 +269,7 @@ model MarketplaceDriverProfile {
   vehicle         String   @default("Motocicleta") @db.VarChar(80)
   plate           String   @default("") @db.VarChar(30)
   isOnline        Boolean  @default(false) @map("is_online")
-  isVerified      Boolean  @default(true) @map("is_verified")
+  isVerified      Boolean  @default(false) @map("is_verified")
   rating          Decimal  @default(5.00) @db.Decimal(3,2)
   totalDeliveries Int      @default(0) @map("total_deliveries")
   currentLat      Float?   @map("current_lat")
@@ -595,6 +595,8 @@ model PlatformSupportTicket {
   category  String   @db.VarChar(80)
   message   String
   status    String   @default("open") @db.VarChar(30)
+  adminReply String  @default("") @map("admin_reply")
+  respondedAt DateTime? @map("responded_at")
   createdAt DateTime @default(now()) @map("created_at")
   @@index([userId,createdAt])
   @@index([orderId])

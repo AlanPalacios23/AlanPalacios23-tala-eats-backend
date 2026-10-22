@@ -1,5 +1,6 @@
 // G1: operational write parity smoke and adversarial ACL on PG15/Redis8.
 import assert from 'node:assert/strict';
+import {enrollAdminQa} from './ci-admin-totp-helper.mjs';
 import pg from 'pg';
 import { Redis } from 'ioredis';
 const pgUrl=String(process.env.DATABASE_URL??''),ru=String(process.env.REDIS_URL??'');
@@ -32,6 +33,7 @@ async function promote(who,role){
 const admin=await user('admin'),alice=await user('alice'),bob=await user('bob'),
  owner=await user('owner'),driver=await user('driver');
 await promote(admin,'admin');await promote(owner,'restaurant');await promote(driver,'driver');
+await enrollAdminQa(admin,call,pwd);
 const req=(who,path,method='GET',body)=>call(path,{token:who?.token,method,body});
 const denied=async(path,method='GET',body)=>{
  const x=await req(alice,path,method,body);assert.equal(x.status,403,JSON.stringify(x.json));
@@ -60,6 +62,27 @@ const ownedShop=(await db.query('SELECT id,is_open FROM restaurants WHERE owner_
 assert.equal(ownedShop.length,1);assert.equal(ownedShop[0].is_open,false);
 // Approval changed the account role and intentionally invalidated its old JWT.
 await promote(alice,'restaurant');
+// Revocation and re-approval must keep the shop closed until the merchant
+// explicitly reopens; orders and existing invoices are not deleted.
+await db.query('UPDATE restaurants SET is_open=true WHERE id=$1',[ownedShop[0].id]);
+const suspended=await req(admin,'/operations/admin/onboarding/'+a[0].json.id,
+ 'PATCH',{status:'suspended',notes:'Revisión de documentos'});
+assert.equal(suspended.status,200,JSON.stringify(suspended.json));
+const stopped=(await db.query(
+ 'SELECT verification_status,is_open,sponsored FROM restaurants WHERE id=$1',
+ [ownedShop[0].id])).rows[0];
+assert.equal(stopped.verification_status,'suspended');
+assert.equal(stopped.is_open,false);
+assert.equal(stopped.sponsored,false);
+assert.equal((await req(alice,'/owner/restaurant','PATCH',{is_open:true})).status,403);
+const reapproved=await req(admin,'/operations/admin/onboarding/'+a[0].json.id,
+ 'PATCH',{status:'approved',notes:'Documentos correctos'});
+assert.equal(reapproved.status,200,JSON.stringify(reapproved.json));
+const reinstated=(await db.query(
+ 'SELECT verification_status,is_open FROM restaurants WHERE id=$1',
+ [ownedShop[0].id])).rows[0];
+assert.equal(reinstated.verification_status,'verified');
+assert.equal(reinstated.is_open,false);
 const duplicate=await req(bob,'/operations/onboarding','POST',profile);
 assert.equal(duplicate.status,201);
 // Customer-owned account for follow-up

@@ -41,6 +41,12 @@ async function user(req:Request, roles?:string[]) {
   const session=await current(req);
   if (roles && !roles.includes(session.user.role))
     throw new RouteError(403,'No tienes permisos para esta operación');
+  // The ADMIN role is a privileged identity everywhere, including owner
+  // mutations and cross-customer order views. A pre-enrollment JWT must not
+  // bypass MFA simply by choosing a non-/admin/ route.
+  if(session.user.role==='admin' &&
+     (!session.user.twoFactorEnabled || !session.mfaVerified))
+    throw new RouteError(403,'ADMIN requiere iniciar sesión con código 2FA');
   return session.user;
 }
 const prop = (obj:object,camel:string):unknown => (obj as Record<string,unknown>)[camel];
@@ -106,7 +112,18 @@ function idParam(req:Request, name:string) {
 // Python restaurants.py: paginated public list + menu detail.
 marketplaceRouter.get('/',async(req,res)=>{
   const {limit,offset}=page(req);
+  if(Object.keys(req.query).some(key=>!['limit','offset','market_code'].includes(key)))
+    throw new RouteError(422,'Parámetro de catálogo inválido');
+  // Flutter Usuarios verifies market_code on every page. Filtering MUST
+  // happen in PostgreSQL before OFFSET/LIMIT, never in the Flutter client
+  // or after pagination (which would mix cities or truncate results).
+  const raw=req.query.market_code;
+  if(raw!==undefined&&(typeof raw!=='string'||
+     !/^[A-Z][A-Z0-9-]{2,39}$/.test(raw)))
+    throw new RouteError(422,'Código de localidad inválido');
+  const marketCode=typeof raw==='string'?raw:undefined;
   const rows=await db.marketplaceRestaurant.findMany({
+    where:{verificationStatus:'verified',...(marketCode?{marketCode}:{})},
     orderBy:[{isOpen:'desc'},{name:'asc'},{id:'asc'}],skip:offset,take:limit,
   });
   res.json(rows.map(restaurantPublic));
@@ -115,14 +132,15 @@ marketplaceRouter.get('/:restaurantId',async(req,res)=>{
   const row=await db.marketplaceRestaurant.findUnique({
     where:{id:idParam(req,'restaurantId')},include:{menuItems:true},
   });
-  if(!row) return notFound('Restaurante no encontrado');
+  if(!row||row.verificationStatus!=='verified') return notFound('Restaurante no encontrado');
   res.json(restaurantDetail(row));
 });
 
 // Python owner.py: ownership and profile/menu; never trust a merchant-supplied owner_id.
 async function ownRestaurant(req:Request) {
   const account=await user(req,['restaurant','admin']);
-  const row=await db.marketplaceRestaurant.findFirst({where:{ownerId:account.id}});
+  const row=await db.marketplaceRestaurant.findFirst({
+    where:{ownerId:account.id,verificationStatus:{not:'archived'}}});
   if(!row) return notFound('No tienes un restaurante asignado');
   return {account,row};
 }
@@ -303,8 +321,16 @@ const restaurantPatch=z.strictObject({
   lng:z.number().finite().min(-180).max(180).optional(),
 }).refine(v=>(v.lat===undefined)===(v.lng===undefined),{message:'lat y lng deben enviarse juntos'});
 ownerRouter.patch('/restaurant',async(req,res)=>{
-  const {row}=await ownRestaurant(req);
+  const {account,row}=await ownRestaurant(req);
   const data=input(restaurantPatch,req.body);
+  // Opening is only authorized for administratively verified merchants;
+  // profile, menu and photo preparation remain possible while pending.
+  if(data.is_open===true && row.verificationStatus!=='verified')
+    throw new RouteError(403,'El comercio debe estar verificado antes de abrir');
+  // Paid placement is platform-controlled; a restaurant cannot award itself
+  // featured exposure by mutating its own profile.
+  if(data.sponsored!==undefined && account.role!=='admin')
+    throw new RouteError(403,'Destacados requiere autorización de administración');
   const changes:Record<string,unknown>={};
   for(const [key,value] of Object.entries(data)){
     const camel=key.replace(/_([a-z])/g,(_m,c:string)=>c.toUpperCase());
@@ -502,7 +528,7 @@ stageDriverRouter.get('/available',async(req,res)=>{
   const limit=z.coerce.number().int().min(1).max(100).safeParse(req.query.limit??25);
   if(!limit.success) throw new RouteError(422,'Límite inválido');
   const profile=await db.marketplaceDriverProfile.findUnique({where:{userId:account.id}});
-  if(!profile?.isOnline){res.json([]);return;}
+  if(!profile?.isOnline||!profile.isVerified){res.json([]);return;}
   const active=await db.marketOrder.count({
     where:{driverId:account.id,status:{in:['assigned','picked_up','on_the_way']}},
   });
@@ -524,7 +550,7 @@ stageDriverRouter.get('/available',async(req,res)=>{
 stageDriverRouter.get('/profile',async(req,res)=>{
   const account=await driverAccount(req);
   const profile=await db.marketplaceDriverProfile.upsert({
-    where:{userId:account.id},create:{userId:account.id},update:{},
+    where:{userId:account.id},create:{userId:account.id,isVerified:false},update:{},
   });
   res.json(jsonFields(profile,driverFields));
 });

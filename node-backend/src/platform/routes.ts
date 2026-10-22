@@ -13,8 +13,12 @@ class PlatformError extends Error {
 }
 const fail=(code:number,message:string):never=>{throw new PlatformError(code,message);};
 async function user(req:Request, roles?:string[]){
-  const {user:account}=await current(req);
+  const {user:account,mfaVerified}=await current(req);
   if(roles && !roles.includes(account.role))fail(403,'No tienes permisos');
+  // No privilege inherited from an old pre-TOTP JWT. The same check covers
+  // support, wallets, notifications and every ADMIN-visible platform query.
+  if(account.role==='admin'&&(!account.twoFactorEnabled||!mfaVerified))
+    fail(403,'ADMIN requiere iniciar sesión con verificación 2FA');
   return account;
 }
 function idParam(req:Request,key:string):number{
@@ -130,7 +134,7 @@ platformRouter.get('/favorites',async(req,res)=>{
     where:{userId:account.id},select:{restaurantId:true},orderBy:{id:'asc'},
   });
   const found=favorites.length?await db.marketplaceRestaurant.findMany({
-    where:{id:{in:favorites.map(v=>v.restaurantId)}},
+    where:{id:{in:favorites.map(v=>v.restaurantId)},verificationStatus:'verified'},
   }):[];
   const byId=new Map(found.map(row=>[row.id,row]));
   res.setHeader('Cache-Control','private, no-store');
@@ -367,13 +371,17 @@ const supportCreate=z.strictObject({
 });
 function supportPublic(row:{
   id:number;orderId:number|null;category:string;message:string;
-  status:string;createdAt:Date;
+  status:string;adminReply:string;respondedAt:Date|null;createdAt:Date;
 }){
   return {id:row.id,order_id:row.orderId,category:row.category,
-    message:row.message,status:row.status,created_at:row.createdAt.toISOString()};
+    message:row.message,status:row.status,admin_reply:row.adminReply,
+    responded_at:row.respondedAt?.toISOString()??null,
+    created_at:row.createdAt.toISOString()};
 }
 platformRouter.get('/support',async(req,res)=>{
   const account=await user(req);
+  if(account.role==='admin'&&!account.twoFactorEnabled)
+    return fail(403,'Activa 2FA para consultar soporte ADMIN');
   const rows=await db.platformSupportTicket.findMany({
     where:account.role==='admin'?{}:{userId:account.id},
     orderBy:[{createdAt:'desc'},{id:'desc'}],take:200,
@@ -442,7 +450,7 @@ platformRouter.get('/recommendations',async(req,res)=>{
   // Python reference is a rule engine: open + sponsored then rating, limit 6.
   // This is NOT a personalized LLM and does not call any external provider.
   const restaurants=await db.marketplaceRestaurant.findMany({
-    where:{isOpen:true},
+    where:{isOpen:true,verificationStatus:'verified'},
     orderBy:[{sponsored:'desc'},{rating:'desc'},{id:'asc'}],take:6,
   });
   res.setHeader('Cache-Control','private, no-store');

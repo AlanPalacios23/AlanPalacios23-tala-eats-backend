@@ -57,6 +57,16 @@ const restaurant=(await pgClient.query(
 const foreign=(await pgClient.query(
   "INSERT INTO restaurants(name,address,owner_id,pickup_enabled,is_open) VALUES('D1 Competitor','Tala Otro',$1,true,true) RETURNING id",[owner2.id]
 )).rows[0].id;
+// A merchant can update its address, but not self-award sponsored placement.
+const sponsored=await call('/owner/restaurant',{
+  token:owner.token,method:'PATCH',body:{sponsored:true}});
+assert.equal(sponsored.status,403,JSON.stringify(sponsored.json));
+const sponsoredRow=await pgClient.query('SELECT sponsored FROM restaurants WHERE id=$1',[restaurant]);
+assert.equal(sponsoredRow.rows[0].sponsored,false);
+const changedAddress=await call('/owner/restaurant',{
+  token:owner.token,method:'PATCH',body:{address:'Centro Tala, Jalisco'}});
+assert.equal(changedAddress.status,200,JSON.stringify(changedAddress.json));
+assert.equal(changedAddress.json.address,'Centro Tala, Jalisco');
 const menu=await pgClient.query(
   "INSERT INTO menu_items(restaurant_id,name,price,stock) VALUES ($1,'Taco D1',40.00,15),($1,'Agotando',80.00,5),($1,'Sin stock',60.00,0),($1,'Disponible',30.00,10) RETURNING id,price",
   [restaurant]);

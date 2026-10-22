@@ -1,6 +1,22 @@
 // E2: Review/chat/support contracts vs Python platform.py.
 // Run ONLY in disposable GitHub Actions PG15/Redis8.
 import assert from 'node:assert/strict';
+import {createHmac} from 'node:crypto';
+function totp(secretBase32){
+ const symbols='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+ let value=0,bits=0;
+ const bytes=[];
+ for(const ch of secretBase32.toUpperCase().replace(/=+$/,'')){
+  const p=symbols.indexOf(ch);if(p<0)throw Error('INVALID_BASE32');
+  value=(value<<5)|p;bits+=5;
+  if(bits>=8){bytes.push((value>>>(bits-=8))&255);value&=(1<<bits)-1;}
+ }
+ const t=Math.floor(Date.now()/30000);
+ const counter=Buffer.alloc(8);counter.writeBigUInt64BE(BigInt(t));
+ const digest=createHmac('sha1',Buffer.from(bytes)).update(counter).digest();
+ const offset=digest[digest.length-1]&15;
+ return String((digest.readUInt32BE(offset)&0x7fffffff)%1000000).padStart(6,'0');
+}
 import pg from 'pg';
 import { Redis } from 'ioredis';
 const pgUrl=String(process.env.DATABASE_URL??'');
@@ -53,6 +69,16 @@ await promote(merchant,'restaurant');
 await promote(outsiderMerchant,'restaurant');
 await promote(driver,'driver');
 await promote(admin,'admin');
+// ADMIN must enroll TOTP, then log in again with OTP for signed MFA JWT.
+const mfaSetup=await call('/v9/security/2fa/setup',{token:admin.token,method:'POST'});
+assert.equal(mfaSetup.status,200,JSON.stringify(mfaSetup.json));
+const mfaConfirm=await call('/v9/security/2fa/confirm',{
+ token:admin.token,method:'POST',body:{code:totp(mfaSetup.json.secret)}});
+assert.equal(mfaConfirm.status,200,JSON.stringify(mfaConfirm.json));
+const mfaLogin=await call('/auth/login',{method:'POST',body:{
+ email:admin.email,password,otp:totp(mfaSetup.json.secret)}});
+assert.equal(mfaLogin.status,200,JSON.stringify(mfaLogin.json));
+admin.token=mfaLogin.json.access_token;
 const restaurantId=(await pgClient.query(
  "INSERT INTO restaurants(name,address,is_open,pickup_enabled,owner_id) VALUES('E2 Tala','Centro Tala',true,true,$1) RETURNING id",
  [merchant.id])).rows[0].id;

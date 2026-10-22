@@ -5,6 +5,7 @@ import {randomBytes,createHash} from 'node:crypto';
 import {mkdir,writeFile,readFile,unlink} from 'node:fs/promises';
 import path from 'node:path';
 import {z} from 'zod';
+import {Redis} from 'ioredis';
 import {db} from '../db.js';
 import {account,bad,param} from '../operational/routes.js';
 import {config} from '../config.js';
@@ -62,9 +63,13 @@ async function payee(req:Request){
 parityRouter.get('/platform/features',(_req,res)=>{
  res.json({version:'0.1.0-node-stage',feature_count:8,features:[
   {id:1,name:'Catálogo local',area:'catalog',mode:'staging',description:'Restaurantes y productos en PostgreSQL'},
-  {id:2,name:'Órdenes con efectivo y recoger',area:'checkout',mode:'staging',description:'Flujo sintético aislado'},
+  {id:2,name:'Órdenes con efectivo y recoger',area:'checkout',
+   mode:config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true'?'staging':'disabled',
+   description:'Sólo pedidos de prueba con efectivo y recoger'},
   {id:3,name:'Comercio y KDS',area:'merchant',mode:'staging',description:'Acciones con autorización'},
-  {id:4,name:'Repartidores',area:'driver',mode:'staging',description:'Despacho limitado a efectivo'},
+  {id:4,name:'Repartidores',area:'driver',
+   mode:config.STAGE_DRIVER_DELIVERY_ENABLED==='true'?'staging':'disabled',
+   description:'Despacho limitado a entregas cash sintéticas'},
   {id:5,name:'Wallet y puntos',area:'loyalty',mode:'restricted',description:'Sin pasarela de monetización real'},
   {id:6,name:'Pagos digitales',area:'payment',mode:'disabled',description:'Stripe TEST pendiente; ningún otro PSP'},
   {id:7,name:'Retiros y conciliación',area:'finance',mode:'disabled',description:'Sin transferencias financieras reales'},
@@ -72,8 +77,11 @@ parityRouter.get('/platform/features',(_req,res)=>{
 });
 parityRouter.get('/orders/payment-methods',async(req,res)=>{
  await account(req);
- res.json({digital_provider:'stripe',cash_available_in_staging:true,methods:[
-  {id:'cash',label:'Efectivo',enabled:true,mode:'stage-cash-pickup'},
+ const cashEnabled=config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true';
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({digital_provider:'stripe',cash_available_in_staging:cashEnabled,methods:[
+  {id:'cash',label:'Efectivo',enabled:cashEnabled,mode:'stage-cash-pickup',
+   ...(cashEnabled?{}:{reason:'staging-cash-pickup-disabled'})},
   {id:'stripe',label:'Tarjeta (Stripe)',enabled:false,reason:'stripe-test-payments-not-yet-implemented'},
   {id:'wallet',label:'Wallet',enabled:false,reason:'wallet-not-reconciled'}],
   production_ready:false});
@@ -448,10 +456,21 @@ parityRouter.post('/v9/admin/dispatch/:orderId/reassign',async(req,res)=>{
 });
 
 
+// Fixed staging origin avoids Host/X-Forwarded-Host injection into asset URLs.
+// The Flutter Restaurante client requires an HTTPS URL for public catalog media.
+const STAGE_CATALOG_ORIGIN='https://api-stage-talaeats.alan-palacios-dev.com';
+const catalogAbsoluteUrl=(filename:string)=>STAGE_CATALOG_ORIGIN+'/api/v1/uploads/catalog/'+filename;
+
 // Files J1: bounded single-file multipart, magic bytes, private owner/assignment.
 // No base64-in-JSON workaround; maintains real upload binary contracts.
+// The stage service owns a durable private home directory (and its backups).
+// In disposable CI tests, use /tmp rather than the Kali service account path.
+// Keep reading older /tmp assets during a controlled one-time migration.
+const LEGACY_MEDIA_ROOT='/tmp/tala-node-stage-media';
+const DEFAULT_MEDIA_ROOT=process.env.HOME==='/home/tala-node-stage'
+ ? '/home/tala-node-stage/media' : LEGACY_MEDIA_ROOT;
 const ROOT=path.resolve(process.env.TALA_NODE_STAGE_MEDIA_DIR||
- '/tmp/tala-node-stage-media');
+ DEFAULT_MEDIA_ROOT);
 if(!(ROOT==='/tmp/tala-node-stage-media'||
  ROOT.startsWith('/tmp/tala-node-stage-media/')||
  ROOT==='/home/tala-node-stage/media'||
@@ -466,6 +485,23 @@ const TYPES:Record<string,{ext:string;magic:(p:Buffer)=>boolean}>={
 };
 const fnOk=(s:string)=>/^[a-zA-Z0-9_-]{12,130}\.(jpg|png|webp|pdf)$/.test(s);
 const MAX_BYTES=5*1024*1024;
+let mediaLimiter:Redis|null=null;
+async function limitMediaUploads(userId:number){
+ if(!mediaLimiter)mediaLimiter=new Redis(config.REDIS_URL,{
+  lazyConnect:true,connectTimeout:2000,maxRetriesPerRequest:1,
+  retryStrategy:()=>null,
+ });
+ let hits:unknown;
+ try{
+  hits=await mediaLimiter.eval(
+   "local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call('EXPIRE',KEYS[1],3600) end; return n",
+   1,'tala:node:stage:uploads:account:'+userId,
+  );
+ }catch{return bad(503,'Protección de subida no disponible');}
+ if(typeof hits!=='number')return bad(503,'Protección de subida no disponible');
+ if(hits>120)return bad(429,'Demasiadas imágenes en una hora');
+}
+
 async function singleUpload(req:Request,pdf=false){
  const type=req.header('content-type')??'';
  const marker=type.match(/^multipart\/form-data;\s*boundary=(?:"([^"]{1,80})"|([^;\s]{1,80}))(?:\s*;.*)?$/i);
@@ -493,7 +529,11 @@ async function singleUpload(req:Request,pdf=false){
   end=body.indexOf(Buffer.from('\r\n--'+boundary),contentStart);
  if(end<contentStart)return bad(400,'Multipart sin cierre');
  const tail=body.subarray(end).toString('latin1');
- if(!tail.startsWith('\r\n--'+boundary+'--'))return bad(400,'Sólo se admite un archivo');
+ // Require the exact terminating delimiter. Trailing bytes, additional
+ // parts and ambiguous multipart endings must never be silently accepted.
+ const close='\r\n--'+boundary+'--';
+ if(tail!==close&&tail!==close+'\r\n')
+  return bad(400,'Multipart contiene campos o datos adicionales');
  const file=body.subarray(contentStart,end);
  if(file.length===0||file.length>MAX_BYTES)return bad(413,'Archivo vacío o demasiado grande');
  if(!spec.magic(file))return bad(415,'La firma del archivo no coincide');
@@ -501,6 +541,7 @@ async function singleUpload(req:Request,pdf=false){
 }
 async function saveMedia(req:Request,owner:number,category:string,
  prefix:string,opts:{pdf?:boolean;orderId?:number;restaurantId?:number;menuItemId?:number}={}){
+ await limitMediaUploads(owner);
  const data=await singleUpload(req,opts.pdf);
  const filename=prefix+'-'+randomBytes(24).toString('base64url')+data.ext;
  const dir=path.join(ROOT,category);
@@ -520,13 +561,30 @@ async function mediaResponse(res:Response,category:string,name:string,publicCach
  const asset=await db.stageMediaAsset.findUnique({where:{filename:name}});
  if(!asset||asset.category!==category)return bad(404,'Archivo no encontrado');
  let bytes:Buffer;
- try{bytes=await readFile(path.join(ROOT,category,name));}catch{return bad(404,'Archivo no encontrado');}
+ try{
+  bytes=await readFile(path.join(ROOT,category,name));
+ }catch{
+  if(ROOT===LEGACY_MEDIA_ROOT)return bad(404,'Archivo no encontrado');
+  // Backward-compatibility for assets saved by earlier staging releases.
+  // Copy safely to durable storage; never follow a path from the request.
+  try{
+   bytes=await readFile(path.join(LEGACY_MEDIA_ROOT,category,name));
+  }catch{return bad(404,'Archivo no encontrado');}
+  try{
+   await mkdir(path.join(ROOT,category),{recursive:true,mode:0o700});
+   await writeFile(path.join(ROOT,category,name),bytes,{flag:'wx',mode:0o600});
+  }catch{
+   // Concurrent migration may have written the same file. The current
+   // response can still serve the bytes; files will be reviewed in QA.
+  }
+ }
  res.setHeader('Cache-Control',publicCache?'public, max-age=31536000, immutable':'private, no-store');
  res.type(asset.mime);res.send(bytes);
 }
 async function ownsRestaurant(user:{id:number;role:string}){
  if(user.role!=='restaurant')return bad(403,'Se requiere cuenta de restaurante');
- const shop=await db.marketplaceRestaurant.findFirst({where:{ownerId:user.id}});
+ const shop=await db.marketplaceRestaurant.findFirst({
+  where:{ownerId:user.id,verificationStatus:{not:'archived'}}});
  if(!shop)return bad(404,'Restaurante no encontrado');
  return shop;
 }
@@ -573,7 +631,7 @@ parityRouter.post('/uploads/catalog/restaurant-cover',async(req,res)=>{
  const who=await account(req,['restaurant']),shop=await ownsRestaurant(who);
  const asset=await saveMedia(req,who.id,'catalog','r'+shop.id,
   {restaurantId:shop.id});
- const url='/api/v1/uploads/catalog/'+asset.filename;
+ const url=catalogAbsoluteUrl(asset.filename);
  await db.$transaction(async tx=>{
   await tx.marketplaceRestaurant.update({where:{id:shop.id},
    data:{coverImageUrl:url}});
@@ -588,7 +646,7 @@ parityRouter.post('/uploads/catalog/menu/:itemId',async(req,res)=>{
  if(!item||item.restaurantId!==shop.id)return bad(404,'Producto ajeno');
  const asset=await saveMedia(req,who.id,'catalog','r'+shop.id+'-p'+id,
   {restaurantId:shop.id,menuItemId:id});
- const url='/api/v1/uploads/catalog/'+asset.filename;
+ const url=catalogAbsoluteUrl(asset.filename);
  await db.$transaction(async tx=>{
   await tx.marketplaceMenuItem.update({where:{id},data:{imageUrl:url}});
   await tx.stageMediaAsset.update({where:{id:asset.id},data:{attached:true}});
@@ -600,11 +658,12 @@ parityRouter.get('/uploads/catalog/:filename',async(req,res)=>{
  const asset=await db.stageMediaAsset.findUnique({where:{filename:name}});
  if(!asset||!asset.attached||asset.category!=='catalog')
   return bad(404,'Imagen no publicada');
- const url='/api/v1/uploads/catalog/'+name;
+ const url=catalogAbsoluteUrl(name);
+ const legacyUrl='/api/v1/uploads/catalog/'+name;
  const [shop,item]=await Promise.all([
-  db.marketplaceRestaurant.findFirst({where:{coverImageUrl:url},
+  db.marketplaceRestaurant.findFirst({where:{coverImageUrl:{in:[url,legacyUrl]}},
    select:{id:true}}),
-  db.marketplaceMenuItem.findFirst({where:{imageUrl:url},
+  db.marketplaceMenuItem.findFirst({where:{imageUrl:{in:[url,legacyUrl]}},
    select:{id:true}})]);
  if(!shop&&!item)return bad(404,'Imagen no publicada');
  await mediaResponse(res,'catalog',name,true);

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {enrollAdminQa} from './ci-admin-totp-helper.mjs';
 import pgLib from 'pg';
 import { Redis } from 'ioredis';
 const db=String(process.env.DATABASE_URL??''),redisUrl=String(process.env.REDIS_URL??'');
@@ -18,6 +19,7 @@ const one=await make('one'),two=await make('two'),admin=await make('admin');
 await sql.query("UPDATE users SET role='admin' WHERE id=$1",[admin.id]);
 const login=await api('/auth/login',{method:'POST',body:{email:admin.email,password:'H1-Disposable-Test-2026!'}});
 assert.equal(login.status,200);admin.token=login.json.access_token;
+await enrollAdminQa(admin,api,'H1-Disposable-Test-2026!');
 const call=(u,path,method='GET',body)=>api(path,{token:u?.token,method,body});
 assert.equal((await call(one,'/v11/admin/canary','PUT',{percent:15})).status,403);
 assert.equal((await call(admin,'/v11/admin/canary','PUT',{percent:105})).status,422);

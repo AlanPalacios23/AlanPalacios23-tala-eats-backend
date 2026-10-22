@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {enrollAdminQa} from './ci-admin-totp-helper.mjs';
 import pgLib from 'pg';
 import {Redis} from 'ioredis';
 const url=String(process.env.DATABASE_URL??''),rurl=String(process.env.REDIS_URL??'');
@@ -6,9 +7,10 @@ if(process.env.GITHUB_ACTIONS!=='true'||!url.includes('127.0.0.1:15435/tala_node
  !rurl.includes('127.0.0.1:16379/0'))throw Error('H2_DISPOSABLE_ONLY');
 const red=new Redis(rurl);let c='0';do{const [next,keys]=await red.scan(c,'MATCH','tala:node:v02:auth:rate:*','COUNT',100);if(keys.length)await red.del(...keys);c=next;}while(c!=='0');red.disconnect();
 const db=new pgLib.Client({connectionString:url});await db.connect();
-async function api(path,{token,method='GET'}={}){
+async function api(path,{token,method='GET',body}={}){
  const x=await fetch('http://127.0.0.1:18190/api/v1'+path,{method,
-  headers:{'x-talaeats-client':'customer-mobile',...(token?{authorization:'Bearer '+token}:{})}});
+  headers:{'content-type':'application/json','x-talaeats-client':'customer-mobile',...(token?{authorization:'Bearer '+token}:{})},
+ ...(body===undefined?{}:{body:JSON.stringify(body)})});
  let json=null;try{json=await x.json()}catch{}return {status:x.status,json};}
 const pwd='H2-Only-Staging-Tests!';
 async function create(name){const email='h2.'+process.pid+'.'+name+'@example.test';
@@ -22,6 +24,7 @@ const login=await fetch('http://127.0.0.1:18190/api/v1/auth/login',{
  method:'POST',headers:{'content-type':'application/json','x-talaeats-client':'customer-mobile'},
  body:JSON.stringify({email:admin.email,password:pwd})});
 assert.equal(login.status,200);admin.token=(await login.json()).access_token;
+await enrollAdminQa(admin,api,pwd);
 const path='/resilience',go=(u,p,method='GET')=>api(path+p,{token:u?.token,method});
 for(const p of ['/status','/alerts','/dlq','/ledger/balance','/slo','/infrastructure']){
  assert.equal((await go(customer,p)).status,403,'role: '+p);

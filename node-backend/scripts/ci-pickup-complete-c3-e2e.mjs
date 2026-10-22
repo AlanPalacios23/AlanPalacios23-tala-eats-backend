@@ -1,6 +1,7 @@
 // C3: synthetic pickup PIN proof and loyalty idempotency.
 // Run only in disposable GitHub Actions PG15/Redis8; never Kali.
 import assert from 'node:assert/strict';
+import {enrollAdminQa} from './ci-admin-totp-helper.mjs';
 import pg from 'pg';
 import { Redis } from 'ioredis';
 const base='http://127.0.0.1:18190/api/v1';
@@ -154,6 +155,8 @@ const adminOne=await register('adminone');
 const adminTwo=await register('admintwo');
 await promote(adminOne,'admin');
 await promote(adminTwo,'admin');
+await enrollAdminQa(adminOne,call,password);
+await enrollAdminQa(adminTwo,call,password);
 const shared=await order();
 await ready(shared.id);
 const wrongShared=shared.delivery_pin==='0000'?'0001':'0000';

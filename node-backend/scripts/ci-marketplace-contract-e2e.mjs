@@ -63,6 +63,33 @@ assert.equal(list.body.length,2);
 assert.equal(list.body[0].id,rid); // open sorts first
 assert.equal(list.body[0].market_code,'TALA-JAL');
 assert.equal(typeof list.body[0].delivery_fee,'string');
+// Real Flutter Usuarios uses market_code + pagination; no mixing between
+// Tala and Ameca, even with more than one page.
+const talaOnly=await call('/restaurants?market_code=TALA-JAL&limit=1&offset=0');
+assert.equal(talaOnly.status,200,JSON.stringify(talaOnly.body));
+assert.equal(talaOnly.body.length,1);
+assert.equal(talaOnly.body[0].id,rid);
+const talaNext=await call('/restaurants?market_code=TALA-JAL&limit=1&offset=1');
+assert.equal(talaNext.status,200);
+assert.deepEqual(talaNext.body,[]);
+const amecaOnly=await call('/restaurants?market_code=AMECA-JAL&limit=1&offset=0');
+assert.equal(amecaOnly.status,200,JSON.stringify(amecaOnly.body));
+assert.equal(amecaOnly.body.length,1);
+assert.equal(amecaOnly.body[0].id,otherId);
+const noMarket=await call('/restaurants?market_code=CUISILLOS-JAL');
+assert.equal(noMarket.status,200);
+assert.deepEqual(noMarket.body,[]);
+assert.equal((await call('/restaurants?market_code=../AMECA-JAL')).status,422);
+assert.equal((await call('/restaurants?market_code[]=AMECA-JAL')).status,422);
+// Suspended shops must not be visible, including direct id lookup or
+// offset/limit pages. An old is_open=true flag never overrides moderation.
+const suspended=(await client.query(
+ "INSERT INTO restaurants(name,is_open,market_code,verification_status) VALUES('Suspended QA',true,'TALA-JAL','suspended') RETURNING id"
+)).rows[0].id;
+assert.equal((await call('/restaurants/'+suspended)).status,404);
+const afterSuspension=await call('/restaurants?market_code=TALA-JAL&limit=200');
+assert.equal(afterSuspension.status,200);
+assert.deepEqual(afterSuspension.body.map(x=>x.id),[rid]);
 assert.equal((await call('/restaurants?limit=201')).status,422);
 assert.equal((await call('/restaurants/999999')).status,404);
 const anonProfile=await call('/owner/restaurant');
@@ -136,9 +163,10 @@ assert.equal((await call('/orders/by-reference/invalid!ref',opts(buyer.token))).
 const mine=await call('/orders/mine',opts(buyer.token));
 assert.equal(mine.status,200);
 assert.equal(mine.body.length,1);
+// A signed ADMIN role WITHOUT verified TOTP is not authorized to read a
+// customer's order. MFA coverage is also tested after enrollment in admin QA.
 const forbidden=await call('/orders/'+oid,opts(otherOwner.token));
-assert.equal(forbidden.status,200); // Python permits ADMIN details.
-assert.equal(Object.hasOwn(forbidden.body,'delivery_pin'),false);
+assert.equal(forbidden.status,403);
 const customerDetail=await call('/orders/'+oid,opts(buyer.token));
 assert.equal(customerDetail.body.delivery_pin,'1234');
 const ownerOrders=await call('/owner/orders',opts(owner.token));

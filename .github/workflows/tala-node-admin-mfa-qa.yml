@@ -1,0 +1,82 @@
+name: TALA EATS | ADMIN MFA Support Archive PG15 QA
+on:
+  pull_request:
+    branches: [feat/node-kali-direct-pm2-release-20261020]
+    paths:
+      - 'node-backend/**'
+      - '.github/workflows/tala-node-admin-mfa-qa.yml'
+permissions:
+  contents: read
+jobs:
+  admin-stage:
+    name: ADMIN TOTP support + archive with disposable PG15 and Redis8
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: tala_node_stage
+          POSTGRES_PASSWORD: stage-ci-pass
+          POSTGRES_DB: tala_node_stage
+        ports: ['15435:5432']
+        options: >-
+          --health-cmd "pg_isready -U tala_node_stage -d tala_node_stage"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+      redis:
+        image: redis:8
+        ports: ['16379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      NODE_ENV: staging
+      HOST: 127.0.0.1
+      PORT: '18190'
+      DATABASE_URL: postgresql://tala_node_stage:stage-ci-pass@127.0.0.1:15435/tala_node_stage
+      REDIS_URL: redis://:stage-ci-redis@127.0.0.1:16379/0
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+      AUTH_V02_ENABLED: 'true'
+      MARKETPLACE_B_ENABLED: 'true'
+      AUTH_JWT_SECRET: ci-only-admin-mfa-jwt-secret-xxxxxxxxxxxxxxxxxxxxxxxxxx
+      GITHUB_ACTIONS: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Frozen install, Prisma schema, migration, TypeScript and tests
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:validate
+          npm run db:migrate:deploy
+          npm run build
+          npm test
+      - name: Protect isolated CI Redis with a password
+        run: |
+          node --input-type=module -e '
+            import { Redis } from "ioredis";
+            const r=new Redis("redis://127.0.0.1:16379");
+            await r.config("SET","requirepass","stage-ci-redis");
+            r.disconnect();
+            const secured=new Redis(process.env.REDIS_URL);
+            if(await secured.ping()!=="PONG")process.exitCode=1;
+            secured.disconnect();
+          '
+      - name: ADMIN TOTP, helpdesk and archive HTTP E2E
+        run: |
+          set -euo pipefail
+          node dist/server.js >/tmp/tala-stage-admin-qa.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          node scripts/ci-admin-mfa-helpdesk-archive-e2e.mjs
+      - name: Confirm no LIVE secrets and no production config
+        run: |
+          ! grep -ER --include='*.ts' -E 'sk_live_|rk_live_|DATABASE_URL_PRODUCTION' src

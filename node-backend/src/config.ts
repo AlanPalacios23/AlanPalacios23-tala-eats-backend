@@ -12,12 +12,17 @@ const schema = z.object({
   AUTH_V02_ENABLED: z.enum(['false', 'true']).default('false'),
   MARKETPLACE_B_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_SUPPORT_EMAIL: z.email().optional(),
+  // Email sending is opt-in and restricted to an explicit staging recipient allowlist.
+  STAGE_EMAIL_DELIVERY_MODE: z.enum(['disabled','resend']).default('disabled'),
+  STAGE_EMAIL_RESEND_API_KEY: z.string().min(12).optional(),
+  STAGE_EMAIL_FROM: z.string().min(6).max(220).optional(),
+  STAGE_EMAIL_ALLOWED_RECIPIENTS: z.string().optional(),
   STAGE_DRIVER_DELIVERY_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_PICKUP_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
-  // Synthetic checkout C1 only models the default Python v1.5.2 policy.
-  // Refuse alternative policies rather than silently computing wrong fees.
+  // Stage checkout supports default Python v1.5.2 or v1.6.2 pricing.
+  // Select v1.6.2 explicitly only after PG15 stage review; custom overrides fail closed.
   COMMERCIAL_PRICING_V152_ENABLED: z.literal('true').default('true'),
-  COMMERCIAL_PRICING_V162_ENABLED: z.literal('false').default('false'),
+  COMMERCIAL_PRICING_V162_ENABLED: z.enum(['false','true']).default('false'),
   MERCHANT_MANAGED_DELIVERY: z.enum(['false','true']).default('false'),
   SCHEDULE_PREP_LEAD_MINUTES: z.coerce.number().int().min(5).max(360).default(45),
   AUTH_JWT_SECRET: z.string().min(40).optional(),
@@ -30,6 +35,13 @@ if (forbiddenPaymentKeys.length) {
   throw new Error('STAGING_STRIPE_ONLY_FORBIDS_MERCADOPAGO_ENV');
 }
 export const config = schema.parse(process.env);
+if(config.STAGE_EMAIL_DELIVERY_MODE==='resend') {
+  if(!config.STAGE_EMAIL_RESEND_API_KEY?.startsWith('re_') ||
+     !config.STAGE_EMAIL_FROM?.includes('@') ||
+     !config.STAGE_EMAIL_ALLOWED_RECIPIENTS?.split(',').some(x=>z.email().safeParse(x.trim()).success)) {
+    throw new Error('STAGING_EMAIL_PROVIDER_REQUIRES_VERIFIED_SENDER_AND_RECIPIENT_ALLOWLIST');
+  }
+}
 const pg = new URL(config.DATABASE_URL);
 const redis = new URL(config.REDIS_URL);
 if (config.PORT!==18190 ||

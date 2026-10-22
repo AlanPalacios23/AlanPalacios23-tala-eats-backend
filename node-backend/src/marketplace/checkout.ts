@@ -27,13 +27,24 @@ const intentSchema=z.strictObject({
   })).min(1).max(100),
   tip:price.default('0'),
 });
+// Flutter Usuarios sends the following optional neutral fields for *all*
+// order types. Accept only empty coupon and null coordinates for pickup.
+// Never silently grant a discount or accept delivery location as a pickup.
+const mobilePickupSchema=intentSchema.extend({
+  coupon_code:z.literal('').optional(),
+  delivery_lat:z.null().optional(),
+  delivery_lng:z.null().optional(),
+});
 // Unsupported money-moving or incomplete commercial features deliberately
 // return 503 rather than pretending to honor the full Python OrderCreate.
 export function isCashPickupIntent(payload:unknown):boolean {
   if(!payload || typeof payload!=='object'||Array.isArray(payload))return false;
   const p=payload as Record<string,unknown>;
   return p.payment_method==='cash'&&p.order_type==='pickup'&&
-    Object.keys(p).every(k=>k in intentSchema.shape);
+    Object.keys(p).every(k=>k in mobilePickupSchema.shape)&&
+    (p.coupon_code===undefined||p.coupon_code==='')&&
+    (p.delivery_lat===undefined||p.delivery_lat===null)&&
+    (p.delivery_lng===undefined||p.delivery_lng===null);
 }
 const toMinor=(raw:string):bigint=>{
   if(!/^(?:0|[1-9]\d{0,7})(?:\.\d{1,2})?$/.test(raw))
@@ -53,9 +64,9 @@ const toMilli=(s:string):bigint=>{
 };
 const fromMilli=(n:bigint)=> (n/1000n).toString()+'.'+(n%1000n).toString().padStart(3,'0');
 const roundRate=(c:bigint,basisPoints:bigint)=>(c*basisPoints+5000n)/10000n;
-// Python commercial_value reads per-key SystemSetting overrides. The C1
-// synthetic slice is default-v1.5.2-only; reject drift rather than charge a
-// price we cannot reproduce. Compare four-decimal rates as exact integers.
+// Python commercial_value reads per-key SystemSetting overrides. This
+// checkout supports only default v1.5.2 and v1.6.2 stage policy settings,
+// never silently accepts customized rates or caps; exact 4-decimal comparison.
 const rateBasisPoints=(raw:string):bigint=>{
   const v=raw.trim();
   if(!/^(?:0|[1-9]\d?)(?:\.\d{1,4})?$/.test(v))
@@ -86,9 +97,11 @@ export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promis
     throw new CheckoutError(403,'No tienes permisos para crear pedidos');
   if(!isCashPickupIntent(raw))
     throw new CheckoutError(503,'Este checkout de staging sólo admite efectivo para recoger; demás métodos pendientes');
-  const parsed=intentSchema.safeParse(raw);
+  const parsed=mobilePickupSchema.safeParse(raw);
   if(!parsed.success)throw new CheckoutError(422,'Datos del pedido inválidos');
-  const data=parsed.data;
+  // The metadata fields are not part of the financial signature or insert.
+  // Stripe/delivery/scheduled/coupon checkout is intentionally not implied.
+  const {coupon_code:_coupon,delivery_lat:_lat,delivery_lng:_lng,...data}=parsed.data;
   const tip=toMinor(data.tip);
   if(tip>1_000_000n)throw new CheckoutError(422,'Propina fuera de límite');
   const itemIds=data.items.map(x=>x.menu_item_id);
@@ -122,21 +135,30 @@ export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promis
     `;
     if(!restaurantLock.length)throw new CheckoutError(404,'Restaurante no encontrado');
     const restaurant=await tx.marketplaceRestaurant.findUnique({where:{id:data.restaurant_id}});
-    if(!restaurant)throw new CheckoutError(404,'Restaurante no encontrado');
+    if(!restaurant||restaurant.verificationStatus!=='verified')
+      throw new CheckoutError(404,'Restaurante no disponible');
     if(!restaurant.isOpen)throw new CheckoutError(400,'El restaurante está cerrado');
     if(!restaurant.pickupEnabled)throw new CheckoutError(400,'Este restaurante no permite recoger');
+    const pricingV162=config.COMMERCIAL_PRICING_V162_ENABLED==='true';
+    // Python uses v152 commission in both modes. In v162 the fee rate and
+    // cap use separate settings; unrelated legacy settings must not override.
     const policyRows=await tx.$queryRaw<{key:string,value:string}[]>`
       SELECT key,value FROM system_settings
       WHERE key IN (
         'commercial_v152.restaurant_commission_rate',
-        'commercial_v152.service_fee_rate'
+        'commercial_v152.service_fee_rate',
+        'commercial_v162.service_fee_rate',
+        'commercial_v162.service_fee_cap'
       ) FOR SHARE
     `;
     for(const row of policyRows){
-      const expected=row.key==='commercial_v152.restaurant_commission_rate'?
-        1500n:row.key==='commercial_v152.service_fee_rate'?700n:null;
-      if(expected===null||rateBasisPoints(row.value)!==expected)
-        throw new CheckoutError(503,'Tarifas configuradas distintas al checkout C1 de staging');
+      let expected:bigint|null=null;
+      if(row.key==='commercial_v152.restaurant_commission_rate')expected=1500n;
+      if(!pricingV162 && row.key==='commercial_v152.service_fee_rate')expected=700n;
+      if(pricingV162 && row.key==='commercial_v162.service_fee_rate')expected=700n;
+      if(pricingV162 && row.key==='commercial_v162.service_fee_cap')expected=250000n;
+      if(expected!==null && rateBasisPoints(row.value)!==expected)
+        throw new CheckoutError(503,'Tarifas configuradas distintas al checkout de staging');
     }
     // Fail closed if the runtime has nondefault commercial policies. These
     // rates are Python commercial v1.5.2 DEFAULTS, not full SystemSetting parity.
@@ -184,10 +206,12 @@ export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promis
           toMilli(ingredient.quantity.toString())<ingredientUsage.get(id)!)
         throw new CheckoutError(400,'Inventario de ingredientes insuficiente');
     }
-    // Python commercial_v152 default: pickup cash commission 15%,
-    // customer service 7% of net food (no delivery charge), pickup tip to owner.
+    // Python default pickup cash: 15% restaurant commission, 7% of net food
+    // to customer, 100% tip to merchant. In v1.6.2, fee is capped at MXN 25.
+    // Only fixed default policies are supported here; custom overrides 503.
     const commission=roundRate(subtotal,1500n);
-    const serviceFee=roundRate(subtotal,700n);
+    const uncappedFee=roundRate(subtotal,700n);
+    const serviceFee=pricingV162 && uncappedFee>2500n?2500n:uncappedFee;
     const restaurantPayout=subtotal-commission+tip;
     const platformRevenue=commission+serviceFee;
     const total=subtotal+serviceFee+tip;
