@@ -105,6 +105,45 @@ export async function createTestPaymentIntent(orderId:number,buyerId:number) {
 }
 
 /**
+ * Cancel a TEST PaymentIntent before an unpaid pickup order can release stock.
+ * This does not refund captured payments. Any ambiguous PSP state stays held.
+ */
+export async function cancelUnpaidStripeTestIntent(orderId:number,actorId:number):
+Promise<string>{
+  const provider=ensureTestReady();
+  const order=await db.marketOrder.findUnique({where:{id:orderId}});
+  if(!order||order.userId!==actorId)
+    throw new TestPaymentError(404,'Pedido no encontrado');
+  if(order.orderType!=='pickup'||order.paymentMethod!=='stripe'||
+     order.paymentStatus!=='pending'||order.status!=='awaiting_payment')
+    throw new TestPaymentError(409,'Pago ya confirmado o pedido no cancelable');
+  const pointer=order.paymentProviderId;
+  // The reservation may represent a provider request still in flight.
+  if(pointer===STRIPE_INTENT_RESERVATION)
+    throw new TestPaymentError(409,'Creación Stripe en curso: conciliación requerida');
+  if(pointer==='')return pointer;
+  if(!/^pi_[A-Za-z0-9]+$/.test(pointer))
+    throw new TestPaymentError(503,'Referencia Stripe inconsistente');
+  let intent=await provider.paymentIntents.retrieve(pointer);
+  if(intent.livemode||intent.amount!==moneyMinor(order.total.toFixed(2))||
+     intent.currency!=='mxn'||intent.metadata.order_id!==String(orderId)||
+     intent.metadata.buyer_id!==String(actorId)||
+     intent.metadata.mode!=='rc7_test_pickup')
+    throw new TestPaymentError(503,'Pago Stripe TEST no coincide con el pedido');
+  if(intent.status!=='canceled'){
+    // Fail closed if the card was captured or is in an ambiguous state.
+    if(!['requires_payment_method','requires_confirmation','requires_action'].includes(intent.status)||
+       intent.amount_received!==0)
+      throw new TestPaymentError(409,'Stripe no permite cancelar este intento sin revisión');
+    intent=await provider.paymentIntents.cancel(pointer,{cancellation_reason:'requested_by_customer'},
+      {idempotencyKey:'tala-stage-cancel-pi-'+orderId+'-v1'});
+  }
+  if(intent.status!=='canceled'||intent.amount_received!==0)
+    throw new TestPaymentError(503,'Cancelación de Stripe TEST no verificada');
+  return pointer;
+}
+
+/**
  * The webhook HTTP endpoint already checked Stripe-Signature and rejected LIVE.
  * Re-fetch the event + PaymentIntent from Stripe to resist tampered/stale jobs.
  * For this stage slice we only release pickup orders after a verified success.
