@@ -37,7 +37,18 @@ const worker = new Worker('tala-node-staging-webhooks', async (job) => {
   });
   return { recorded: true };
 }, { connection, concurrency: 2 });
-worker.on('failed', (_job, error) => console.error('STAGING_RECEIPT_FAILED', error.name));
+worker.on('failed', (job, error) => {
+  console.error('STAGING_RECEIPT_FAILED', error.name);
+  const eventId=job?.data?.eventId;
+  // Only after attempts are exhausted; the event remains auditable in PG.
+  if(typeof eventId==='string'&&job&&
+     job.attemptsMade>=(job.opts.attempts??4)){
+    void db.stripeWebhookEvent.updateMany({
+      where:{id:eventId,status:'RECEIVED'},
+      data:{status:'FAILED',lastErrorAt:new Date()},
+    }).catch(()=>console.error('STAGING_RECEIPT_FAILURE_PERSIST_ERROR'));
+  }
+});
 // Re-enqueue only already signed, durable receipts that have not reconciled.
 // Covers interrupted workers, exhausted BullMQ retries and feature-disabled
 // windows. Never fabricates events, payments or changes financial balances.
@@ -48,11 +59,13 @@ async function sweepTestReceipts(){
   try{
     const pending=await db.stripeWebhookEvent.findMany({
       where:{
-        status:'RECEIVED',
         type:{in:['payment_intent.succeeded','payment_intent.payment_failed',
           'payment_intent.canceled']},
-        receivedAt:{lt:new Date(Date.now()-15_000),
-          gt:new Date(Date.now()-48*60*60*1000)},
+        OR:[
+          {status:'RECEIVED',receivedAt:{lt:new Date(Date.now()-15_000)}},
+          {status:'FAILED',lastErrorAt:{lt:new Date(Date.now()-5*60_000)}},
+        ],
+        receivedAt:{gt:new Date(Date.now()-48*60*60*1000)},
       },
       orderBy:{receivedAt:'asc'},take:20,select:{id:true},
     });
