@@ -210,3 +210,78 @@ No ejecutar `pm2 restart`, `prisma migrate`, `docker compose up`, `docker compos
 ## 7. Alcance de este registro en GitHub
 
 Este documento describe operaciones **ya realizadas manualmente por el operador en Kali** y sus salidas. Guardarlo o actualizar el README **no cambia** Cloudflare, Docker, PM2, PostgreSQL, Redis, ni las APK. La punta de la rama Git podrá avanzar con documentación mientras Kali siga ejecutando el SHA `30ab51b587b21127c3f3419e0ec4c3a8539dfb0a`; las actualizaciones de código deben seguir sus propios gates y verificaciones.
+
+
+## Anexo — inventario literal de imágenes y directorios antes de la limpieza de archivos
+
+**Procedencia:** `docker images --format` y `find /home/alan -maxdepth 2 -type d` que el operador compartió después del `docker rm`. Son imágenes y directorios **todavía existentes en ese momento**; esta lista no autoriza su eliminación, no demuestra exclusividad de sus capas Docker y no incluye bases de datos no montadas.
+
+### Etiquetas Docker observadas (32)
+
+```text
+talaeats-candidate:d584e2dcad91c46b2dfa2834343d5f7562486bca | 283MB
+talaeats-rollback/worker:v1.6.4-hf1-e22e4d5 | 280MB
+talaeats-v3-worker:latest | 280MB
+talaeats-v3-backend:latest | 280MB
+talaeats-rollback/backend:v1.6.4-hf1-e22e4d5 | 280MB
+talaeats-v3-worker:pre-v164-connect-20261013-023000-672569 | 280MB
+talaeats-v3-backend:pre-v164-connect-20261013-023000-672569 | 280MB
+talaeats-v3-worker:pre-v163-hf4-20261013-003054-314567 | 282MB
+talaeats-v3-backend:pre-v163-hf4-20261013-003054-314567 | 282MB
+talaeats-v3-worker:pre-v162-driverpay-20261012-032013-761530 | 281MB
+talaeats-v3-backend:pre-v162-driverpay-20261012-032013-761530 | 281MB
+talaeats-admin:web-v1.5.2 | 62.6MB
+talaeats-admin:rollback-pre-v152-20261011-192508 | 62.6MB
+talaeats-admin:web-v1.5.1 | 62.6MB
+talaeats-admin-admin:latest | 62.6MB
+talaeats-admin:rollback-20261011-144752 | 62.6MB
+talaeats-v3-worker:pre-v161-hotfix1-20261011-224239-4126884 | 280MB
+talaeats-v3-backend:pre-v161-hotfix1-20261011-224239-4126884 | 280MB
+talaeats-v3-frontend:latest | 63.4MB
+talaeats-v3-frontend:before-luxe-v4-20260915-023637 | 63.4MB
+talaeats-v3-frontend:before-luxe-v3-20260915-022436 | 63.4MB
+talaeats-v3-worker:respaldo-20261009-003817 | 269MB
+talaeats-v3-worker:rollback-20261009-000250 | 269MB
+talaeats-v3-backend:respaldo-20261009-003817 | 269MB
+talaeats-v3-backend:rollback-20261009-000250 | 269MB
+talaeats-v3-frontend:before-reference-ui-20260915-015409 | 62.9MB
+talaeats-v3-frontend:before-reference-ui-v2-20260915-015735 | 62.9MB
+talaeats-v3-frontend:v10-rollback-20260913-001034 | 62.7MB
+talaeats-v3-frontend:v31-safe-20260913-000546 | 62.7MB
+talaeats-v3-backend:v10-rollback-20260913-001034 | 222MB
+talaeats-v3-backend:v31-safe-20260913-000546 | 222MB
+talaeats-v3-worker:v31-safe-20260913-000546 | 222MB
+```
+
+No sumar estos tamaños para inferir espacio liberable: distintas etiquetas pueden compartir IDs y capas, o estar referenciadas por otro contenedor.
+
+### Carpetas reportadas (búsqueda con profundidad máxima 2; no exhaustiva)
+
+```text
+/home/alan/TalaEats-V11-LUXE-V3-PATCH-v1
+/home/alan/talaeats-green-20261018
+/home/alan/TalaEats-V11-LUXE-V4-PATCH-v1
+/home/alan/.ssh/talaeats-ci
+/home/alan/talaeats-releases
+/home/alan/talaeats-releases/TalaEats-Web-v1.6.4-CONNECT-SELF-SERVICE-HF1-LIVE
+/home/alan/talaeats-releases/TalaEats-Web-v1.6.0-HOTFIX1-LIVE
+/home/alan/talaeats-releases/TalaEats-Web-v1.6.1-CATALOG-MEDIA-HOTFIX1-LIVE
+/home/alan/talaeats-releases/TalaEats-Web-v1.6.3-RETIROS-LOCATION-HF4-LIVE
+/home/alan/talaeats-releases/TalaEats-Web-v1.6.2-FAIR-PRICING-DRIVER-PAY-LIVE
+/home/alan/talaeats-releases/TalaEats-Backend-v1.6.0-STABILITY-SECURITY-HARDENED-HOTFIX1
+/home/alan/talaeats-releases/TalaEats-Backend-v1.6.0-STABILITY-SECURITY-HARDENED-FULL
+/home/alan/TalaEats-V11-REFERENCE-UI-PATCH-v2
+/home/alan/talaeats-admin-releases
+/home/alan/talaeats-admin-releases/TalaEats-ADMIN-v1.4.1-KALI-WEB-SWAP
+/home/alan/talaeats-v3
+/home/alan/talaeats-v3/TalaEats-Web-v3-PRODUCTION
+/home/alan/talaeats-node-stage-prep
+/home/alan/TalaEats-V11-REFERENCE-UI-PATCH-v1
+/home/alan/talaeats-backups
+/home/alan/talaeats-v31
+/home/alan/talaeats-legacy-backups
+/home/alan/TalaEats-ADMIN-v1.5.1-QUALITY-HARDENING
+/home/alan/TalaEats-ADMIN-v1.5.2-OPERATIONS-READY
+```
+
+**Exclusiones obligatorias de limpieza:** no borrar `/home/alan/talaeats-legacy-backups`, los volúmenes de PG16/media, directorios de credenciales SSH, la instalación Node activa, ni ningún recurso de otro proyecto. Evaluar todas las referencias antes de retirar archivos bajo `/home/alan/talaeats-releases`, `talaeats-backups` o `talaeats-admin-*`.
