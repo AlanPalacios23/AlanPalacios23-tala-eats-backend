@@ -12,6 +12,13 @@
 5. `src/finance/pricing.ts`: reglas monetarias en centavos y redondeo `ROUND_HALF_UP` según `backend/app/monetization.py` histórico, para tarifas **estándar** `v152` y `v162`, con tests. No aplica políticas personalizadas ni calcula dinero real disponible para retirar.
 6. Asistente `scripts/kali-stripe-test-secret-wizard.sh` disponible para ejecución posterior **solo por** `tala-node-stage`. Pide claves TEST sin imprimirlas, guarda con modo `0600`, mantiene LIVE y el checkout TEST **apagados**; no reinicia PM2 ni habilita ningún cobro.
 
+### Robustecimiento posterior a la primera RC7 (en revisión)
+
+- Se reserva en la base de datos `pi_reserving_rc7` **antes** de iniciar la llamada remota de creación del PaymentIntent. Una llamada de Stripe que agota el tiempo deja el pedido en revisión, sin liberar stock ni permitir otro PSP ID arbitrario. Las reejecuciones dentro de 30 minutos usan la misma clave de idempotencia; después, revisión manual.
+- El comercio puede avanzar `received → confirmed → preparing → ready` **solo** si el pedido con tarjeta ya tiene `paymentStatus=paid` y un asiento `stripe_test_collected` firmado por el webhook; la entrega con PIN deja `cashCollected=0` si fue Stripe. El flujo cash mantiene el registro de efectivo separado.
+- El comprador puede cancelar un TEST **no capturado** y recuperar inventario únicamente si la cancelación del proveedor quedó confirmada; cualquier ambigüedad o importe ya capturado continúa bloqueado para conciliación.
+- No se ha completado el circuito de reembolsos de importes capturados, liquidaciones de caja, saldo retirable o pagos comerciales. El nuevo código permanece detrás de flags apagadas.
+
 ### Verificación de la política histórica frente a la política comercial
 
 | Elemento | Python `commercial_v152` | Python `commercial_v162` |
@@ -31,7 +38,7 @@
 - **Stripe LIVE:** `STRIPE_FINANCIAL_WRITES_ENABLED=false`, `NODE_ENV=staging`, clave `sk_test_`; no usar claves `sk_live_` en este release ni publicar claves reales en GitHub.
 - **Pedidos con tarjeta para entrega:** no desarrollados; solo se implementa el camino de pickup TEST. Pago con tarjeta en Delivery debe añadir cotización, GPS, stock, atribución y coordinación del worker.
 - **Efectivo real y caja:** el checkout RC6 para pickup es sintético; las capturas de efectivo con repartidor, conciliación de caja, faltantes, contracargos administrativos y liquidación a comerciantes aún requieren pruebas y lógica.
-- **Reembolsos/cancelaciones Stripe:** no hay compensación de inventario ni reembolso real integrados en Node RC7. Una orden que quede en `awaiting_payment` reserva stock; crear y probar expiración/cancelación segura antes de activar ni siquiera TEST con clientes externos.
+- **Cancelaciones Stripe TEST:** se añadió cancelación por el comprador **solo antes de captura**. Cancela primero el PaymentIntent TEST si existe, comprueba estado `canceled` y después restaura stock, revierte asientos e invalida el pedido dentro de la misma transacción PG. Si la creación del PaymentIntent está en progreso o el PSP no responde de forma inequívoca, **mantiene inventario retenido** y exige conciliación; no se ejecutan devoluciones de un pago capturado. **Siguen pendientes** expiración automática segura, reembolsos, evidencia E2E de carreras y resolver pedidos abandonados. El flujo NO autoriza LIVE.
 - **Finanzas:** el libro se utiliza para observación TEST; no es prueba de conciliación final. Verificar evento duplicado, fuera de orden, fallos de Stripe, DB, Redis y reinicio PM2. El importe de comisión de Stripe es **estimado**.
 - **Stripe Connect:** `/withdrawals`, onboarding, transferencias, saldos y payouts siguen rechazando operaciones monetarias, sin mostrar ganancias de efectivo como saldo Stripe retirables.
 - **App Usuarios:** `production_api.dart` aún contiene el método Mercado Pago legado. Eliminarlo y probar Stripe PaymentSheet en builds de QA antes de distribuir nuevas APK/AAB.
