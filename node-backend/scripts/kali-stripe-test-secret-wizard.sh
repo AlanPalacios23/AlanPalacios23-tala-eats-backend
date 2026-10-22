@@ -23,18 +23,18 @@ if [[ ! -f "$FILE" || -L "$FILE" ||
 fi
 if [[ ${1} == "--plan" ]]; then
   echo "STRIPE_TEST_WIZARD_PRECHECK=PASS"
-  echo "Aplica solo llaves sk_test_, pk_test_ y whsec_. Nunca LIVE."
+  echo "Aplica clave restringida rk_test_ (preferida) o sk_test_, más pk_test_ y whsec_. Nunca LIVE."
   echo "Con --apply se solicitarán las claves sin mostrarlas."
   echo "No habilita checkout, no reinicia PM2, no despliega, no cobra."
   exit 0
 fi
 
-read -r -s -p "Stripe secret TEST (sk_test_...): " STRIPE_TEST_KEY; echo
+read -r -s -p "Stripe TEST key (preferir rk_test_, admite sk_test_): " STRIPE_TEST_KEY; echo
 read -r -s -p "Stripe publicable TEST (pk_test_...): " STRIPE_PUB_KEY; echo
 read -r -s -p "Firma del endpoint webhook TEST (whsec_...): " STRIPE_WEBHOOK_KEY; echo
 trap 'unset STRIPE_TEST_KEY STRIPE_PUB_KEY STRIPE_WEBHOOK_KEY' EXIT
 
-if [[ ! "$STRIPE_TEST_KEY" =~ ^sk_test_[A-Za-z0-9]{16,}$ ||
+if [[ ! "$STRIPE_TEST_KEY" =~ ^(rk_test_|sk_test_)[A-Za-z0-9]{16,}$ ||
       ! "$STRIPE_PUB_KEY" =~ ^pk_test_[A-Za-z0-9]{16,}$ ||
       ! "$STRIPE_WEBHOOK_KEY" =~ ^whsec_[A-Za-z0-9]{16,}$ ]]; then
   echo "ABORT: formato TEST inválido; no se modificó el .env"
@@ -54,7 +54,7 @@ from pathlib import Path
 p=Path(sys.argv[1])
 keys=[line.rstrip("\n") for line in sys.stdin]
 if len(keys)!=3 or not (
-    re.fullmatch(r"sk_test_[A-Za-z0-9]{16,}",keys[0]) and
+    re.fullmatch(r"(?:sk_test_|rk_test_)[A-Za-z0-9]{16,}",keys[0]) and
     re.fullmatch(r"pk_test_[A-Za-z0-9]{16,}",keys[1]) and
     re.fullmatch(r"whsec_[A-Za-z0-9]{16,}",keys[2])
 ):
