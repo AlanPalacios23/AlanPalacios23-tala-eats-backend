@@ -2,6 +2,7 @@
 // NOT a public checkout: does not support delivery, online providers, wallet,
 // coupons, commercial setting overrides, scheduled menus or financial payouts.
 import { createHmac, timingSafeEqual, randomInt } from 'node:crypto';
+import {calculateDefaultCommercial,fmtCents} from '../finance/pricing.js';
 import { z } from 'zod';
 import { db } from '../db.js';
 import { config } from '../config.js';
@@ -221,14 +222,18 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
     // Python default pickup, cash or stripe TEST: 15% commission and 7% of net food
     // to customer, 100% tip to merchant. In v1.6.2, fee is capped at MXN 25.
     // Only fixed default policies are supported here; custom overrides 503.
-    const commission=roundRate(subtotal,1500n);
-    const uncappedFee=roundRate(subtotal,700n);
-    const serviceFee=pricingV162 && uncappedFee>2500n?2500n:uncappedFee;
-    const restaurantPayout=subtotal-commission+tip;
-    const platformRevenue=commission+serviceFee;
-    const total=subtotal+serviceFee+tip;
-    // Defensively reject overflow before any monetary DB writes.
-    [subtotal,commission,serviceFee,restaurantPayout,platformRevenue,total].forEach(fromMinor);
+    const economics=calculateDefaultCommercial({
+      policy:pricingV162?'v162':'v152',
+      method:data.payment_method,fulfillment:'pickup',
+      subtotal,discount:0n,tip,
+    });
+    const commission=economics.commission;
+    const serviceFee=economics.serviceFee;
+    const restaurantPayout=economics.restaurantPayable;
+    const platformRevenue=economics.platformRevenue;
+    const total=economics.total;
+    [subtotal,commission,serviceFee,restaurantPayout,platformRevenue,total,
+      economics.gatewayProcessingEstimate].forEach(fromMinor);
     const order=await tx.marketOrder.create({
       data:{
         userId:account.id,restaurantId:restaurant.id,
@@ -239,8 +244,9 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
         subtotal:fromMinor(subtotal),deliveryFee:'0.00',
         tip:fromMinor(tip),total:fromMinor(total),
         platformCommission:fromMinor(commission),serviceFee:fromMinor(serviceFee),
+        paymentProcessingFee:fromMinor(economics.gatewayProcessingEstimate),
         restaurantPayout:fromMinor(restaurantPayout),
-        platformRevenue:fromMinor(platformRevenue),contributionMargin:fromMinor(platformRevenue),
+        platformRevenue:fromMinor(platformRevenue),contributionMargin:fmtCents(economics.contributionMargin),
         driverEarning:'0.00',estimatedMinutes:restaurant.etaMin,
         distanceKm:0,
         inventoryReservedJson:JSON.stringify(Object.fromEntries(
@@ -286,13 +292,15 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
       ['gmv',total,'GMV del pedido'],
       ['restaurant_payable',restaurantPayout,'Saldo por pagar al restaurante'],
       ['platform_revenue',platformRevenue,'Ingreso bruto Tala Eats'],
-      ['contribution_margin',platformRevenue,'Margen de contribución estimado'],
+      ['payment_processing',-economics.gatewayProcessingEstimate,'Costo pasarela estimado'],
+      ['contribution_margin',economics.contributionMargin,'Margen de contribución estimado'],
     ] as const;
     for(const [accountName,value,description] of entries){
-      if(value<=0n)continue;
+      if(value===0n)continue;
       await tx.stageFinancialLedgerEntry.create({data:{
         orderId:order.id,userId:account.id,restaurantId:restaurant.id,
-        account:accountName,direction:'credit',amount:fromMinor(value),
+        account:accountName,direction:value<0n?'debit':'credit',
+        amount:fromMinor(value<0n?-value:value),
         kind:'order_settlement',description,
         idempotencyKey:'order:'+order.id+':ledger:'+accountName,
       }});
