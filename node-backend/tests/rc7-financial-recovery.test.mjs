@@ -82,3 +82,35 @@ test('TEST Stripe cannot accrue GMV or merchant liability before verified paymen
  const outbox=receipt.indexOf("eventKey:'order:'\+orderId\+':created'",ledger);
  assert.ok(outbox>ledger,'order.created only after provider charge');
 });
+
+test('abandoned TEST pickup reservations expire only after Stripe safe cancel',()=>{
+  const worker=read('src/worker.ts');
+  const life=read('src/marketplace/lifecycle.ts');
+  const stripe=read('src/stage-stripe-test.ts');
+  assert.match(worker,/expireAbandonedTestPickups/);
+  assert.match(worker,/createdAt:\{lt:new Date\(Date\.now\(\)-35\*60_000\)\}/);
+  assert.match(worker,/paymentProviderId:\{not:STRIPE_INTENT_RESERVATION\}/);
+  assert.match(worker,/take:10/);
+  assert.match(worker,/await cancelCashPickupStage\(item\.id,user/);
+  assert.match(life,/cancelUnpaidStripeTestIntent\(orderId,actor\.id\)/);
+  assert.match(stripe,/paymentIntents\.cancel/);
+  assert.match(stripe,/intent\.amount_received!==0/);
+  assert.match(worker,/STRIPE_TEST_EXPIRY_HELD/);
+});
+
+test('no accounts payable or order-created dispatch before Stripe TEST receipt',()=>{
+  const checkout=read('src/marketplace/checkout.ts');
+  const processor=read('src/stage-stripe-test.ts');
+  assert.match(checkout,/if\(!testStripe\)\{/);
+  assert.match(checkout,/if\(testStripe&&account\.role!=='customer'\)/);
+  assert.match(processor,/existingAccrual!==0/);
+  assert.match(processor,/eventKey:'order:'\+orderId\+':created'/);
+  assert.match(processor,/account:'stripe_test_collected'/);
+});
+
+test('route inventory grants only reviewed node-only Stripe status endpoint',()=>{
+  const inventory=read('scripts/node_route_coverage.py');
+  assert.match(inventory,/STRIPE_TEST_STATUS_NODE_ONLY/);
+  assert.match(inventory,/\("GET", "\/api\/v1\/payments\/stripe\/orders\/\{\}\/status"\)/);
+  assert.match(inventory,/observed != ADMIN_NODE_ONLY \| STRIPE_TEST_STATUS_NODE_ONLY/);
+});
