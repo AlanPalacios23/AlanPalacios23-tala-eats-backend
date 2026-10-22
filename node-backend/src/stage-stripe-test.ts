@@ -8,6 +8,8 @@ import { db } from './db.js';
 import { config } from './config.js';
 import { stripe } from './stripe.js';
 
+export const STRIPE_INTENT_RESERVATION='pi_reserving_rc7';
+
 export class TestPaymentError extends Error {
   constructor(public readonly code:number, message:string) { super(message); }
 }
@@ -41,17 +43,39 @@ export async function createTestPaymentIntent(orderId:number,buyerId:number) {
      order.status!=='awaiting_payment'||order.cancelledReason||
      order.refundedAmount.toString()!=='0')
     throw new TestPaymentError(409,'Pedido no apto para cobrar en Stripe TEST');
+  // Keep recovery within the Stripe idempotency retention window. An older
+  // reserved order MUST be reviewed, never silently create a second charge.
+  if(Date.now()-order.createdAt.getTime()>30*60*1000)
+    throw new TestPaymentError(409,'Pedido de tarjeta vencido; requiere revisión');
   const amount=moneyMinor(order.total.toFixed(2));
   const metadata={order_id:String(order.id),buyer_id:String(buyerId),mode:'rc7_test_pickup'};
-  // A fixed idempotency key per trusted order also de-duplicates concurrent calls.
-  // The idempotency key is not sourced from request headers or Flutter.
   const requestKey='tala-node-stage-payment-intent-'+order.id+'-v1';
-  const intent=order.paymentProviderId
-    ? await provider.paymentIntents.retrieve(order.paymentProviderId)
-    : await provider.paymentIntents.create({
+  let pointer=order.paymentProviderId;
+  if(!pointer){
+    // Reserve BEFORE contacting Stripe. If network times out, retries use
+    // the same provider idempotency key; no cancel/expiry may restore stock
+    // while a payment creation could still be in flight.
+    const claimed=await db.marketOrder.updateMany({
+      where:{id:order.id,paymentProviderId:'',paymentStatus:'pending',
+        status:'awaiting_payment'},
+      data:{paymentProviderId:STRIPE_INTENT_RESERVATION},
+    });
+    if(claimed.count!==1){
+      const latest=await db.marketOrder.findUnique({where:{id:order.id}});
+      if(!latest||latest.paymentStatus!=='pending'||
+         latest.status!=='awaiting_payment')
+        throw new TestPaymentError(409,'Pedido modificado durante el checkout');
+      pointer=latest.paymentProviderId;
+    }else pointer=STRIPE_INTENT_RESERVATION;
+  }
+  if(pointer!==STRIPE_INTENT_RESERVATION&&!/^pi_[A-Za-z0-9]+$/.test(pointer))
+    throw new TestPaymentError(503,'Referencia de proveedor inválida');
+  const intent=pointer===STRIPE_INTENT_RESERVATION
+    ? await provider.paymentIntents.create({
         amount,currency:'mxn',automatic_payment_methods:{enabled:true},capture_method:'automatic',
         metadata,description:'Tala Eats pedido TEST #'+order.id,
-      },{idempotencyKey:requestKey});
+      },{idempotencyKey:requestKey})
+    : await provider.paymentIntents.retrieve(pointer);
   if(intent.livemode||intent.amount!==amount||intent.currency!=='mxn'||
      intent.metadata.order_id!==String(order.id)||
      intent.metadata.buyer_id!==String(buyerId)||
@@ -59,15 +83,16 @@ export async function createTestPaymentIntent(orderId:number,buyerId:number) {
      !intent.client_secret||intent.status==='canceled')
     throw new TestPaymentError(503,'Stripe TEST devolvió un intento inconsistente');
 
-  // Store the stable provider ID without overwriting a concurrent intent.
-  if(!order.paymentProviderId) {
+  if(pointer===STRIPE_INTENT_RESERVATION){
     const claimed=await db.marketOrder.updateMany({
-      where:{id:order.id,paymentProviderId:'',paymentStatus:'pending',status:'awaiting_payment'},
+      where:{id:order.id,paymentProviderId:STRIPE_INTENT_RESERVATION,
+        paymentStatus:'pending',status:'awaiting_payment'},
       data:{paymentProviderId:intent.id},
     });
-    if(claimed.count!==1) {
+    if(claimed.count!==1){
       const latest=await db.marketOrder.findUnique({where:{id:order.id}});
-      if(latest?.paymentProviderId!==intent.id)
+      if(latest?.paymentProviderId!==intent.id||
+         latest.paymentStatus!=='pending'||latest.status!=='awaiting_payment')
         throw new TestPaymentError(409,'Intento de pago concurrente; revisar pedido');
     }
   }
