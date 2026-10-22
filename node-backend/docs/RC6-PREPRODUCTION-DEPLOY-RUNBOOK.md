@@ -1,10 +1,13 @@
 # TALA EATS Node.js — RC6 PREPRODUCCIÓN / PLAN DE DESPLIEGUE
 
-**Fecha:** 21 de octubre de 2026  
-**Estado:** candidato de **staging**. NO autorizar aún tráfico comercial ni sustituir Python.  
+**Fecha del plan original:** 21 de octubre de 2026  
+**Estado del documento:** **HISTÓRICO / PRE-DESPLIEGUE**. El operador completó posteriormente la promoción PM2, publicó RC6 por Cloudflare y retiró los seis contenedores Docker Python del proyecto Tala Eats. **El código Node sigue siendo staging y NO está aprobado comercialmente.**  
 **Base histórica:** RC5 validado (commit `814287552501f8f1a8d5a0ef6dff6b43cefa3bd1`); RC6 integrado mediante PR #120 y #121  
 **Rama de lanzamiento:** `feat/node-kali-direct-pm2-release-20261020` (no confundir con `main`, que aún contiene Python)  
 **Objetivo:** preparar un release instalable y reversible para el Kali de pruebas sin dinero real.
+
+> **ACTUALIZACIÓN OPERATIVA 21/22-OCT-2026 — LEER ANTES DE REUTILIZAR COMANDOS.** Este runbook fue redactado **antes** de que el operador ejecutara los pasos descritos. La fuente de verdad de la configuración **ahora vigente** (dominio público → Node RC6, SHA `30ab51b587b21127c3f3419e0ec4c3a8539dfb0a`, Docker Python retirado, respaldos y volúmenes preservados, límites funcionales) es [KALI-NODE-RC6-PUBLIC-API-AND-LEGACY-RETIREMENT-20261022.md](KALI-NODE-RC6-PUBLIC-API-AND-LEGACY-RETIREMENT-20261022.md). **NO** repetir migraciones, `--apply`, publicar Python otra vez ni confundir HEAD de GitHub con el SHA instalado.  
+> Los pasos siguientes se conservan como **historia y referencia técnica**, no instrucciones de ejecución inmediata.
 
 ## RC6 revisado: plan SHA-fijado, sin efectos laterales
 
@@ -55,7 +58,7 @@ Para repetir el control en cualquier máquina de desarrollo, sin acceder a Kali:
 ### Política de restauración
 - **No es suficiente crear un archivo de backup.** Ejecutar y verificar restauración aislada PG15 antes de la migración real de staging.
 - Preservar datos de documentos/fotos y respaldar media de `/home/tala-node-stage/media` y del legado en `/tmp/tala-node-stage-media` si aún existe, con los permisos del usuario de staging.
-- No atribuir `PRODUCTION_READY` a un `ready=true`, ni enrutar `talaeats.alan-palacios-dev.com` hacia Node. Python permanece sin cambios.
+- No atribuir `PRODUCTION_READY` a un `ready=true`. **Nota histórica:** durante la planificación se prohibía apuntar el hostname a Node; posteriormente el operador **sí lo publicó expresamente** y retiró los contenedores Python. Eso no demuestra paridad, migración de datos ni autorización de pagos; consultar la bitácora operativa actual.
 - La aprobación del equipo para operar comercialmente es independiente de las pruebas en GitHub y de la promoción PM2.
 
 ## Qué significa pasar de RC5 a RC6
@@ -92,6 +95,8 @@ Para repetir el control en cualquier máquina de desarrollo, sin acceder a Kali:
 
 **NO-GO automático:** `productionReady=false`, `financialWrites=false`, `STRIPE_FINANCIAL_WRITES_ENABLED=false`. Estos valores son intencionales y no deben anularse editando banderas a mano.
 
-## Resultado previsto
+## Resultado y estado posterior (21/22-oct-2026)
 
-Cuando todas las pruebas y migraciones de staging den PASS, RC6 se podrá **desplegar a Kali de pruebas con rollback**; el backend Python continúa sirviendo a clientes comerciales. Solo después se diseña e implementa la transición separada de datos, pagos y tráfico productivo con su propia autorización.
+**El despliegue PM2 de Node RC6 ya sucedió**, y el operador confirmó `FIRST_NODE_PM2_STAGE_PROMOTION=PASS` junto con `KALI_NODE_PM2_STAGE_POSTDEPLOY_SMOKE=PASS`. El túnel público fue cambiado a Node y los seis contenedores Docker Python `talaeats-v3` se retiraron. La infraestructura real actual, el inventario detallado y los respaldos están en la [bitácora operativa](KALI-NODE-RC6-PUBLIC-API-AND-LEGACY-RETIREMENT-20261022.md).
+
+La decisión de exponer staging **no** eliminó los gates de producción comercial. `productionReady=false`, `financialWrites=false`, ausencia de migración de datos Python→Node acreditada y QA pendiente de las apps siguen siendo bloqueos. No se garantiza que los usuarios reales puedan operar; no habilitar Stripe LIVE.
