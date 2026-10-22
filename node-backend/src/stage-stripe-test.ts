@@ -194,6 +194,38 @@ export async function processStripeTestReceipt(eventId:string):Promise<void>{
         });
         if(changed.count!==1)
           throw new TestPaymentError(503,'Conflicto en confirmación de pago');
+        // The order previously held inventory only. Post seller/platform
+        // accruals for the FIRST time, in the SAME transaction as paid=true.
+        // Never make an unpaid Stripe reservation look withdrawable.
+        const existingAccrual=await tx.stageFinancialLedgerEntry.count({
+          where:{orderId,kind:'order_settlement'},
+        });
+        if(existingAccrual!==0)
+          throw new TestPaymentError(503,'Pedido con ledger previo al cobro: revisión manual');
+        const accrual=[
+          ['gmv',order.total.toFixed(2),'GMV después de pago TEST'],
+          ['restaurant_payable',order.restaurantPayout.toFixed(2),
+            'Saldo comercio condicionado a liquidación TEST'],
+          ['platform_revenue',order.platformRevenue.toFixed(2),
+            'Ingresos de plataforma después de cobro TEST'],
+          ['payment_processing','-'+order.paymentProcessingFee.toFixed(2),
+            'Costo estimado pasarela TEST'],
+          ['contribution_margin',order.contributionMargin.toFixed(2),
+            'Margen estimado después de cobro TEST'],
+        ] as const;
+        for(const [accountName,raw,description] of accrual){
+          if(!/^-?(?:0|[1-9]\\d*)\\.\\d{2}$/.test(raw))
+            throw new TestPaymentError(503,'Monto de ledger inválido');
+          const negative=raw.startsWith('-');
+          const amount=negative?raw.slice(1):raw;
+          if(amount==='0.00')continue;
+          await tx.stageFinancialLedgerEntry.create({data:{
+            orderId,userId:buyerId,restaurantId:order.restaurantId,
+            account:accountName,direction:negative?'debit':'credit',
+            amount,kind:'order_settlement',description,
+            idempotencyKey:'order:'+orderId+':ledger:'+accountName,
+          }});
+        }
         await tx.stageFinancialLedgerEntry.create({
           data:{
             orderId,userId:buyerId,restaurantId:order.restaurantId,
@@ -203,6 +235,21 @@ export async function processStripeTestReceipt(eventId:string):Promise<void>{
             idempotencyKey:'order:'+orderId+':stripe-test:collected',
           },
         });
+        await tx.stageEventOutbox.create({data:{
+          eventKey:'order:'+orderId+':created',aggregateType:'order',
+          aggregateId:String(orderId),eventType:'order.created',
+          payloadJson:JSON.stringify({order_id:orderId,status:'received',
+            payment_status:'paid',user_id:buyerId,restaurant_id:order.restaurantId}),
+        }});
+        const merchant=await tx.marketplaceRestaurant.findUnique({
+          where:{id:order.restaurantId},select:{ownerId:true},
+        });
+        if(merchant?.ownerId){
+          await tx.authNotification.create({data:{
+            userId:merchant.ownerId,kind:'restaurant_order',title:'Nuevo pedido TEST pagado',
+            message:'Pedido de prueba #'+orderId+' confirmado por Stripe TEST.',
+          }});
+        }
         await tx.stageOrderEvent.create({
           data:{orderId,status:'received',actorUserId:buyerId,
             metadataJson:JSON.stringify({source:'stripe_test_webhook',stripe_event_id:eventId})},
