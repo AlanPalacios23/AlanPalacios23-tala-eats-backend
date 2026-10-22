@@ -26,7 +26,8 @@ const moneyMinor=(value:string):number=>{
 };
 const ensureTestReady=()=>{
   if(config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true'||
-     !stripe||!config.STRIPE_SECRET_KEY?.startsWith('sk_test_')||
+     !stripe||!config.STRIPE_SECRET_KEY||
+     !/^(?:sk_test_|rk_test_)/.test(config.STRIPE_SECRET_KEY)||
      !config.STRIPE_WEBHOOK_SECRET||!config.STRIPE_PUBLISHABLE_KEY?.startsWith('pk_test_'))
     throw new TestPaymentError(503,'Stripe TEST no está habilitado');
   return stripe;
