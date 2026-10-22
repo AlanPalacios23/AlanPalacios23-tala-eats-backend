@@ -6,7 +6,8 @@ const read=(file)=>readFileSync(new URL('../'+file,import.meta.url),'utf8');
 test('RC7 cannot allow Stripe LIVE and requires TEST credentials',()=>{
  const config=read('src/config.ts');
  assert.match(config,/NODE_ENV: z\.literal\('staging'\)/);
- assert.match(config,/STRIPE_SECRET_KEY: z\.string\(\)\.startsWith\('sk_test_'\)/);
+ assert.match(config,/STRIPE_SECRET_KEY: z\.string\(\)\.regex\(/);
+ assert.match(config,/(?:sk_test_|rk_test_)/);
  assert.match(config,/STRIPE_PUBLISHABLE_KEY: z\.string\(\)\.startsWith\('pk_test_'\)/);
  assert.match(config,/STRIPE_FINANCIAL_WRITES_ENABLED: z\.literal\('false'\)/);
  assert.match(config,/STAGE_STRIPE_TEST_CHECKOUT_ENABLED: z\.enum\(\['false','true'\]\)\.default\('false'\)/);
@@ -103,4 +104,14 @@ test('Signed webhook redelivery is requeued while ledger remains idempotent',()=
  assert.match(incoming,/constructEvent/);
  assert.match(processor,/receipt\.status==='PROCESSED'/);
  assert.match(processor,/idempotencyKey:'order:'\+orderId\+':stripe-test:collected'/);
+});
+
+test('restricted TEST keys are supported but no LIVE secrets',()=>{
+ const config=read('src/config.ts');
+ const wizard=read('scripts/kali-stripe-test-secret-wizard.sh');
+ assert.match(config,/rk_test_/);
+ assert.match(config,/sk_test_/);
+ assert.match(wizard,/rk_test_/);
+ assert.match(wizard,/STRIPE_LIVE_FINANCIAL_WRITES=DISABLED/);
+ assert.doesNotMatch(config,/STRIPE_SECRET_KEY:\s*z\.string\(\)\.optional\(\)/);
 });
