@@ -5,6 +5,8 @@ import { db } from './db.js';
 import { deliverStageMailBatch } from './email.js';
 import { processStripeTestReceipt } from './stage-stripe-test.js';
 import { webhookQueue, closeQueue } from './queues.js';
+import { cancelCashPickupStage } from './marketplace/lifecycle.js';
+import { STRIPE_INTENT_RESERVATION } from './stage-stripe-test.js';
 
 // Nunca cobra ni transfiere dinero; únicamente marca un evento test verificado.
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
@@ -82,6 +84,41 @@ async function sweepTestReceipts(){
 }
 const receiptSweepTimer=setInterval(()=>{void sweepTestReceipts();},60_000);
 void sweepTestReceipts();
+
+// Conservative cleanup for abandoned TEST-only pickups. Before returning
+// inventory, the cancellation routine verifies with Stripe that no payment
+// was captured, or that the intent was canceled by Stripe. Unknown states,
+// in-flight creation markers and payment success remain HELD for manual QA.
+let testExpiryBusy=false;
+async function expireAbandonedTestPickups(){
+  if(testExpiryBusy||config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true')return;
+  testExpiryBusy=true;
+  try{
+    const candidates=await db.marketOrder.findMany({
+      where:{orderType:'pickup',paymentMethod:'stripe',
+        paymentStatus:'pending',status:'awaiting_payment',
+        paymentProviderId:{not:STRIPE_INTENT_RESERVATION},
+        createdAt:{lt:new Date(Date.now()-35*60_000)}},
+      select:{id:true,userId:true},orderBy:{createdAt:'asc'},take:10,
+    });
+    for(const item of candidates){
+      try{
+        const user=await db.authUser.findUnique({where:{id:item.userId}});
+        if(!user||user.role!=='customer')continue;
+        await cancelCashPickupStage(item.id,user,'Reserva de tarjeta TEST vencida');
+      }catch(err){
+        // No order id or payment data in logs. Fail closed: keep reservation.
+        console.error('STRIPE_TEST_EXPIRY_HELD',
+          err instanceof Error?err.name:'unknown');
+      }
+    }
+  }catch(err){
+    console.error('STRIPE_TEST_EXPIRY_SWEEP_FAILED',
+      err instanceof Error?err.name:'unknown');
+  }finally{testExpiryBusy=false;}
+}
+const testExpiryTimer=setInterval(()=>{void expireAbandonedTestPickups();},5*60_000);
+void expireAbandonedTestPickups();
 // A bounded Redis TTL confirms that the real PM2 worker event loop is alive;
 // an API process alone must not be presented as an operationally complete app.
 // Heartbeats never contain user identifiers, tokens or payment information.
@@ -111,6 +148,7 @@ async function shutdown() {
   if(mailTimer)clearInterval(mailTimer);
   clearInterval(workerHeartbeatTimer);
   clearInterval(receiptSweepTimer);
+  clearInterval(testExpiryTimer);
   await worker.close();
   await closeQueue();
   connection.disconnect();
