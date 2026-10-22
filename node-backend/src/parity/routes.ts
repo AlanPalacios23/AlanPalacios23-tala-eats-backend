@@ -9,6 +9,7 @@ import {Redis} from 'ioredis';
 import {db} from '../db.js';
 import {account,bad,param} from '../operational/routes.js';
 import {config} from '../config.js';
+import {createTestPaymentIntent} from '../stage-stripe-test.js';
 
 export const parityRouter=Router();
 const euro=(v:{toFixed:(n:number)=>string})=>v.toFixed(2);
@@ -82,19 +83,25 @@ parityRouter.get('/orders/payment-methods',async(req,res)=>{
  res.json({digital_provider:'stripe',cash_available_in_staging:cashEnabled,methods:[
   {id:'cash',label:'Efectivo',enabled:cashEnabled,mode:'stage-cash-pickup',
    ...(cashEnabled?{}:{reason:'staging-cash-pickup-disabled'})},
-  {id:'stripe',label:'Tarjeta (Stripe)',enabled:false,reason:'stripe-test-payments-not-yet-implemented'},
+  {id:'stripe',label:'Tarjeta (Stripe TEST)',enabled:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',mode:'stage-stripe-test-pickup',
+   ...(config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'?{}:{reason:'stripe-test-payments-disabled'})},
   {id:'wallet',label:'Wallet',enabled:false,reason:'wallet-not-reconciled'}],
   production_ready:false});
 });
 parityRouter.get('/payments/config',(_req,res)=>{
- res.json({provider:'stripe',digital_providers:['stripe'],enabled:false,
-  publishable_key:null,checkout_ready:false,financial_writes_enabled:false,
-  environment:'staging'});
+ res.setHeader('Cache-Control','no-store');
+ res.json({provider:'stripe',digital_providers:['stripe'],
+  enabled:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',
+  publishable_key:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'?config.STRIPE_PUBLISHABLE_KEY:null,
+  checkout_ready:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',
+  financial_writes_enabled:false,environment:'staging',mode:'test-pickup-only'});
 });
 parityRouter.get('/payments/stripe/config',(_req,res)=>{
- res.json({provider:'stripe',enabled:false,
-  publishable_key:null,checkout_ready:false,
-  financial_writes_enabled:false,environment:'staging'});
+ res.setHeader('Cache-Control','no-store');
+ res.json({provider:'stripe',enabled:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',
+  publishable_key:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'?config.STRIPE_PUBLISHABLE_KEY:null,
+  checkout_ready:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',
+  financial_writes_enabled:false,environment:'staging',mode:'test-pickup-only'});
 });
 parityRouter.get('/operations/admin/commercial-pricing',async(req,res)=>{
  await account(req,['admin']);
@@ -189,9 +196,11 @@ parityRouter.get('/withdrawals/connect/finish',(_req,res)=>{
 // Payments and settlements: explicit fail-closed boundaries. Unlike returning
 // fake 200s, we never acknowledge provider events without PSP signature,
 // reservation, ledger postings, external verification and durable reconcile.
-parityRouter.post('/payments/stripe/orders/:orderId/payment-intent',async(req)=>{
- await account(req);param(req,'orderId');
- return financialUnavailable('stripe_payment_intent');
+parityRouter.post('/payments/stripe/orders/:orderId/payment-intent',async(req,res)=>{
+ const who=await account(req,['customer']);
+ const result=await createTestPaymentIntent(param(req,'orderId'),who.id);
+ memoPrivate(res);
+ res.json(result);
 });
 parityRouter.post('/payments/stripe/webhook',async()=>{
  // A separate signed webhook at /api/v1/webhooks/stripe exists in the base
