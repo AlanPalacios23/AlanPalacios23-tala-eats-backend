@@ -111,6 +111,11 @@ ADMIN_NODE_ONLY = {
     ("GET", "/api/v1/admin/restaurants"),
     ("PATCH", "/api/v1/admin/restaurants/{}/archive"),
 }
+# New RC7 read-only, buyer-authenticated server-authoritative payment status.
+# Source checks also require owner match, immutable ledger and no secret leaks.
+STRIPE_TEST_STATUS_NODE_ONLY = {
+    ("GET", "/api/v1/payments/stripe/orders/{}/status"),
+}
 
 def main() -> None:
     parser=argparse.ArgumentParser(description=__doc__)
@@ -121,7 +126,7 @@ def main() -> None:
     if args.check:
         observed = {canonical(x["method"], x["path"])
                     for x in data["node_routes_without_python_match"]}
-        if observed != ADMIN_NODE_ONLY:
+        if observed != ADMIN_NODE_ONLY | STRIPE_TEST_STATUS_NODE_ONLY:
             raise ValueError("Unapproved Node-only route delta: "+
                              json.dumps(data["node_routes_without_python_match"]))
     if args.json:
