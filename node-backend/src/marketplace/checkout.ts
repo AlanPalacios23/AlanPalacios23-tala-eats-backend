@@ -281,9 +281,12 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
       orderId:order.id,status:'received',actorUserId:account.id,
       metadataJson:JSON.stringify({source:'checkout',checkout_intent_hmac:fingerprint}),
     }});
-    const payload={order_id:order.id,status:testStripe?'awaiting_payment':'received',payment_status:'pending',
-      user_id:account.id,restaurant_id:restaurant.id};
-    await tx.stageEventOutbox.create({data:{
+    // Stripe TEST is an unpaid reservation. No seller balance, GMV or
+    // order.created outbox is payable/visible until a verified PSP webhook.
+    if(!testStripe){
+      const payload={order_id:order.id,status:'received',payment_status:'pending',
+        user_id:account.id,restaurant_id:restaurant.id};
+      await tx.stageEventOutbox.create({data:{
       eventKey:'order:'+order.id+':created',aggregateType:'order',
       aggregateId:String(order.id),eventType:'order.created',
       payloadJson:JSON.stringify(payload),
@@ -305,6 +308,7 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
         idempotencyKey:'order:'+order.id+':ledger:'+accountName,
       }});
     }
+    } // cash-only accrual; Stripe is posted atomically on confirmed charge.
     await tx.authNotification.create({data:{
       userId:account.id,kind:'order',title:testStripe?'Esperando pago TEST':'Pedido recibido',
       message:testStripe?'Pedido de prueba #'+order.id+' pendiente de Stripe TEST.':'Tu pedido #'+order.id+' llegó a '+restaurant.name+'.',
