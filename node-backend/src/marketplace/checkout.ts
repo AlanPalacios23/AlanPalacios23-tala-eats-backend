@@ -235,7 +235,7 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
         address:data.address,notes:data.notes,clientReference:data.client_reference,
         deliveryPin:String(randomInt(0,10_000)).padStart(4,'0'),
         orderType:'pickup',paymentMethod:data.payment_method,paymentStatus:'pending',
-        paymentProvider:data.payment_method,status:'received',
+        paymentProvider:data.payment_method,status:testStripe?'awaiting_payment':'received',
         subtotal:fromMinor(subtotal),deliveryFee:'0.00',
         tip:fromMinor(tip),total:fromMinor(total),
         platformCommission:fromMinor(commission),serviceFee:fromMinor(serviceFee),
@@ -275,7 +275,7 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
       orderId:order.id,status:'received',actorUserId:account.id,
       metadataJson:JSON.stringify({source:'checkout',checkout_intent_hmac:fingerprint}),
     }});
-    const payload={order_id:order.id,status:'received',payment_status:'pending',
+    const payload={order_id:order.id,status:testStripe?'awaiting_payment':'received',payment_status:'pending',
       user_id:account.id,restaurant_id:restaurant.id};
     await tx.stageEventOutbox.create({data:{
       eventKey:'order:'+order.id+':created',aggregateType:'order',
@@ -298,10 +298,10 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
       }});
     }
     await tx.authNotification.create({data:{
-      userId:account.id,kind:'order',title:'Pedido recibido',
-      message:'Tu pedido #'+order.id+' llegó a '+restaurant.name+'.',
+      userId:account.id,kind:'order',title:testStripe?'Esperando pago TEST':'Pedido recibido',
+      message:testStripe?'Pedido de prueba #'+order.id+' pendiente de Stripe TEST.':'Tu pedido #'+order.id+' llegó a '+restaurant.name+'.',
     }});
-    if(restaurant.ownerId){
+    if(restaurant.ownerId&&!testStripe){
       await tx.authNotification.create({data:{
         userId:restaurant.ownerId,kind:'restaurant_order',title:'Nuevo pedido',
         message:'Pedido #'+order.id+' recibido en '+restaurant.name+'.',
