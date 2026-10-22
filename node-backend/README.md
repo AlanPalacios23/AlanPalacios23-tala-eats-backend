@@ -1,6 +1,6 @@
 # TALA EATS · Node.js 24 + Express/TypeScript + Prisma 7 + PM2
 
-> **Estado operativo reportado desde Kali, 21/22-oct-2026:** Node.js RC6 es la **única API pública activa de Tala Eats** detrás de Cloudflare Tunnel; el Docker Python `talaeats-v3` (seis contenedores) ya se retiró. La API responde con `environment=staging`, `productionReady=false` y `financialWrites=false`: **NO está habilitada para operaciones comerciales ni pagos LIVE**.
+> **Estado operativo reportado desde Kali, 21/22-oct-2026:** el **hostname API público principal de Tala Eats** llega a Node.js RC6 detrás de Cloudflare Tunnel; el Docker Python `talaeats-v3` (seis contenedores) ya se retiró. La API responde con `environment=staging`, `productionReady=false` y `financialWrites=false`: **NO está habilitada para operaciones comerciales ni pagos LIVE**.
 >
 > **Documento canónico del estado ACTUAL:** [API pública RC6 + retiro del legado Docker + backups preservados](docs/KALI-NODE-RC6-PUBLIC-API-AND-LEGACY-RETIREMENT-20261022.md). Incluye evidencia, diagnóstico, datos no migrados y controles para las tres apps.  
 > **Guías históricas de preparación:** [PM2 directo (20-oct)](docs/KALI-PM2-DIRECT-RC-2026-10-20.md) y [runbook inicial RC6](docs/RC6-PREPRODUCTION-DEPLOY-RUNBOOK.md); describen el procedimiento original **antes** de publicar Node. No volver a desplegar ni reactivar Python siguiendo sus pasos históricos.
