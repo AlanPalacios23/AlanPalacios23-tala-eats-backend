@@ -45,7 +45,8 @@ test('only buyer can read their payment state, no client secret, no fake success
 test('cancellation of uncharged TEST orders tolerates zero contribution margin',()=>{
   const lifecycle=read('src/marketplace/lifecycle.ts');
   assert.match(lifecycle,/new Set\(ledger\.map\(e=>e\.account\)\)\.size!==ledger\.length/);
-  assert.match(lifecycle,/const required=\['gmv','restaurant_payable','platform_revenue'\]/);
+  assert.match(lifecycle,/const required=\['gmv','restaurant_payable'\]/);
+  assert.match(lifecycle,/if\(stripe&&ledger\.length!==0\)/);
   assert.match(lifecycle,/old\.direction==='credit'\?'debit':'credit'/);
   assert.match(lifecycle,/order\.paymentProviderId!==canceledIntent/);
 });
@@ -63,4 +64,21 @@ test('Kali wizard/preflight fail closed and never place keys in code',()=>{
   assert.match(preflight,/STRIPE_TEST_CHECKOUT_ENABLED=true/);
   assert.doesNotMatch(preflight,/sk_live_[A-Za-z0-9]/);
   assert.match(wizard,/STRIPE_TEST_CHECKOUT_STILL_DISABLED=YES/);
+});
+
+test('TEST Stripe cannot accrue GMV or merchant liability before verified payment',()=>{
+ const checkout=read('src/marketplace/checkout.ts');
+ const receipt=read('src/stage-stripe-test.ts');
+ assert.match(checkout,/if\(!testStripe\)\{/);
+ assert.match(checkout,/cash-only accrual; Stripe is posted atomically on confirmed charge/);
+ const start=receipt.indexOf('if(event.type===\'payment_intent.succeeded\')');
+ const ledger=receipt.indexOf("const accrual=[",start);
+ const state=receipt.indexOf("data:{paymentStatus:'paid',status:'received'}",start);
+ assert.ok(state>start&&ledger>state,'ledger after payment success branch');
+ assert.match(receipt,/existingAccrual!==0/);
+ assert.match(receipt,/kind:'order_settlement'/);
+ assert.match(receipt,/idempotencyKey:'order:'\+orderId\+':ledger:'\+accountName/);
+ assert.match(receipt,/idempotencyKey:'order:'\+orderId\+':stripe-test:collected'/);
+ const outbox=receipt.indexOf("eventKey:'order:'\+orderId\+':created'",ledger);
+ assert.ok(outbox>ledger,'order.created only after provider charge');
 });
