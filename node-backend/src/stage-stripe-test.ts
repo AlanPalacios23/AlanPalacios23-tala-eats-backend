@@ -214,7 +214,7 @@ export async function processStripeTestReceipt(eventId:string):Promise<void>{
             'Margen estimado después de cobro TEST'],
         ] as const;
         for(const [accountName,raw,description] of accrual){
-          if(!/^-?(?:0|[1-9]\\d*)\\.\\d{2}$/.test(raw))
+          if(!/^-?(?:0|[1-9]\d*)\.\d{2}$/.test(raw))
             throw new TestPaymentError(503,'Monto de ledger inválido');
           const negative=raw.startsWith('-');
           const amount=negative?raw.slice(1):raw;
