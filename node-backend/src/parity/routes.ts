@@ -10,6 +10,7 @@ import {db} from '../db.js';
 import {account,bad,param} from '../operational/routes.js';
 import {config} from '../config.js';
 import {createTestPaymentIntent} from '../stage-stripe-test.js';
+import {previewRecipientOrders} from '../finance/recipient-readiness.js';
 
 export const parityRouter=Router();
 const euro=(v:{toFixed:(n:number)=>string})=>v.toFixed(2);
@@ -160,16 +161,38 @@ parityRouter.get('/operations/admin/sla',async(req,res)=>{
 });
 parityRouter.get('/withdrawals/:role/:recipientId/balance',async(req,res)=>{
  const {role,identifier}=await payee(req);
- const payouts=await db.opsPayout.findMany({where:{payeeType:role,payeeId:identifier},
-  orderBy:{createdAt:'desc'},take:10000});
- const outstanding=payouts.filter(x=>x.status==='pending').reduce(
-  (n,x)=>n+minor(x.amount),0n);
+ const [payouts,orders]=await Promise.all([
+  db.opsPayout.findMany({where:{payeeType:role,payeeId:identifier},
+   orderBy:{createdAt:'desc'},take:10001}),
+  db.marketOrder.findMany({
+   where:role==='restaurant'
+     ?{restaurantId:identifier,status:'delivered'}
+     :{driverId:identifier,status:'delivered'},
+   orderBy:{id:'desc'},take:5001,
+   select:{id:true,status:true,paymentStatus:true,paymentMethod:true,
+     orderType:true,restaurantPayout:true,driverEarning:true,tip:true,
+     cashCollected:true},
+  }),
+ ]);
+ const payoutListComplete=payouts.length<=10000;
+ const pendingPayouts=payoutListComplete?payouts.filter(x=>x.status==='pending')
+  .reduce((n,x)=>n+minor(x.amount),0n):null;
+ const snapshot=orders.length<=5000
+  ?previewRecipientOrders(role,orders.map(o=>({
+    id:o.id,status:o.status,paymentStatus:o.paymentStatus,
+    paymentMethod:o.paymentMethod,orderType:o.orderType,
+    restaurantPayout:euro(o.restaurantPayout),driverEarning:euro(o.driverEarning),
+    tip:euro(o.tip),cashCollected:euro(o.cashCollected),
+   })),true)
+  :null;
  memoPrivate(res);
- res.json({role,recipient_id:identifier,
-  currency:'MXN',pending_payouts:fmt(outstanding),
+ res.json({role,recipient_id:identifier,currency:'MXN',
+  pending_payouts:pendingPayouts===null?null:fmt(pendingPayouts),
+  payout_list_complete:payoutListComplete,
   available_for_withdrawal:'0.00',provider:'not-configured',
   reconciliation_hold:true,eligible:false,
-  reason:'Stripe Connect proof of available balance not verified; cannot transfer'});
+  connect_capability_verified:false,earnings_preview:snapshot,
+  reason:'No existe saldo LIVE verificado ni cuenta Connect v2 habilitada; efectivo y Stripe TEST no son retiros'});
 });
 parityRouter.get('/withdrawals/:role/:recipientId/history',async(req,res)=>{
  const {role,identifier}=await payee(req);
@@ -185,8 +208,14 @@ parityRouter.get('/withdrawals/:role/:recipientId/connect/status',async(req,res)
  const {role,identifier}=await payee(req);
  memoPrivate(res);
  res.json({role,recipient_id:identifier,provider:'stripe-connect',
-  connected:false,charges_enabled:false,payouts_enabled:false,
-  details_submitted:false,configuration:'disabled-node-staging'});
+  account_api:'v2',connected:false,dashboard:'not-configured',
+  configuration:'disabled-node-staging',
+  recipient_transfer_capability_status:'not-requested',
+  recipient_transfer_capability_active:false,
+  requires_account_onboarding:true,withdrawals_enabled:false,
+  // Legacy mobile flags always false; never infer eligibility from them.
+  charges_enabled:false,payouts_enabled:false,details_submitted:false,
+  production_ready:false});
 });
 parityRouter.get('/withdrawals/connect/finish',(_req,res)=>{
  res.status(403).json({detail:'OAuth/Connect return token unverified; finish disabled on Node staging'});
