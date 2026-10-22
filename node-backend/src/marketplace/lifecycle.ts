@@ -163,9 +163,13 @@ export async function cancelCashPickupStage(
     const ledger=await tx.stageFinancialLedgerEntry.findMany({
       where:{orderId:order.id,kind:'order_settlement'},orderBy:{id:'asc'},
     });
-    const expected=['gmv','restaurant_payable','platform_revenue','contribution_margin'];
-    if(!expected.every(a=>ledger.some(e=>e.account===a)))
-      fail(503,'Ledger de checkout incompleto; no se puede cancelar');
+    // Contribution margin can be zero and is then intentionally omitted;
+    // tiny Stripe TEST orders can also have negative margin (debit).
+    // Reversal must not trap uncharged, cancelable orders over that omission.
+    const required=['gmv','restaurant_payable','platform_revenue'];
+    if(!required.every(a=>ledger.some(e=>e.account===a))||
+       new Set(ledger.map(e=>e.account)).size!==ledger.length)
+      fail(503,'Ledger de checkout incompleto o duplicado; no se puede cancelar');
     const feeRate=stripe?0n:actor.role==='customer'?feeRates[order.status]!:0n;
     const cancellationFee=roundHalfEvenBasisPoints(
       cents(order.subtotal.toString())-cents(order.discount.toString()),feeRate);
