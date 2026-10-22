@@ -116,7 +116,7 @@ export async function processStripeTestReceipt(eventId:string):Promise<void>{
        moneyMinor(order.total.toFixed(2))!==intent.amount)
       throw new TestPaymentError(503,'Pago TEST sin orden válida: reconciliación manual');
     if(event.type==='payment_intent.succeeded'){
-      if(intent.status!=='succeeded')
+      if(intent.status!=='succeeded'||intent.amount_received!==intent.amount)
         throw new TestPaymentError(503,'Stripe todavía no confirmó el cobro');
       if(order.status!=='awaiting_payment'&&order.paymentStatus!=='paid')
         throw new TestPaymentError(503,'Pedido modificado: reconciliación manual');
@@ -139,6 +139,10 @@ export async function processStripeTestReceipt(eventId:string):Promise<void>{
         await tx.stageOrderEvent.create({
           data:{orderId,status:'received',actorUserId:buyerId,
             metadataJson:JSON.stringify({source:'stripe_test_webhook',stripe_event_id:eventId})},
+        });
+        await tx.authNotification.create({
+          data:{userId:buyerId,kind:'order',title:'Pago TEST confirmado',
+            message:'Pedido de prueba #'+orderId+' listo para procesarse.'},
         });
         await tx.stageEventOutbox.create({
           data:{eventKey:'order:'+orderId+':stripe-test-paid',
