@@ -92,3 +92,13 @@ test('Captured payments cannot be canceled by stock-only route',()=>{
  const gateway=read('src/stage-stripe-test.ts');
  assert.match(gateway,/Pago ya confirmado o pedido no cancelable/);
 });
+
+test('Signed webhook redelivery is requeued while ledger remains idempotent',()=>{
+ const incoming=read('src/webhook.ts');
+ const processor=read('src/stage-stripe-test.ts');
+ assert.match(incoming,/deliveryCount: \{ increment: 1 \}/);
+ assert.match(incoming,/receipt\.deliveryCount/);
+ assert.match(incoming,/constructEvent/);
+ assert.match(processor,/receipt\.status==='PROCESSED'/);
+ assert.match(processor,/idempotencyKey:'order:'\+orderId\+':stripe-test:collected'/);
+});
