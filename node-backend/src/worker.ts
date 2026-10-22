@@ -3,6 +3,7 @@ import { Redis } from 'ioredis';
 import { config } from './config.js';
 import { db } from './db.js';
 import { deliverStageMailBatch } from './email.js';
+import { processStripeTestReceipt } from './stage-stripe-test.js';
 
 // Nunca cobra ni transfiere dinero; únicamente marca un evento test verificado.
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
@@ -15,6 +16,13 @@ const worker = new Worker('tala-node-staging-webhooks', async (job) => {
   });
   if (!entry) throw new Error('EVENT_NOT_REGISTERED');
   if (entry.status === 'PROCESSED') return { alreadyProcessed: true };
+  if(config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true') {
+    // Never acknowledge success before verified provider state + atomic ledger.
+    await processStripeTestReceipt(entry.id);
+    const done=await db.stripeWebhookEvent.findUnique({where:{id:entry.id}});
+    if(done?.status==='PROCESSED')return { testPaymentReconciled:true };
+  }
+  // Non-payment webhook kinds remain receipts only (Stripe TEST).
   await db.stripeWebhookEvent.update({
     where: { id: entry.id },
     data: { status: 'PROCESSED', processedAt: new Date() },
