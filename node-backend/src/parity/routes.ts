@@ -178,7 +178,7 @@ parityRouter.get('/withdrawals/:role/:recipientId/balance',async(req,res)=>{
  const pendingPayouts=payoutListComplete?payouts.filter(x=>x.status==='pending')
   .reduce((n,x)=>n+minor(x.amount),0n):null;
  const snapshot=orders.length<=5000
-  ?previewRecipientOrders(role,orders.map(o=>({
+  ?previewRecipientOrders(role==='restaurant'?'restaurant':'driver',orders.map(o=>({
     id:o.id,status:o.status,paymentStatus:o.paymentStatus,
     paymentMethod:o.paymentMethod,orderType:o.orderType,
     restaurantPayout:euro(o.restaurantPayout),driverEarning:euro(o.driverEarning),
