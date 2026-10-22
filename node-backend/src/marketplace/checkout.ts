@@ -17,7 +17,7 @@ const intentSchema=z.strictObject({
   restaurant_id:positiveId,
   address:z.string().trim().min(3).max(300),
   notes:z.string().trim().max(1000).default(''),
-  payment_method:z.literal('cash'),
+  payment_method:z.enum(['cash','stripe']),
   order_type:z.literal('pickup'),
   client_reference:z.string().regex(/^[A-Za-z0-9_-]{1,80}$/),
   items:z.array(z.strictObject({
@@ -41,6 +41,15 @@ export function isCashPickupIntent(payload:unknown):boolean {
   if(!payload || typeof payload!=='object'||Array.isArray(payload))return false;
   const p=payload as Record<string,unknown>;
   return p.payment_method==='cash'&&p.order_type==='pickup'&&
+    Object.keys(p).every(k=>k in mobilePickupSchema.shape)&&
+    (p.coupon_code===undefined||p.coupon_code==='')&&
+    (p.delivery_lat===undefined||p.delivery_lat===null)&&
+    (p.delivery_lng===undefined||p.delivery_lng===null);
+}
+export function isStripePickupIntent(payload:unknown):boolean {
+  if(!payload || typeof payload!=='object'||Array.isArray(payload))return false;
+  const p=payload as Record<string,unknown>;
+  return p.payment_method==='stripe'&&p.order_type==='pickup'&&
     Object.keys(p).every(k=>k in mobilePickupSchema.shape)&&
     (p.coupon_code===undefined||p.coupon_code==='')&&
     (p.delivery_lat===undefined||p.delivery_lat===null)&&
@@ -90,13 +99,16 @@ const safeMatch=(a:unknown,b:string):boolean=>{
   return timingSafeEqual(Buffer.from(a,'hex'),Buffer.from(b,'hex'));
 };
 
-export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promise<number> {
-  if(config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true')
-    throw new CheckoutError(503,'Checkout deshabilitado en staging');
+export async function createStagePickupOrder(raw:unknown, account:AuthUser):Promise<number> {
+  const cash=isCashPickupIntent(raw);
+  const testStripe=isStripePickupIntent(raw);
+  if(!((cash&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true')||
+       (testStripe&&config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true')))
+    throw new CheckoutError(503,'Checkout de efectivo o tarjeta TEST no habilitado');
   if(!['customer','admin'].includes(account.role))
     throw new CheckoutError(403,'No tienes permisos para crear pedidos');
-  if(!isCashPickupIntent(raw))
-    throw new CheckoutError(503,'Este checkout de staging sólo admite efectivo para recoger; demás métodos pendientes');
+  if(!cash&&!testStripe)
+    throw new CheckoutError(503,'Este checkout de staging sólo admite recoger con efectivo o Stripe TEST');
   const parsed=mobilePickupSchema.safeParse(raw);
   if(!parsed.success)throw new CheckoutError(422,'Datos del pedido inválidos');
   // The metadata fields are not part of the financial signature or insert.
@@ -206,7 +218,7 @@ export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promis
           toMilli(ingredient.quantity.toString())<ingredientUsage.get(id)!)
         throw new CheckoutError(400,'Inventario de ingredientes insuficiente');
     }
-    // Python default pickup cash: 15% restaurant commission, 7% of net food
+    // Python default pickup, cash or stripe TEST: 15% commission and 7% of net food
     // to customer, 100% tip to merchant. In v1.6.2, fee is capped at MXN 25.
     // Only fixed default policies are supported here; custom overrides 503.
     const commission=roundRate(subtotal,1500n);
@@ -222,8 +234,8 @@ export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promis
         userId:account.id,restaurantId:restaurant.id,
         address:data.address,notes:data.notes,clientReference:data.client_reference,
         deliveryPin:String(randomInt(0,10_000)).padStart(4,'0'),
-        orderType:'pickup',paymentMethod:'cash',paymentStatus:'pending',
-        paymentProvider:'cash',status:'received',
+        orderType:'pickup',paymentMethod:data.payment_method,paymentStatus:'pending',
+        paymentProvider:data.payment_method,status:'received',
         subtotal:fromMinor(subtotal),deliveryFee:'0.00',
         tip:fromMinor(tip),total:fromMinor(total),
         platformCommission:fromMinor(commission),serviceFee:fromMinor(serviceFee),
@@ -297,4 +309,10 @@ export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promis
     }
     return order.id;
   },{maxWait:10_000,timeout:20_000});
+}
+
+// Compatibility wrapper for older cash-only callers; no Stripe bypass.
+export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promise<number> {
+  if(!isCashPickupIntent(raw)) throw new CheckoutError(503,'Sólo efectivo para recoger');
+  return createStagePickupOrder(raw,account);
 }
