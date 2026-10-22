@@ -49,7 +49,7 @@ export async function createTestPaymentIntent(orderId:number,buyerId:number) {
   const intent=order.paymentProviderId
     ? await provider.paymentIntents.retrieve(order.paymentProviderId)
     : await provider.paymentIntents.create({
-        amount,currency:'mxn',payment_method_types:['card'],capture_method:'automatic',
+        amount,currency:'mxn',automatic_payment_methods:{enabled:true},capture_method:'automatic',
         metadata,description:'Tala Eats pedido TEST #'+order.id,
       },{idempotencyKey:requestKey});
   if(intent.livemode||intent.amount!==amount||intent.currency!=='mxn'||
