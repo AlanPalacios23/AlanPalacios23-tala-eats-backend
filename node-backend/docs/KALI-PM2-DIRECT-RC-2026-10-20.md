@@ -1,6 +1,6 @@
 # Tala Eats — Candidato Node.js + PM2 directo en Kali (20-oct-2026)
 
-## Decisión: una sola arquitectura de despliegue
+> **AVISO 21/22-oct-2026 — documento histórico.** Desde que se redactó este plan, el operador confirmó Node RC6 por PM2 y su publicación por Cloudflare (`https://talaeats.alan-palacios-dev.com/api/v1`) y eliminó los seis contenedores Docker Python `talaeats-v3`, preservando sus respaldos y volúmenes. **La URL responde desde staging** (`productionReady=false`, `financialWrites=false`): no demuestra paridad funcional, migración de datos ni aptitud para uso comercial. Ver [bitácora operativa RC6](KALI-NODE-RC6-PUBLIC-API-AND-LEGACY-RETIREMENT-20261022.md) antes de usar instrucciones de este plan.\n\n## Decisión: una sola arquitectura de despliegue
 
 - GitHub guarda el código, aporta versiones y permite las pruebas técnicas existentes. **No es un sistema de despliegue**.
 - Kali ejecuta directamente **Node.js 24, Express/TypeScript, Prisma 7, PM2 (API y worker)**, con **PostgreSQL 15 y Redis 8 NATIVOS** en el usuario restringido `tala-node-stage`.

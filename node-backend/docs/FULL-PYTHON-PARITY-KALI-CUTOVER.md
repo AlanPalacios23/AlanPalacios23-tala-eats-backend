@@ -2,7 +2,7 @@
 
 **Decisión del propietario (19-oct-2026):** reproducir **todo** el comportamiento público/privado del Python existente antes de sustituirlo por Node.js 24 + Express/TypeScript + Prisma 7 + PostgreSQL 15 + Redis 8 + BullMQ + PM2. No es un MVP simplificado. Mantener las tres apps Flutter y el portal ADMIN compatibles.
 
-## Fuente canónica e inventario verificable
+> **AVISO 21/22-oct-2026 — documento histórico.** Desde que se redactó este plan, el operador confirmó Node RC6 por PM2 y su publicación por Cloudflare (`https://talaeats.alan-palacios-dev.com/api/v1`) y eliminó los seis contenedores Docker Python `talaeats-v3`, preservando sus respaldos y volúmenes. **La URL responde desde staging** (`productionReady=false`, `financialWrites=false`): no demuestra paridad funcional, migración de datos ni aptitud para uso comercial. Ver [bitácora operativa RC6](KALI-NODE-RC6-PUBLIC-API-AND-LEGACY-RETIREMENT-20261022.md) antes de usar instrucciones de este plan.\n\n## Fuente canónica e inventario verificable
 
 - Python `main@7cf8ae3f4fce51b1265ad511bd4e36077fc42636` es el punto inicial de comparación, no una autorización para congelar futuras mejoras. Reconciliar contra el nuevo `main` antes de cada release.
 - 16 módulos, 252 decoradores de rutas HTTP; ejecutar `python3 node-backend/scripts/python_route_inventory.py --check`. Para inspección mecánica: agregar `--json`. Es análisis AST, sin levantar Python, DB, web ni pagos. Ver `PYTHON-TO-NODE-PARITY-MATRIX.md`.
