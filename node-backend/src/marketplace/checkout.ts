@@ -108,6 +108,10 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
     throw new CheckoutError(503,'Checkout de efectivo o tarjeta TEST no habilitado');
   if(!['customer','admin'].includes(account.role))
     throw new CheckoutError(403,'No tienes permisos para crear pedidos');
+  // Administrators may create synthetic CASH fixtures, but never PaymentIntents
+  // they cannot authorize as the actual cardholder.
+  if(testStripe&&account.role!=='customer')
+    throw new CheckoutError(403,'Stripe TEST requiere comprador customer');
   if(!cash&&!testStripe)
     throw new CheckoutError(503,'Este checkout de staging sólo admite recoger con efectivo o Stripe TEST');
   const parsed=mobilePickupSchema.safeParse(raw);
