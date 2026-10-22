@@ -196,6 +196,30 @@ parityRouter.get('/withdrawals/connect/finish',(_req,res)=>{
 // Payments and settlements: explicit fail-closed boundaries. Unlike returning
 // fake 200s, we never acknowledge provider events without PSP signature,
 // reservation, ledger postings, external verification and durable reconcile.
+// Owner-authoritative read-only status for mobile PaymentSheet polling.
+// Redirects, client acknowledgements and client_secret are NEVER proof of charge.
+parityRouter.get('/payments/stripe/orders/:orderId/status',async(req,res)=>{
+ const who=await account(req,['customer']);
+ const id=param(req,'orderId');
+ const order=await db.marketOrder.findUnique({
+  where:{id},select:{id:true,userId:true,orderType:true,paymentMethod:true,
+   paymentStatus:true,paymentProvider:true,status:true,total:true,
+   inventoryRestoredAt:true},
+ });
+ if(!order||order.userId!==who.id||
+    order.orderType!=='pickup'||order.paymentMethod!=='stripe'||
+    order.paymentProvider!=='stripe')return bad(404,'Pago no encontrado');
+ memoPrivate(res);
+ res.json({order_id:id,provider:'stripe',mode:'test',
+  currency:'mxn',amount:order.total.toFixed(2),
+  payment_status:order.paymentStatus,order_status:order.status,
+  confirmed_by_server:order.paymentStatus==='paid',
+  pending_provider_confirmation:order.paymentStatus==='pending'&&
+   order.status==='awaiting_payment',
+  inventory_restored:order.inventoryRestoredAt!==null,
+  test_checkout_enabled:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',
+  production_ready:false});
+});
 parityRouter.post('/payments/stripe/orders/:orderId/payment-intent',async(req,res)=>{
  const who=await account(req,['customer']);
  const result=await createTestPaymentIntent(param(req,'orderId'),who.id);
