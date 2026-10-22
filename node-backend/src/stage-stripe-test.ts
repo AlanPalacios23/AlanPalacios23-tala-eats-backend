@@ -72,7 +72,10 @@ export async function createTestPaymentIntent(orderId:number,buyerId:number) {
     throw new TestPaymentError(503,'Referencia de proveedor inválida');
   const intent=pointer===STRIPE_INTENT_RESERVATION
     ? await provider.paymentIntents.create({
-        amount,currency:'mxn',automatic_payment_methods:{enabled:true},capture_method:'automatic',
+        amount,currency:'mxn',
+        allowed_payment_method_types:['card'],
+        automatic_payment_methods:{enabled:true,allow_redirects:'never'},
+        capture_method:'automatic',
         metadata,description:'Tala Eats pedido TEST #'+order.id,
       },{idempotencyKey:requestKey})
     : await provider.paymentIntents.retrieve(pointer);
