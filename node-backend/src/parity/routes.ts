@@ -209,11 +209,21 @@ parityRouter.get('/payments/stripe/orders/:orderId/status',async(req,res)=>{
  if(!order||order.userId!==who.id||
     order.orderType!=='pickup'||order.paymentMethod!=='stripe'||
     order.paymentProvider!=='stripe')return bad(404,'Pago no encontrado');
+ const receipt=await db.stageFinancialLedgerEntry.findUnique({
+  where:{idempotencyKey:'order:'+id+':stripe-test:collected'},
+  select:{orderId:true,account:true,direction:true,kind:true,amount:true},
+ });
+ const ledgerVerified=receipt?.orderId===id&&
+  receipt.account==='stripe_test_collected'&&
+  receipt.direction==='credit'&&receipt.kind==='stripe_test_payment'&&
+  receipt.amount.toFixed(2)===order.total.toFixed(2);
+ const confirmed=order.paymentStatus==='paid'&&ledgerVerified;
  memoPrivate(res);
  res.json({order_id:id,provider:'stripe',mode:'test',
   currency:'mxn',amount:order.total.toFixed(2),
   payment_status:order.paymentStatus,order_status:order.status,
-  confirmed_by_server:order.paymentStatus==='paid',
+  confirmed_by_server:confirmed,
+  requires_manual_review:order.paymentStatus==='paid'&&!ledgerVerified,
   pending_provider_confirmation:order.paymentStatus==='pending'&&
    order.status==='awaiting_payment',
   inventory_restored:order.inventoryRestoredAt!==null,
