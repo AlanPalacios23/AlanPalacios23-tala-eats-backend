@@ -3,6 +3,7 @@
 // No LIVE, no PSP, no customer wallet or driver/dispatch writes.
 import { db } from '../db.js';
 import { config } from '../config.js';
+import {cancelUnpaidStripeTestIntent} from '../stage-stripe-test.js';
 import type { AuthUser, MarketOrder } from '../generated/prisma/client.js';
 
 class LifecycleError extends Error {
@@ -50,6 +51,16 @@ export async function previewCancelStage(orderId:number,actor:AuthUser) {
   if(!['customer','admin'].includes(actor.role))fail(403,'No autorizado');
   const order=await db.marketOrder.findUnique({where:{id:orderId}});
   if(!order||(actor.role!=='admin'&&order.userId!==actor.id))return notFound();
+  if(order.paymentMethod==='stripe'&&order.orderType==='pickup'&&
+     config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'){
+    if(order.status==='awaiting_payment'&&order.paymentStatus==='pending'&&
+       order.paymentProviderId!=='pi_reserving_rc7'){
+      return {cancellable:true,status:order.status,fee:'0.00',
+        refund_estimate:'0.00',policy:'Stripe TEST: no hay cargo; primero cancelar PaymentIntent'};
+    }
+    return {cancellable:false,reason:'Pago Stripe pendiente de conciliación; soporte',
+      fee:'0.00'};
+  }
   cashOnly(order);
   if(order.status==='cancelled')
     return {cancellable:true,status:'cancelled',fee:dollars(cents(order.cancellationFee.toString())),
@@ -72,8 +83,22 @@ export async function previewCancelStage(orderId:number,actor:AuthUser) {
 export async function cancelCashPickupStage(
   orderId:number, actor:AuthUser, reason:string='Cambio de planes',
 ):Promise<number>{
-  if(config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true')
+  const candidate=await db.marketOrder.findUnique({where:{id:orderId},
+    select:{userId:true,orderType:true,paymentMethod:true,status:true}});
+  if(!candidate)return notFound();
+  const stripe=candidate.orderType==='pickup'&&candidate.paymentMethod==='stripe';
+  if(stripe&&actor.role!=='customer')
+    fail(403,'Solo el comprador puede cancelar un Stripe TEST sin cargo');
+  if(stripe&&candidate.userId!==actor.id)return notFound();
+  if(stripe&&config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true')
+    fail(503,'Stripe TEST deshabilitado');
+  if(!stripe&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true')
     fail(503,'Ciclo de pedidos de staging deshabilitado');
+  if(stripe&&candidate.status==='cancelled')return orderId;
+  // Stripe confirms no capture BEFORE entering the stock restoration transaction.
+  // A concurrent PaymentIntent creation is reserved in DB and blocks cancellation.
+  const canceledIntent=stripe
+    ?await cancelUnpaidStripeTestIntent(orderId,actor.id):null;
   return db.$transaction(async tx=>{
     const locks=await tx.$queryRaw<{id:number}[]>`
       SELECT id FROM orders WHERE id=${orderId} FOR UPDATE
@@ -88,11 +113,16 @@ export async function cancelCashPickupStage(
       fail(403,'Ese pedido no pertenece a tu restaurante');
     if(!['customer','restaurant','admin'].includes(actor.role))
       fail(403,'No autorizado');
-    cashOnly(order);
+    if(stripe){
+      if(order.orderType!=='pickup'||order.paymentMethod!=='stripe'||
+         order.status!=='awaiting_payment'||order.paymentStatus!=='pending'||
+         order.paymentProviderId!==canceledIntent)
+        fail(409,'El intento Stripe cambió: inventario retenido para conciliación');
+    }else cashOnly(order);
     // Idempotent status: second cancel does not restore stock, create events
     // or post accounting reversals.
     if(order.status==='cancelled')return order.id;
-    if(!(order.status in feeRates))
+    if(!stripe&&!(order.status in feeRates))
       fail(400,'El pedido ya no puede cancelarse automáticamente; abre una disputa o contacta soporte');
     // Restrict mutation to C1 checkout-created orders, not imported Python
     // or synthetic legacy records without trusted checkout fingerprint.
@@ -136,7 +166,7 @@ export async function cancelCashPickupStage(
     const expected=['gmv','restaurant_payable','platform_revenue','contribution_margin'];
     if(!expected.every(a=>ledger.some(e=>e.account===a)))
       fail(503,'Ledger de checkout incompleto; no se puede cancelar');
-    const feeRate=actor.role==='customer'?feeRates[order.status]!:0n;
+    const feeRate=stripe?0n:actor.role==='customer'?feeRates[order.status]!:0n;
     const cancellationFee=roundHalfEvenBasisPoints(
       cents(order.subtotal.toString())-cents(order.discount.toString()),feeRate);
 
@@ -162,17 +192,19 @@ export async function cancelCashPickupStage(
     await tx.marketOrder.update({
       where:{id:order.id},
       data:{status:'cancelled',inventoryRestoredAt:when,
+        ...(stripe?{paymentStatus:'expired'}:{}),
         cancelledReason:reason.slice(0,300),cancellationFee:dollars(cancellationFee)},
     });
     await tx.stageOrderEvent.create({data:{
       orderId:order.id,status:'cancelled',actorUserId:actor.id,
-      metadataJson:JSON.stringify({source:actor.role,cancellation_fee:dollars(cancellationFee)}),
+      metadataJson:JSON.stringify({source:stripe?'stripe_test_cancelled':actor.role,
+        cancellation_fee:dollars(cancellationFee)}),
     }});
     await tx.stageEventOutbox.create({data:{
       eventKey:'order:'+order.id+':cancelled',aggregateType:'order',
       aggregateId:String(order.id),eventType:'order.status',
       payloadJson:JSON.stringify({order_id:order.id,status:'cancelled',
-        payment_status:order.paymentStatus}),
+        payment_status:stripe?'expired':order.paymentStatus}),
     }});
     // Original order settlement was an accrual: reverse it with new immutable
     // debit entries, NOT edits to existing ledger. For unpaid CASH orders,
@@ -182,7 +214,7 @@ export async function cancelCashPickupStage(
         orderId:order.id,userId:order.userId,restaurantId:order.restaurantId,
         account:old.account,direction:old.direction==='credit'?'debit':'credit',
         amount:old.amount,kind:'order_cancellation',
-        description:'Reverso por cancelación de pedido en efectivo no cobrado',
+        description:stripe?'Reverso pedido tarjeta TEST no capturado':'Reverso efectivo no cobrado',
         idempotencyKey:'order:'+order.id+':cancel:reverse:'+old.account,
       }});
     }
