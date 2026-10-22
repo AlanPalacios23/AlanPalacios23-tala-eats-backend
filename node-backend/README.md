@@ -1,9 +1,9 @@
 # TALA EATS · Node.js 24 + Express/TypeScript + Prisma 7 + PM2
 
-> **Release candidate de STAGING en Kali. No sustituye aún Python ni admite pagos reales.**
+> **Estado operativo reportado desde Kali, 21/22-oct-2026:** Node.js RC6 es la **única API pública activa de Tala Eats** detrás de Cloudflare Tunnel; el Docker Python `talaeats-v3` (seis contenedores) ya se retiró. La API responde con `environment=staging`, `productionReady=false` y `financialWrites=false`: **NO está habilitada para operaciones comerciales ni pagos LIVE**.
 >
-> Guía actual de despliegue directo: [KALI-PM2-DIRECT-RC-2026-10-20.md](docs/KALI-PM2-DIRECT-RC-2026-10-20.md).
-> La primera instalación/salto desde v0.1.0 requiere migraciones revisadas y backup, no sólo `pm2 restart`.
+> **Documento canónico del estado ACTUAL:** [API pública RC6 + retiro del legado Docker + backups preservados](docs/KALI-NODE-RC6-PUBLIC-API-AND-LEGACY-RETIREMENT-20261022.md). Incluye evidencia, diagnóstico, datos no migrados y controles para las tres apps.  
+> **Guías históricas de preparación:** [PM2 directo (20-oct)](docs/KALI-PM2-DIRECT-RC-2026-10-20.md) y [runbook inicial RC6](docs/RC6-PREPRODUCTION-DEPLOY-RUNBOOK.md); describen el procedimiento original **antes** de publicar Node. No volver a desplegar ni reactivar Python siguiendo sus pasos históricos.
 
 ## Arquitectura
 
@@ -48,3 +48,11 @@ TALA_STAGE_UPDATE_APPROVAL=I_APPROVE_STAGE_PM2_CODE_ONLY \
 `actualizar.sh` **no instala un agente ni automatización**; crea un release separado por SHA, verifica compilación/tests/readiness, controla dos procesos PM2 y tiene intento de rollback de código. Si hay migraciones, detiene la actualización para revisión manual. No usar este comando para migrar Python→Node o modificar producción.
 
 Para el primer despliegue en Kali: seguir el runbook y comprobar backup/restauración de PG15 staging, migraciones, estado PM2 y compatibilidad de las cuatro interfaces. **No habilitar LIVE sin esos gates.**
+
+## Estado público único para clientes móviles (21/22-oct-2026)
+
+- HTTPS de las tres apps: `https://talaeats.alan-palacios-dev.com/api/v1` → cloudflared `/etc/cloudflared/config.yml` → Node loopback `127.0.0.1:18190`.
+- Código efectivamente desplegado en Kali: `30ab51b587b21127c3f3419e0ec4c3a8539dfb0a` (GitHub puede avanzar con commits de documentación sin alterar ese SHA en PM2).
+- El backend/worker PM2 de Node y su PG15/Redis8 nativos permanecen; los seis contenedores Docker Python fueron eliminados tras `postgres16.dump` y `media.tar.gz` verificados a nivel de archivo. **No** se han borrado volúmenes, imágenes ni releases; no hay migración de datos entre Python y Node acreditada.
+- `ready=true` y HTTPS 200 solo prueban disponibilidad; usuarios, restaurante, repartidor y ADMIN deben realizar pruebas de contrato/operación, y los pagos LIVE siguen bloqueados.
+- Para consultar estado **sin desplegar**: `curl -fsS https://talaeats.alan-palacios-dev.com/api/v1/ready`. Seguir la bitácora canónica para smoke PM2 de solo lectura y limpieza segura.
