@@ -19,6 +19,17 @@
 - El comprador puede cancelar un TEST **no capturado** y recuperar inventario únicamente si la cancelación del proveedor quedó confirmada; cualquier ambigüedad o importe ya capturado continúa bloqueado para conciliación.
 - No se ha completado el circuito de reembolsos de importes capturados, liquidaciones de caja, saldo retirable o pagos comerciales. El nuevo código permanece detrás de flags apagadas.
 
+### RC7 — robustecimiento de cobros y diagnóstico (22-oct-2026)
+
+- `allowed_payment_method_types=['card']` y `automatic_payment_methods.allow_redirects='never'` para la versión **stripe-node 23.0.0**: no se habilitan OXXO, transferencias diferidas ni métodos de redirección con esta app. El servidor mantiene monto MXN, cliente y estado final como autoridad.
+- `GET /api/v1/payments/stripe/orders/:orderId/status` requiere comprador autenticado, verifica propiedad y **asiento contable inmutable** antes de reportar `confirmed_by_server=true`. Nunca devuelve `client_secret`; ofrece `requires_manual_review` si el pedido figura pagado pero el ledger es inconsistente. PaymentSheet no confirma el estado del negocio por sí solo.
+- El worker **NO** marca un evento de pago `PROCESSED` si la bandera Stripe TEST se desactivó durante un incidente. Conserva el recibo firmado en PostgreSQL y reintenta de modo acotado cuando se habilita nuevamente. Los reintentos están limitados a eventos recientes (48 horas, tandas de 20; 5 minutos después de agotarse los intentos) y no pueden realizar transferencias.
+- Cancelaciones de pedidos no capturados: margen de contribución exactamente cero es válido; el ledger debe conservar cuentas críticas y no tener duplicados. Un pago capturado continúa requiriendo **reembolso** e investigación, nunca reverso simple de stock.
+- `scripts/rc7-kali-finance-preflight.sh` ofrece verificación de solo lectura como `tala-node-stage`: estado de API local/pública, worker, base de datos, Redis, configuración privada y banderas LIVE apagadas. No solicita ni imprime secretos, no modifica la base de datos, no reinicia PM2 ni actualiza Cloudflare.
+- Se añadieron pruebas de conservación de importes entre restaurante, repartidor y plataforma, además de pruebas regresivas de reintentos, protección de estado móvil y sintaxis de scripts.
+
+**Activación de producción NO autoriza un simple cambio de variables.** RC7 sigue rechazando `NODE_ENV=production` y claves `sk_live_` por diseño. Para cobros reales hay que preparar y validar un runtime financiero LIVE por separado, probar con una cuenta Stripe TEST, comprobar reembolsos, conciliación, fiscalidad, recuperación, fraude, integridad de DB, permisos y contrato Flutter y aprobar explícitamente el corte. No desplegar este PR sobre RC6 sin esas puertas de seguridad.
+
 ### Verificación de la política histórica frente a la política comercial
 
 | Elemento | Python `commercial_v152` | Python `commercial_v162` |
