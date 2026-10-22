@@ -49,3 +49,46 @@ test('Unverified payments and payouts remain unavailable',()=>{
  const schema=read('prisma/schema.prisma');
  assert.match(schema,/idempotencyKey\s+String\s+@unique/);
 });
+
+test('RC7 provider creation reserves database ID before Stripe API and keeps retries bounded',()=>{
+ const gateway=read('src/stage-stripe-test.ts');
+ const start=gateway.indexOf("data:{paymentProviderId:STRIPE_INTENT_RESERVATION}");
+ const remote=gateway.indexOf("provider.paymentIntents.create");
+ assert.ok(start>=0&&remote>start,'DB reservation must precede provider call');
+ assert.match(gateway,/30\*60\*1000/);
+ assert.match(gateway,/paymentProviderId:STRIPE_INTENT_RESERVATION/);
+ assert.match(gateway,/pointer===STRIPE_INTENT_RESERVATION/);
+});
+
+test('RC7 Stripe pickup requires verified ledger and must not collect card as cash',()=>{
+ const lifecycle=read('src/marketplace/lifecycle.ts');
+ const pickup=read('src/marketplace/pickup.ts');
+ assert.match(lifecycle,/order.paymentStatus==='paid'/);
+ assert.match(lifecycle,/stripe_test_collected/);
+ assert.match(pickup,/kind:'stripe_test_payment'/);
+ assert.match(pickup,/cashCollected:cash\?order.total:'0.00'/);
+ assert.match(pickup,/order.paymentStatus==='paid'/);
+});
+
+test('RC7 unpaid Stripe cancellation demands confirmed PSP cancel before stock restoration',()=>{
+ const gateway=read('src/stage-stripe-test.ts');
+ const lifecycle=read('src/marketplace/lifecycle.ts');
+ assert.match(gateway,/export async function cancelUnpaidStripeTestIntent/);
+ assert.match(gateway,/paymentIntents.cancel/);
+ assert.match(gateway,/intent.status!=='canceled'/);
+ assert.match(gateway,/intent.amount_received!==0/);
+ const remote=lifecycle.indexOf('await cancelUnpaidStripeTestIntent(orderId,actor.id)');
+ const dbTransaction=lifecycle.indexOf('return db.$transaction(async tx=>{',remote);
+ assert.ok(remote>=0&&dbTransaction>remote);
+ assert.match(lifecycle,/order.paymentProviderId!==canceledIntent/);
+ assert.match(lifecycle,/inventoryRestoredAt:when/);
+ assert.match(lifecycle,/kind:'order_cancellation'/);
+});
+
+test('Captured payments cannot be canceled by stock-only route',()=>{
+ const lifecycle=read('src/marketplace/lifecycle.ts');
+ assert.match(lifecycle,/order.paymentStatus!=='pending'/);
+ assert.match(lifecycle,/order.status!=='awaiting_payment'/);
+ const gateway=read('src/stage-stripe-test.ts');
+ assert.match(gateway,/Pago ya confirmado o pedido no cancelable/);
+});
