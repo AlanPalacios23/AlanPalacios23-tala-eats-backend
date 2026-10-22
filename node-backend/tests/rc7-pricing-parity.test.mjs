@@ -35,3 +35,32 @@ test('negative discount and distance are rejected',()=>{
  assert.throws(()=>quote({discount:20000n}),RangeError);
  assert.throws(()=>quote({distanceMilliKm:-1n}),RangeError);
 });
+
+test('conservation: merchant + driver + platform equals customer total',()=>{
+  for(const policy of ['v152','v162']){
+    for(const method of ['cash','stripe']){
+      for(const fulfillment of ['pickup','delivery']){
+        for(const merchantManagedDelivery of (fulfillment==='delivery'?[false,true]:[false])){
+          for(let i=0;i<120;i++){
+            const subtotal=BigInt(1500+i*137);
+            const discount=BigInt(i%11*23);
+            const tip=BigInt(i%7*117);
+            const x=calculateDefaultCommercial({policy,method,fulfillment,
+              merchantManagedDelivery,subtotal,discount,tip,
+              distanceMilliKm:BigInt(i%15)*700n,
+              restaurantDeliveryQuote:3900n});
+            assert.equal(x.restaurantPayable+x.driverPayable+
+              x.platformRevenue,x.total,
+              policy+' '+method+' '+fulfillment+' '+i);
+            assert.equal(x.total,x.merchandise+x.deliveryFee+x.tip+x.serviceFee);
+            assert.ok(x.gatewayProcessingEstimate>=0n);
+            assert.ok(x.total>=0n&&x.restaurantPayable>=0n);
+            if(fulfillment==='pickup')assert.equal(x.driverPayable,0n);
+            if(method==='cash')assert.equal(x.gatewayProcessingEstimate,0n);
+            if(policy==='v162')assert.ok(x.serviceFee<=2500n);
+          }
+        }
+      }
+    }
+  }
+});
