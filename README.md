@@ -1,6 +1,16 @@
-# TALA EATS · Backend privado
+# TALA EATS · Repositorio Backend
 
-Este repositorio está destinado a conservar el código de backend FastAPI de **TALA EATS**, aislado del repositorio de las tres aplicaciones Flutter.
+> **Actualización operativa 21/22-oct-2026:** la **API pública principal de Tala Eats** ahora apunta a **Node.js RC6**, no al backend FastAPI de esta rama `main`. URL externa verificada por el operador en Kali: **`https://talaeats.alan-palacios-dev.com/api/v1`** → Cloudflare Tunnel → **`127.0.0.1:18190`**. El código desplegado en PM2 es **`30ab51b587b21127c3f3419e0ec4c3a8539dfb0a`**. Los seis contenedores del proyecto Docker Python `talaeats-v3` fueron retirados; **se conservaron respaldos, volúmenes, imágenes y releases**.
+>
+> **DOCUMENTACIÓN OPERATIVA ACTUAL (rama Node):** [Node RC6 público, evidencias de Kali, inventario y retiros del legado](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/blob/feat/node-kali-direct-pm2-release-20261020/node-backend/docs/KALI-NODE-RC6-PUBLIC-API-AND-LEGACY-RETIREMENT-20261022.md). Código Node: [`node-backend/` en la rama de release](https://github.com/AlanPalacios23/AlanPalacios23-tala-eats-backend/tree/feat/node-kali-direct-pm2-release-20261020/node-backend).
+>
+> **IMPORTANTE:** Node está publicado pero continúa en **staging** (`productionReady=false`, `financialWrites=false`, `onlinePaymentsEnabled=false`). No hay paridad comercial integral ni migración de datos Python→Node acreditadas. No habilitar Stripe LIVE ni dar por funcionales todas las apps por el solo hecho de recibir HTTP 200.
+
+## Código FastAPI de esta rama `main` — archivo histórico
+
+El código Python FastAPI de `main` se conserva **como referencia/legado**, no como evidencia del backend que responde hoy en el hostname público. Las notas siguientes describen el estado antiguo **antes del retiro de Docker**; no deben usarse para revivir Python ni borrar respaldos.
+
+Este repositorio conserva el código histórico FastAPI de **TALA EATS**, aislado del repositorio de las tres aplicaciones Flutter.
 
 ## Estado de las fuentes
 
