@@ -25,6 +25,7 @@ test('RC8 finance worker never declares readiness even when inbox is empty',asyn
 test('RC8 finance worker reports PG refund/dispute HOLD and unreachable provider',async()=>{
  const pool={query:async(sql)=>{
   if(sql.includes('FROM stripe_webhook_events')&&sql.includes('ORDER BY')){
+   if(sql.includes('refund.created'))return {rows:[]};
    assert.doesNotMatch(sql,/charge\.dispute\.created/);
    assert.doesNotMatch(sql,/refund\.updated/);
    return {rows:[{id:'evt_QUEUED_PAY'}]};
