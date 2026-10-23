@@ -55,6 +55,39 @@ export async function reconcileSignedLiveStripeWebhook(
  pool:Pool,settings:ValidatedLiveSettings):
  Promise<{received:true;alreadyProcessed:boolean}>{
   const signed=verifyLiveStripeEvent(provider,settings,rawBody,signature);
+  return reconcileLiveVerifiedEvent(signed,provider,pool,settings);
+}
+
+/**
+ * Worker-side reconciliation of a previously verified and durable webhook.
+ * NEVER process arbitrary Stripe event IDs that are absent from our inbox.
+ */
+export async function reconcileRecordedLiveStripeEvent(
+ eventId:string,provider:LiveStripeApi,pool:Pool,settings:ValidatedLiveSettings):
+ Promise<{received:true;alreadyProcessed:boolean}>{
+  if(!/^evt_[A-Za-z0-9]+$/.test(eventId))
+    throw new LiveGateError('INVALID_RECORDED_EVENT_ID');
+  const recorded=await pool.query<{
+    type:string;object_id:string;stripe_account_id:string|null;
+  }>(`SELECT type,object_id,stripe_account_id
+      FROM stripe_webhook_events WHERE id=$1`,[eventId]);
+  const existing=recorded.rows[0];
+  if(!existing||existing.stripe_account_id!==null||
+     !allowed.has(existing.type)||!/^pi_[A-Za-z0-9]+$/.test(existing.object_id))
+    throw new LiveGateError('SIGNED_RECEIPT_NOT_RECORDED');
+  // Stripe's authenticated API is the second trust boundary.
+  const signed=await provider.events.retrieve(eventId);
+  const object=signed.data.object as {id?:string};
+  if(!signed.livemode||signed.account||signed.id!==eventId||
+     signed.type!==existing.type||object.id!==existing.object_id)
+    throw new LiveGateError('DURABLE_AND_STRIPE_EVENT_MISMATCH');
+  return reconcileLiveVerifiedEvent(signed,provider,pool,settings);
+}
+
+async function reconcileLiveVerifiedEvent(
+ signed:Stripe.Event,provider:LiveStripeApi,
+ pool:Pool,_settings:ValidatedLiveSettings):
+ Promise<{received:true;alreadyProcessed:boolean}>{
   if(!/^evt_[A-Za-z0-9]+$/.test(signed.id))
     throw new LiveGateError('INVALID_SIGNED_EVENT_ID');
   if(!allowed.has(signed.type))return {received:true,alreadyProcessed:false};
