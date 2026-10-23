@@ -63,6 +63,31 @@ migrated production PostgreSQL environment. Existing stage DB/Redis cannot be
 used for it. No finance endpoint is mounted in RC7. No new host service or
 `.env` on Kali is created by this PR.
 
+## Isolated locked runtime preview (not a checkout)
+
+This RC8 branch includes `src/live/server.ts`, a loopback-only,
+readiness-negative HTTP probe (port `18290`) for independent process
+verification on Kali. It has **no** buyer checkout, money-write,
+transfer or refund routes. Its `/api/v1/ready` intentionally returns HTTP
+503 and `productionReady:false`. No Cloudflared or PM2 change is made.
+
+To start this temporary QA probe after installing the pinned RC8 source,
+run as `tala-node-stage` from `node-backend`:
+
+```bash
+NODE_ENV=production RC8_LIVE_CHARGES_ENABLED=false \
+ RC8_LIVE_TRANSFERS_ENABLED=false RC8_LIVE_REFUNDS_ENABLED=false \
+ node dist/live/server.js
+```
+
+Probe via another local terminal only:
+`curl -sS http://127.0.0.1:18290/api/v1/health`
+and
+`curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18290/api/v1/ready`
+(the latter must be HTTP 503). Use Ctrl+C to shut down this test process.
+It must not be placed behind the public Cloudflared tunnel or substituted
+for RC7; it does not exercise a production DB or Stripe LIVE.
+
 ## Next Kali release: code-only installation (no PM2 cutover)
 
 RC8 includes **two** safe operator scripts under `node-backend/scripts/`:
