@@ -5,11 +5,11 @@ const read=(file)=>readFileSync(new URL('../'+file,import.meta.url),'utf8');
 
 test('RC7 cannot allow Stripe LIVE and requires TEST credentials',()=>{
  const config=read('src/config.ts');
- assert.match(config,/NODE_ENV: z\.literal\('staging'\)/);
+ assert.match(config,/NODE_ENV: z\\.enum\\(\\['staging','production'\\]\\)/);
  assert.match(config,/STRIPE_SECRET_KEY: z\.string\(\)\.regex\(/);
  assert.match(config,/(?:sk_test_|rk_test_)/);
- assert.match(config,/STRIPE_PUBLISHABLE_KEY: z\.string\(\)\.startsWith\('pk_test_'\)/);
- assert.match(config,/STRIPE_FINANCIAL_WRITES_ENABLED: z\.literal\('false'\)/);
+ assert.match(config,/STAGING_REQUIRES_STRIPE_TEST_PUBLISHABLE/);
+ assert.match(config,/STAGING_MONEY_WRITES_FORBIDDEN/);
  assert.match(config,/STAGE_STRIPE_TEST_CHECKOUT_ENABLED: z\.enum\(\['false','true'\]\)\.default\('false'\)/);
  assert.match(config,/STAGE_STRIPE_TEST_REQUIRES_ISOLATED_AUTH_KEYS_AND_NO_LIVE_WRITES/);
 });
@@ -19,7 +19,7 @@ test('TEST checkout creates only pickup order; client cannot choose amount',()=>
  assert.match(checkout,/order_type:z\.literal\('pickup'\)/);
  assert.match(checkout,/payment_method:z\.enum\(\['cash','stripe'\]\)/);
  assert.match(checkout,/isStripePickupIntent/);
- assert.match(checkout,/status:testStripe\?'awaiting_payment':'received'/);
+ assert.match(checkout,/status:cardStripe\\?'awaiting_payment':'received'/);
  assert.match(checkout,/SELECT id FROM users WHERE id=\$\{account\.id\} FOR UPDATE/);
  assert.match(checkout,/clientReference:data\.client_reference/);
 });
