@@ -19,6 +19,10 @@ import { marketplaceRouter, ownerRouter, stageOrdersRouter,
 
 export const app = express();
 const live=config.NODE_ENV==='production'?buildLiveRuntimeDependencies():null;
+export async function closeProductionResources():Promise<void>{
+  if(!live)return;
+  await Promise.allSettled([live.pool.end(),live.redis.quit()]);
+}
 app.disable('x-powered-by');
 app.use(helmet());
 if(live){
