@@ -6,7 +6,7 @@ import {buildIsolatedCheckoutRouter} from '../dist/live/checkout-router.js';
 import {signAccessToken,sha256Hex} from '../dist/auth/crypto.js';
 
 const secret='z'.repeat(64);
-async function appServer(enabled,sessionValid=true,rate=1){
+async function appServer(enabled,sessionValid=true,rate=1,financeHold=false){
  const claimsToken=signAccessToken(51,'customer',secret);
  const queries=[];let providerCalls=0;
  const pool={
@@ -16,6 +16,12 @@ async function appServer(enabled,sessionValid=true,rate=1){
       assert.equal(params[0],sha256Hex(claimsToken));
       return {rows:sessionValid?[{id:51,role:'customer',active:true,is_active:true}]:[]};
     }
+    if(sql.includes('AS pending_payment_receipts')) return {rows:[{
+      pending_payment_receipts:'0',
+      pending_refund_or_dispute_events:financeHold?'1':'0',
+      suspect_captured_orders:'0',
+      stuck_provider_reservations:'0',
+    }]};
     throw Error('Unexpected SQL');
    },
    connect:async()=>{
@@ -73,5 +79,18 @@ test('checkout router rate limit fails closed before Stripe API',async()=>{
   });
   assert.equal(r.status,429);
   assert.equal(x.providerCalls(),0);
+ }finally{await close(x);}
+});
+
+test('checkout refuses a LIVE charge when DB financial audit is on HOLD',async()=>{
+ const x=await appServer(true,true,1,true);
+ try{
+  const r=await fetch(x.origin+'/api/v1/orders/77/stripe/payment-intent',{
+   method:'POST',headers:{Authorization:'Bearer '+x.claimsToken}
+  });
+  assert.equal(r.status,503);
+  assert.deepEqual(await r.json(),{error:'LIVE_FINANCIAL_RECONCILIATION_HOLD'});
+  assert.equal(x.providerCalls(),0);
+  assert.ok(x.queries.some(q=>q.sql.includes('AS pending_payment_receipts')));
  }finally{await close(x);}
 });
