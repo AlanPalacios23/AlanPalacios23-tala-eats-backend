@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import {holdRecordedLiveDispute} from '../dist/live/dispute-reconciliation.js';
 import {LiveGateError} from '../dist/live/guard.js';
 
-function fixture({chargeLive=true,wrongEvent=false,wrongOrder=false,refundOnly=false}={}){
+function fixture({chargeLive=true,wrongEvent=false,wrongOrder=false,refundOnly=false,eventType='charge.dispute.created'}={}){
  const eventId='evt_DISPUTE11',disputeId='dp_DISPUTE11';
- const event={id:wrongEvent?'evt_OTHER':eventId,type:'charge.dispute.created',
+ const event={id:wrongEvent?'evt_OTHER':eventId,type:eventType,
   livemode:true,account:undefined,
   data:{object:{object:'dispute',id:disputeId}}};
  const dispute={id:disputeId,charge:'ch_DISPUTE11',amount:800,
@@ -84,4 +84,13 @@ test('invalid event, test charge and unmatched order never register review',asyn
   assert.equal(f.counts().outbox,0);
   assert.equal(f.counts().receipts,0);
  }
+});
+
+
+test('Stripe signed dispute closure remains on explicit manual payout HOLD',async()=>{
+ const f=fixture({eventType:'charge.dispute.closed'});
+ const r=await holdRecordedLiveDispute('evt_DISPUTE11',f.provider,f.pool);
+ assert.equal(r.manualReviewRequired,true);
+ assert.equal(f.counts().outbox,1);
+ assert.equal(f.counts().commits,1);
 });
