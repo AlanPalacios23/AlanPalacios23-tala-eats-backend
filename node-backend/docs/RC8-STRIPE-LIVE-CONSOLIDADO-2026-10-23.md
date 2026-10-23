@@ -95,3 +95,14 @@ QA de las mejoras anteriores: SHA 62667042fd23e390bf1ea879cc1d1f62e665513c. 3/3 
 El runtime público src/config.ts, src/app.ts, src/server.ts y src/worker.ts continúa en STAGING y no monta las rutas ni el worker LIVE. Falta un runtime integrado de producción, creación de pedidos reales, compensación completa de disputas, conciliación de merchant payable/stock con reembolsos, DB y Redis de producción, onboarding Connect, cobertura completa de webhooks y transacción LIVE firmada realmente verificada. El módulo isolated-app continúa fallando cerrado.
 
 **RC8.1_FINANCE_CODE_QA=PASS. LIVE_FUNCTIONAL_DEPLOY=NO_GO.** No se alteró Kali ni Stripe remoto. Mantener PR draft hasta solucionar y verificar el lanzamiento.
+## 8. RC8.2 — disputas y fallos de tarjeta (sin autorización LIVE)
+
+- src/live/dispute-reconciliation.ts: verifica firma e identidad del evento charge.dispute.created/closed, recupera disputa, cargo y PaymentIntent en la API LIVE de Stripe, valida pedido/captura en PostgreSQL y escribe una retención manual duradera en event_outbox. Nunca crea cargo, transferencia, refund ni cambia inventario o saldos.
+- src/live/payment-failure-reconciliation.ts: concilia payment_intent.payment_failed firmado, verifica el pedido y marca su evento registrado como PROCESSED sin alterar el pedido, inventario ni ledger; permite un segundo intento de tarjeta sin simular cobros.
+- src/live/webhook-inbox.ts y src/live/worker-runner.ts: barridos de ambos tipos integrados, con errores conservados para revisión.
+- src/live/financial-readiness.ts: persiste el HOLD financiero si existen eventos de disputa aunque estén PROCESSED, y si hay outbox de revisión de refund, refund_failed o dispute, aunque su notificación esté publicada.
+- Tests: rc8-live-dispute-reconciliation.test.mjs, rc8-live-payment-failure.test.mjs, rc8-live-refund-readiness.test.mjs y rc8-worker-runner.test.mjs.
+
+Estado real: los módulos LIVE están integrados entre sí, pero la API pública sigue en staging y las rutas y el worker productivos no se han instalado ni activado. No existe una release desplegable con Stripe LIVE y equivalencia completa de mercado: los módulos app.ts y config.ts siguen fijados al entorno staging, y marketplace/checkout.ts sólo soporta cash/pickup o Stripe TEST/pickup. Se requieren producción e integración de todas las rutas reales, migraciones/backup de datos, Connect y compensaciones integrales de merchant payable, stock, dispute y payout.
+
+NO_GO_LIVE=true. No se permite crear órdenes con dinero real hasta cumplir controles integrales y efectuar validación real autorizada. Los cambios de código se validan en CI por SHA exacto, pero ningún test sintético representa una transacción LIVE.
