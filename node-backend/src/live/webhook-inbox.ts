@@ -11,6 +11,7 @@ import type {Pool} from 'pg';
 import {LiveGateError,type ValidatedLiveSettings} from './guard.js';
 import {verifyLiveStripeEvent,type LiveStripeApi} from './stripe-payments.js';
 import {reconcileRecordedLiveStripeEvent} from './reconcile.js';
+import {reconcileRecordedLiveRefund} from './refund-reconciliation.js';
 
 const paymentTypes=new Set([
   'payment_intent.succeeded',
@@ -94,4 +95,31 @@ export async function drainLiveSignedReceipts(
     }
   }
   return {checked:rows.rows.length,reconciled,held};
+}
+
+
+/** Worker-side Stripe LIVE refund reconciliation.
+ * Each succeeded refund debits collected funds once, then keeps merchant
+ * payout and inventory on HOLD for an explicit operations review.
+ */
+export async function drainLiveRefundReceipts(
+ provider:LiveStripeApi,pool:Pool,maximum=10
+):Promise<{checked:number;reconciled:number;held:number}>{
+ if(!Number.isSafeInteger(maximum)||maximum<1||maximum>50)
+   throw new LiveGateError('LIVE_REFUND_DRAIN_BATCH_INVALID');
+ const sql="SELECT id FROM stripe_webhook_events WHERE status IN ('RECEIVED','FAILED') "+
+   "AND \"stripeAccountId\" IS NULL AND type IN ('refund.created','refund.updated') "+
+   "ORDER BY \"receivedAt\",id LIMIT $1";
+ const rows=await pool.query<{id:string}>(sql,[maximum]);
+ let reconciled=0,held=0;
+ for(const row of rows.rows){
+   try{
+     await reconcileRecordedLiveRefund(row.id,provider,pool);
+     reconciled++;
+   }catch{
+     // Retry later: never drop a signed refund event or expose payment data.
+     held++;
+   }
+ }
+ return {checked:rows.rows.length,reconciled,held};
 }
