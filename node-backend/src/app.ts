@@ -1,6 +1,10 @@
 import express from 'express';
 import helmet from 'helmet';
 import { Redis } from 'ioredis';
+import {buildLiveRuntimeDependencies} from './live/runtime-dependencies.js';
+import {buildIsolatedWebhookRouter} from './live/webhook-router.js';
+import {buildIsolatedCheckoutRouter} from './live/checkout-router.js';
+import {inspectLiveFinancialData} from './live/financial-readiness.js';
 import { db } from './db.js';
 import { config } from './config.js';
 import { stripeWebhook } from './webhook.js';
@@ -14,12 +18,27 @@ import { marketplaceRouter, ownerRouter, stageOrdersRouter,
   stageDriverRouter, marketplaceErrors } from './marketplace/routes.js';
 
 export const app = express();
+const live=config.NODE_ENV==='production'?buildLiveRuntimeDependencies():null;
 app.disable('x-powered-by');
 app.use(helmet());
-app.post('/api/v1/webhooks/stripe',
-  express.raw({ type: 'application/json', limit: '1mb' }),
-  stripeWebhook);
+if(live){
+  // Mount signed LIVE webhooks BEFORE JSON body parsing, at the CURRENT
+  // Stripe Dashboard destination. Never accept TEST receipts in production.
+  app.use('/api/v1/payments/stripe',buildIsolatedWebhookRouter(
+    live.stripe,live.pool,live.settings,'/webhook'));
+  app.use('/api/v1/webhooks',buildIsolatedWebhookRouter(
+    live.stripe,live.pool,live.settings));
+}else{
+  app.post('/api/v1/webhooks/stripe',
+    express.raw({type:'application/json',limit:'1mb'}),stripeWebhook);
+}
 app.use(express.json({ limit: '128kb' }));
+// Existing order routes remain public. LIVE card PaymentIntents are created
+// only for authenticated/customer-owned persisted Stripe pickup orders.
+if(live)app.use('/api/v1',buildIsolatedCheckoutRouter({
+  enabled:true,authSecret:config.AUTH_JWT_SECRET!,pool:live.pool,
+  redis:live.redis,stripe:live.stripe,settings:live.settings,
+}));
 // Opt-in only after dedicated stage auth migration and tested secret provisioning.
 if (config.AUTH_V02_ENABLED === 'true') app.use('/api/v1/auth', authRouter);
 if (config.MARKETPLACE_B_ENABLED === 'true') {
@@ -43,7 +62,11 @@ if (config.MARKETPLACE_B_ENABLED === 'true') {
   app.use(marketplaceErrors);
 }
 app.get('/api/v1/health', (_req, res) => {
-  res.json({ status: 'ok', version: '0.1.0-node-stripe-only-stage', production: false, digital_payment_provider: 'stripe', online_payment_writes: false });
+  res.setHeader('Cache-Control','no-store');
+  res.json({status:'ok',
+    version:live?'rc8.3-live-pickup-pm2':'0.1.0-node-stripe-only-stage',
+    production:Boolean(live),digital_payment_provider:'stripe',
+    online_payment_writes:Boolean(live)});
 });
 app.get('/api/v1/ready', async (_req, res) => {
   const redis = new Redis(config.REDIS_URL, {
@@ -57,13 +80,25 @@ app.get('/api/v1/ready', async (_req, res) => {
     // Operational dependency reporting is advisory in staging because CI
     // deliberately tests the API without starting the worker. Never equate
     // HTTP /ready with authorization to take customer payments.
-    const heartbeat = await redis.get('tala:node:stage:worker:heartbeat');
+    const heartbeat=await redis.get(live
+      ?'tala:node:live:worker:heartbeat'
+      :'tala:node:stage:worker:heartbeat');
+    let financialPass=false;
+    if(live){
+      const audit=await inspectLiveFinancialData(live.pool);
+      financialPass=audit.classification==='LIVE_FINANCIAL_DATA_PASS';
+    }
+    const workerOnline=Boolean(heartbeat);
+    const ready=!live||(workerOnline&&financialPass);
     res.setHeader('Cache-Control','no-store');
-    res.json({ ready: true, database: true, redis: true,
-      workerOnline: Boolean(heartbeat),
-      productionReady: false, environment: 'staging',
-      financialWrites: false, digitalPaymentProvider: 'stripe',
-      onlinePaymentsEnabled: false });
+    res.status(ready?200:503).json({
+      ready,database:true,redis:true,workerOnline,
+      productionReady:Boolean(live&&ready),
+      environment:live?'production':'staging',
+      financialWrites:Boolean(live&&ready),
+      digitalPaymentProvider:'stripe',
+      onlinePaymentsEnabled:Boolean(live&&ready),
+    });
   } catch {
     res.status(503).json({ ready: false });
   } finally {
