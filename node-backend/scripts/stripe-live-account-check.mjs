@@ -38,11 +38,16 @@ if(Object.values(checks).some(x=>!x)){
     console.log('PLATFORM_ACCOUNT_MATCH='+(match?'PASS':'BLOCKED'));
     console.log('PLATFORM_CARD_PAYMENTS='+(cards?'ACTIVE':'BLOCKED'));
     console.log('PLATFORM_CHARGES_ENABLED='+(enabled?'YES':'NO'));
+    let connectReady=false;
     try{
       const recipient=await get('/v1/accounts/'+connected);
       console.log('CONNECT_ACCOUNT_MATCH='+(recipient.id===connected?'PASS':'BLOCKED'));
       console.log('CONNECT_TRANSFERS='+(recipient.capabilities?.transfers==='active'?'ACTIVE':'NOT_ACTIVE'));
       console.log('CONNECT_PAYOUTS='+(recipient.payouts_enabled?'ENABLED':'NOT_ENABLED'));
+      connectReady=recipient.id===connected &&
+        recipient.capabilities?.transfers==='active' &&
+        recipient.payouts_enabled===true && recipient.details_submitted===true;
+      console.log('CONNECT_MARKETPLACE_READY='+(connectReady?'PASS':'BLOCKED'));
     }catch{
       console.log('CONNECT_STATUS=UNVERIFIED_READ_PERMISSION_OR_STRIPE_ERROR');
     }
@@ -58,7 +63,8 @@ if(Object.values(checks).some(x=>!x)){
       const events=new Set(candidate?.enabled_events??[]);
       const required=[
         'payment_intent.succeeded','payment_intent.payment_failed',
-        'payment_intent.canceled','refund.created','refund.updated',
+        'payment_intent.canceled','charge.refunded',
+        'refund.created','refund.updated',
         'refund.failed','charge.dispute.created','charge.dispute.closed',
       ];
       const covered=events.has('*')||required.every(x=>events.has(x));
@@ -68,7 +74,7 @@ if(Object.values(checks).some(x=>!x)){
     }catch{
       console.log('LIVE_WEBHOOK_VERIFICATION=BLOCKED_READ_ACCESS_OR_STRIPE_ERROR');
     }
-    const ready=match&&cards&&enabled&&webhookReady;
+    const ready=match&&cards&&enabled&&webhookReady&&connectReady;
     console.log('LIVE_API_READ_ONLY_CHECK='+(ready?'PASS':'BLOCKED'));
     console.log('LIVE_WEBHOOK_SIGNATURE_DELIVERY=UNVERIFIED_UNTIL_SIGNED_EVENT');
     if(!ready)process.exitCode=1;
