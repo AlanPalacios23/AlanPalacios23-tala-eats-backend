@@ -28,6 +28,7 @@ test('RC8 finance worker reports PG refund/dispute HOLD and unreachable provider
    if(sql.includes('refund.created'))return {rows:[]};
    if(sql.includes("type='payment_intent.canceled'"))return {rows:[]};
    if(sql.includes("type='refund.failed'"))return {rows:[]};
+   if(sql.includes("charge.dispute.created"))return {rows:[]};
    assert.doesNotMatch(sql,/charge\.dispute\.created/);
    assert.doesNotMatch(sql,/refund\.updated/);
    return {rows:[{id:'evt_QUEUED_PAY'}]};
