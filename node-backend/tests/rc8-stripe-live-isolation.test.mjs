@@ -23,7 +23,7 @@ test('LIVE cannot inherit stage Postgres Redis or test credentials',()=>{
   ['readinessApproved','false'],
   ['key','rk_test_'+'A'.repeat(24)],
   ['publishableKey','pk_test_'+'A'.repeat(24)],
-  ['transfersEnabled','true'],['maxOrderMinor','50001'],
+  ['transfersEnabled','true'],['refundsEnabled','true'],['maxOrderMinor','50001'],
   ['databaseUrl','postgresql://tala_node_stage:secret@127.0.0.1:15435/tala_node_stage'],
   ['redisUrl','redis://:secret@127.0.0.1:16379/0'],
  ]){
