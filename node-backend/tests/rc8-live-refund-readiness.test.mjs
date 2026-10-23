@@ -61,7 +61,9 @@ test('LIVE financial readiness retains dispute and merchant-refund HOLD after we
  assert.equal(report.counters.pendingRefundOrDisputeEvents,2);
  // An already PROCESSED signed dispute still has financial consequences:
  // the capture can be withdrawn after a merchant payout.
- assert.match(sql,/OR type IN \('charge\.dispute\.created','charge\.dispute\.closed'/);
+ assert.match(sql,/OR e\.type IN \('charge\.dispute\.created','charge\.dispute\.closed'/);
+ assert.match(sql,/FROM tala_live_financial_cases/);
+ assert.match(sql,/reviewed_by_user_id/);
  // Outbox published means notification delivery, NOT merchant payout resolved.
  for(const name of ['order.refund_review_required',
   'order.refund_failure_review_required','order.dispute_review_required']){
