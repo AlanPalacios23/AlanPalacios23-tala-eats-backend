@@ -1,0 +1,51 @@
+name: TALA EATS | RC8 LIVE PostgreSQL webhook schema QA
+on:
+  pull_request:
+    branches:
+      - release/rc7-kali-test-candidate-final-20261023
+    paths:
+      - 'node-backend/src/live/**'
+      - 'node-backend/scripts/ci-rc8-live-pg-webhook.mjs'
+      - 'node-backend/prisma/**'
+      - '.github/workflows/tala-node-rc8-live-pg15-schema.yml'
+permissions:
+  contents: read
+jobs:
+  live-webhook-synthetic:
+    name: PostgreSQL 15 schema compatibility (NO LIVE NETWORK)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: rc8_ci
+          POSTGRES_PASSWORD: rc8-only-ci
+          POSTGRES_DB: rc8_ci
+        ports: ['15445:5432']
+        options: >-
+          --health-cmd "pg_isready -U rc8_ci -d rc8_ci"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      DATABASE_URL: postgresql://rc8_ci:rc8-only-ci@127.0.0.1:15445/rc8_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Frozen install and Prisma
+        run: |
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:validate
+      - name: Disposable PostgreSQL schema migration
+        run: npm run db:migrate:deploy
+      - name: Compile LIVE module and synthetic signed webhook to real PG
+        run: |
+          npm run build
+          node scripts/ci-rc8-live-pg-webhook.mjs
