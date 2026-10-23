@@ -118,6 +118,14 @@ export async function main(argv=process.argv.slice(2), deps={}){
        process.env.STRIPE_LIVE_ENABLED==='true' &&
        process.env.STRIPE_FINANCIAL_WRITES_ENABLED==='true',
        'LIVE_RELEASE_FLAGS');
+     // Check the connected Stripe LIVE platform, Connect onboarding and event
+     // subscription list via GETs only. Never print provider responses/keys.
+     const stripeAudit=execFileSync(process.execPath,[
+       join(expected,'scripts','stripe-live-account-check.mjs')
+     ],{encoding:'utf8',timeout:45000,maxBuffer:65536,
+       env:process.env});
+     guard(stripeAudit.includes('LIVE_API_READ_ONLY_CHECK=PASS'),
+       'LIVE_STRIPE_CONNECT_AND_WEBHOOK_COVERAGE');
    }
    const [localHealth,localReady,publicHealth,publicReady]=await Promise.all([
      fetchContract(LOCAL_BASE,'/health'),
