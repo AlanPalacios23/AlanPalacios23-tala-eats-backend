@@ -35,6 +35,7 @@ function fixture({refundStatus='failed',remoteEvent=eventId,hadDebit=true,refund
   if(sql.includes('UPDATE orders SET refunded_amount=')){
    total=params[0];status=params[1];return {rowCount:1};
   }
+  if(sql.includes('INSERT INTO tala_live_financial_cases'))return {rowCount:1};
   if(sql.includes('INSERT INTO event_outbox')){outbox++;return {rowCount:1};}
   if(sql.includes('INSERT INTO order_events')){orderEvents++;return {rowCount:1};}
   if(sql.includes('UPDATE stripe_webhook_events')){
