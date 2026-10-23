@@ -15,6 +15,7 @@ const schema = z.object({
   STRIPE_LIVE_RELEASE_APPROVED: z.enum(['false','true']).default('false'),
   STRIPE_REFUNDS_ENABLED: z.enum(['false','true']).default('false'),
   STRIPE_CONNECT_TRANSFERS_ENABLED: z.enum(['false','true']).default('false'),
+  STRIPE_MANUAL_SETTLEMENT_APPROVED: z.enum(['false','true']).default('false'),
   STRIPE_LIVE_MAX_ORDER_MINOR: z.coerce.number().int().min(100).max(50000).default(50000),
   AUTH_V02_ENABLED: z.enum(['false', 'true']).default('false'),
   MARKETPLACE_B_ENABLED: z.enum(['false','true']).default('false'),
@@ -67,7 +68,8 @@ if(config.NODE_ENV==='staging'){
      config.STRIPE_LIVE_ENABLED!=='false'||
      config.STRIPE_LIVE_RELEASE_APPROVED!=='false'||
      config.STRIPE_REFUNDS_ENABLED!=='false'||
-     config.STRIPE_CONNECT_TRANSFERS_ENABLED!=='false')
+     config.STRIPE_CONNECT_TRANSFERS_ENABLED!=='false'||
+     config.STRIPE_MANUAL_SETTLEMENT_APPROVED!=='false')
     throw new Error('STAGING_MONEY_WRITES_FORBIDDEN');
   if(config.STRIPE_SECRET_KEY&&!/^(sk|rk)_test_/.test(config.STRIPE_SECRET_KEY))
     throw new Error('STAGING_REQUIRES_STRIPE_TEST_KEY');
@@ -101,7 +103,8 @@ if(config.NODE_ENV==='staging'){
   if(config.STRIPE_LIVE_ENABLED!=='true'||
      config.STRIPE_LIVE_RELEASE_APPROVED!=='true'||
      config.STRIPE_FINANCIAL_WRITES_ENABLED!=='true'||
-     config.STRIPE_REFUNDS_ENABLED!=='true')
+     config.STRIPE_REFUNDS_ENABLED!=='true'||
+     config.STRIPE_MANUAL_SETTLEMENT_APPROVED!=='true')
     throw new Error('LIVE_FINANCIAL_RELEASE_NOT_APPROVED');
 }
 if (config.STRIPE_SECRET_KEY?.includes('CHANGE') ||
