@@ -80,6 +80,11 @@ export async function createTestPaymentIntent(orderId:number,buyerId:number) {
         metadata,description:'Tala Eats pedido TEST #'+order.id,
       },{idempotencyKey:requestKey})
     : await provider.paymentIntents.retrieve(pointer);
+  // A PaymentSheet secret must never be returned for an already-captured,
+  // processing or provider-canceled payment. A signed webhook, not the app,
+  // is authoritative for accepting a charge and releasing the order.
+  if(!['requires_payment_method','requires_confirmation','requires_action'].includes(intent.status))
+    throw new TestPaymentError(409,'Stripe TEST no permite reabrir este intento; espera confirmación del servidor');
   if(intent.livemode||intent.amount!==amount||intent.currency!=='mxn'||
      intent.metadata.order_id!==String(order.id)||
      intent.metadata.buyer_id!==String(buyerId)||
