@@ -6,8 +6,10 @@ const schema = z.object({
   PORT: z.coerce.number().int().min(1024).max(65535),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
-  STRIPE_SECRET_KEY: z.string().startsWith('sk_test_').optional(),
+  STRIPE_SECRET_KEY: z.string().regex(/^(?:sk_test_|rk_test_)[A-Za-z0-9]+$/).optional(),
   STRIPE_WEBHOOK_SECRET: z.string().startsWith('whsec_').optional(),
+  STRIPE_PUBLISHABLE_KEY: z.string().startsWith('pk_test_').optional(),
+  STAGE_STRIPE_TEST_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
   STRIPE_FINANCIAL_WRITES_ENABLED: z.literal('false'),
   AUTH_V02_ENABLED: z.enum(['false', 'true']).default('false'),
   MARKETPLACE_B_ENABLED: z.enum(['false','true']).default('false'),
@@ -74,6 +76,13 @@ if (config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED === 'true' &&
     (config.MARKETPLACE_B_ENABLED !== 'true' ||
       config.AUTH_V02_ENABLED !== 'true')) {
   throw new Error('STAGE_PICKUP_CHECKOUT_REQUIRES_MARKETPLACE_AND_AUTH');
+}
+
+if(config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true' &&
+   (config.AUTH_V02_ENABLED!=='true' || config.MARKETPLACE_B_ENABLED!=='true' ||
+    !config.STRIPE_SECRET_KEY || !config.STRIPE_WEBHOOK_SECRET || !config.STRIPE_PUBLISHABLE_KEY ||
+    config.STRIPE_FINANCIAL_WRITES_ENABLED!=='false')){
+  throw new Error('STAGE_STRIPE_TEST_REQUIRES_ISOLATED_AUTH_KEYS_AND_NO_LIVE_WRITES');
 }
 
 if(config.STAGE_DRIVER_DELIVERY_ENABLED==='true' &&

@@ -60,10 +60,11 @@ export type PickupProof = {
   lat?:number|null;
   lng?:number|null;
 };
-export async function completeCashPickupStage(
+export async function completeStagePickup(
   orderId:number, actor:AuthUser, payload:PickupProof,
 ):Promise<number>{
-  if(config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true')
+  if(config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true'&&
+     config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true')
     reject(503,'Entrega de staging deshabilitada');
   if(!['restaurant','admin'].includes(actor.role))
     reject(403,'No autorizado');
@@ -78,8 +79,10 @@ export async function completeCashPickupStage(
   if(!candidate)return reject(404,'Pedido no encontrado');
   if(actor.role!=='admin'&&candidate.restaurant.ownerId!==actor.id)
     reject(403,'Ese pedido no pertenece a tu restaurante');
-  if(candidate.orderType!=='pickup'||candidate.paymentMethod!=='cash')
-    reject(503,'Solamente recogida en efectivo de staging');
+  if(candidate.orderType!=='pickup'||
+     !((candidate.paymentMethod==='cash'&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true')||
+       (candidate.paymentMethod==='stripe'&&config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true')))
+    reject(503,'Solo recogida de staging con método habilitado');
   await limitPickupPin(orderId,actor.id);
   return db.$transaction(async tx=>{
     const found=await tx.$queryRaw<{id:number}[]>`
@@ -92,8 +95,10 @@ export async function completeCashPickupStage(
     if(!order)return reject(404,'Pedido no encontrado');
     if(actor.role!=='admin' && order.restaurant.ownerId!==actor.id)
       reject(403,'Ese pedido no pertenece a tu restaurante');
-    if(order.orderType!=='pickup'||order.paymentMethod!=='cash')
-      reject(503,'Solamente recogida en efectivo de staging');
+    const cash=order.paymentMethod==='cash'&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true';
+    const card=order.paymentMethod==='stripe'&&config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true';
+    if(order.orderType!=='pickup'||(!cash&&!card))
+      reject(503,'Solo recogida de staging con método habilitado');
     // Replay is idempotent only if a valid proof exists.
     if(order.status==='delivered'){
       const saved=await tx.stageDeliveryProof.findUnique({where:{orderId:order.id}});
@@ -101,8 +106,18 @@ export async function completeCashPickupStage(
         reject(409,'Pedido ya cerrado; comprobación inválida');
       return order.id;
     }
-    if(order.status!=='ready'||order.paymentStatus!=='pending')
-      reject(409,'El pedido para recoger debe estar listo antes de entregarse');
+    if(order.status!=='ready'||!(cash&&order.paymentStatus==='pending'||
+       card&&order.paymentStatus==='paid'))
+      reject(409,'Pedido o pago no apto para entrega');
+    if(card){
+      const verified=await tx.stageFinancialLedgerEntry.findFirst({
+        where:{orderId:order.id,kind:'stripe_test_payment',
+          account:'stripe_test_collected',
+          idempotencyKey:'order:'+order.id+':stripe-test:collected'},
+      });
+      if(!verified||verified.amount.toFixed(2)!==order.total.toFixed(2))
+        reject(503,'Pago Stripe TEST sin conciliación: no entregar');
+    }
     // Exclude legacy/imported records that did not originate in isolated C1.
     const initial=await tx.stageOrderEvent.findFirst({
       where:{orderId:order.id,status:'received'},orderBy:{id:'asc'},
@@ -135,7 +150,7 @@ export async function completeCashPickupStage(
     await tx.marketOrder.update({
       where:{id:order.id},data:{
         status:'delivered',deliveredAt:now,paymentStatus:'paid',
-        cashCollected:order.total, // synthetic only: does NOT imply real capture
+        cashCollected:cash?order.total:'0.00', // tarjeta NO es efectivo recibido
       },
     });
     await tx.stageDeliveryProof.create({data:{
@@ -167,3 +182,6 @@ export async function completeCashPickupStage(
     return order.id;
   },{maxWait:10_000,timeout:20_000});
 }
+
+// Backwards-compatible symbol used by C3 tests; method checks happen in function.
+export const completeCashPickupStage=completeStagePickup;

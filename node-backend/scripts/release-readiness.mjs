@@ -39,7 +39,7 @@ const stageChecks=[
   detail:'PostgreSQL y Redis privados, separados del Python productivo'},
  {id:'stripe-live-disabled',ok:config.includes("STRIPE_FINANCIAL_WRITES_ENABLED: z.literal('false')")&&
      stripe.includes("startsWith('sk_test_')")===false &&
-     config.includes("STRIPE_SECRET_KEY: z.string().startsWith('sk_test_')"),
+     config.includes("STRIPE_SECRET_KEY: z.string().regex(/^(?:sk_test_|rk_test_)"),
   detail:'Credenciales Stripe únicamente TEST; operaciones financieras apagadas'},
  {id:'explicit-stage-ready',ok:app.includes('productionReady: false')&&
      app.includes("environment: 'staging'")&&app.includes('financialWrites: false'),

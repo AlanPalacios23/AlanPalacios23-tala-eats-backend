@@ -9,6 +9,8 @@ import {Redis} from 'ioredis';
 import {db} from '../db.js';
 import {account,bad,param} from '../operational/routes.js';
 import {config} from '../config.js';
+import {createTestPaymentIntent} from '../stage-stripe-test.js';
+import {previewRecipientOrders} from '../finance/recipient-readiness.js';
 
 export const parityRouter=Router();
 const euro=(v:{toFixed:(n:number)=>string})=>v.toFixed(2);
@@ -82,19 +84,25 @@ parityRouter.get('/orders/payment-methods',async(req,res)=>{
  res.json({digital_provider:'stripe',cash_available_in_staging:cashEnabled,methods:[
   {id:'cash',label:'Efectivo',enabled:cashEnabled,mode:'stage-cash-pickup',
    ...(cashEnabled?{}:{reason:'staging-cash-pickup-disabled'})},
-  {id:'stripe',label:'Tarjeta (Stripe)',enabled:false,reason:'stripe-test-payments-not-yet-implemented'},
+  {id:'stripe',label:'Tarjeta (Stripe TEST)',enabled:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',mode:'stage-stripe-test-pickup',
+   ...(config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'?{}:{reason:'stripe-test-payments-disabled'})},
   {id:'wallet',label:'Wallet',enabled:false,reason:'wallet-not-reconciled'}],
   production_ready:false});
 });
 parityRouter.get('/payments/config',(_req,res)=>{
- res.json({provider:'stripe',digital_providers:['stripe'],enabled:false,
-  publishable_key:null,checkout_ready:false,financial_writes_enabled:false,
-  environment:'staging'});
+ res.setHeader('Cache-Control','no-store');
+ res.json({provider:'stripe',digital_providers:['stripe'],
+  enabled:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',
+  publishable_key:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'?config.STRIPE_PUBLISHABLE_KEY:null,
+  checkout_ready:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',
+  financial_writes_enabled:false,environment:'staging',mode:'test-pickup-only'});
 });
 parityRouter.get('/payments/stripe/config',(_req,res)=>{
- res.json({provider:'stripe',enabled:false,
-  publishable_key:null,checkout_ready:false,
-  financial_writes_enabled:false,environment:'staging'});
+ res.setHeader('Cache-Control','no-store');
+ res.json({provider:'stripe',enabled:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',
+  publishable_key:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'?config.STRIPE_PUBLISHABLE_KEY:null,
+  checkout_ready:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',
+  financial_writes_enabled:false,environment:'staging',mode:'test-pickup-only'});
 });
 parityRouter.get('/operations/admin/commercial-pricing',async(req,res)=>{
  await account(req,['admin']);
@@ -153,16 +161,56 @@ parityRouter.get('/operations/admin/sla',async(req,res)=>{
 });
 parityRouter.get('/withdrawals/:role/:recipientId/balance',async(req,res)=>{
  const {role,identifier}=await payee(req);
- const payouts=await db.opsPayout.findMany({where:{payeeType:role,payeeId:identifier},
-  orderBy:{createdAt:'desc'},take:10000});
- const outstanding=payouts.filter(x=>x.status==='pending').reduce(
-  (n,x)=>n+minor(x.amount),0n);
+ const [payouts,orders]=await Promise.all([
+  db.opsPayout.findMany({where:{payeeType:role,payeeId:identifier},
+   orderBy:{createdAt:'desc'},take:10001}),
+  db.marketOrder.findMany({
+   where:role==='restaurant'
+     ?{restaurantId:identifier,status:'delivered'}
+     :{driverId:identifier,status:'delivered'},
+   orderBy:{id:'desc'},take:5001,
+   select:{id:true,status:true,paymentStatus:true,paymentMethod:true,
+     orderType:true,restaurantPayout:true,driverEarning:true,tip:true,
+     cashCollected:true,refundedAmount:true,total:true},
+  }),
+ ]);
+ const payoutListComplete=payouts.length<=10000;
+ const pendingPayouts=payoutListComplete?payouts.filter(x=>x.status==='pending')
+  .reduce((n,x)=>n+minor(x.amount),0n):null;
+ // A persisted paid flag alone cannot prove Stripe funds.
+ const stageCards=orders.filter(o=>o.paymentMethod==='stripe'&&
+   o.status==='delivered'&&o.paymentStatus==='paid');
+ const receipts=orders.length<=5000&&stageCards.length
+   ?await db.stageFinancialLedgerEntry.findMany({
+     where:{orderId:{in:stageCards.map(o=>o.id)},
+       kind:'stripe_test_payment',account:'stripe_test_collected',
+       direction:'credit'},
+     select:{orderId:true,amount:true,idempotencyKey:true},
+   }):[];
+ const candidates=new Map<number,(typeof stageCards)[number]>(stageCards.map(o=>[o.id,o] as const));
+ const trustedReceipts=new Set(receipts.flatMap(entry=>{
+   const o=entry.orderId===null?undefined:candidates.get(entry.orderId);
+   return o&&entry.idempotencyKey==='order:'+o.id+':stripe-test:collected'&&
+     entry.amount.toFixed(2)===o.total.toFixed(2)?[o.id]:[];
+ }));
+ const snapshot=orders.length<=5000
+   ?previewRecipientOrders(role==='restaurant'?'restaurant':'driver',orders.map(o=>({
+     id:o.id,status:o.status,paymentStatus:o.paymentStatus,
+     paymentMethod:o.paymentMethod,orderType:o.orderType,
+     restaurantPayout:euro(o.restaurantPayout),driverEarning:euro(o.driverEarning),
+     tip:euro(o.tip),cashCollected:euro(o.cashCollected),
+     refundedAmount:euro(o.refundedAmount),total:euro(o.total),
+     stripeReceiptVerified:trustedReceipts.has(o.id),
+   })),true)
+   :null;
  memoPrivate(res);
- res.json({role,recipient_id:identifier,
-  currency:'MXN',pending_payouts:fmt(outstanding),
+ res.json({role,recipient_id:identifier,currency:'MXN',
+  pending_payouts:pendingPayouts===null?null:fmt(pendingPayouts),
+  payout_list_complete:payoutListComplete,
   available_for_withdrawal:'0.00',provider:'not-configured',
   reconciliation_hold:true,eligible:false,
-  reason:'Stripe Connect proof of available balance not verified; cannot transfer'});
+  connect_capability_verified:false,earnings_preview:snapshot,
+  reason:'No existe saldo LIVE verificado ni cuenta Connect v2 habilitada; efectivo y Stripe TEST no son retiros'});
 });
 parityRouter.get('/withdrawals/:role/:recipientId/history',async(req,res)=>{
  const {role,identifier}=await payee(req);
@@ -178,8 +226,14 @@ parityRouter.get('/withdrawals/:role/:recipientId/connect/status',async(req,res)
  const {role,identifier}=await payee(req);
  memoPrivate(res);
  res.json({role,recipient_id:identifier,provider:'stripe-connect',
-  connected:false,charges_enabled:false,payouts_enabled:false,
-  details_submitted:false,configuration:'disabled-node-staging'});
+  account_api:'v2',connected:false,dashboard:'not-configured',
+  configuration:'disabled-node-staging',
+  recipient_transfer_capability_status:'not-requested',
+  recipient_transfer_capability_active:false,
+  requires_account_onboarding:true,withdrawals_enabled:false,
+  // Legacy mobile flags always false; never infer eligibility from them.
+  charges_enabled:false,payouts_enabled:false,details_submitted:false,
+  production_ready:false});
 });
 parityRouter.get('/withdrawals/connect/finish',(_req,res)=>{
  res.status(403).json({detail:'OAuth/Connect return token unverified; finish disabled on Node staging'});
@@ -189,9 +243,45 @@ parityRouter.get('/withdrawals/connect/finish',(_req,res)=>{
 // Payments and settlements: explicit fail-closed boundaries. Unlike returning
 // fake 200s, we never acknowledge provider events without PSP signature,
 // reservation, ledger postings, external verification and durable reconcile.
-parityRouter.post('/payments/stripe/orders/:orderId/payment-intent',async(req)=>{
- await account(req);param(req,'orderId');
- return financialUnavailable('stripe_payment_intent');
+// Owner-authoritative read-only status for mobile PaymentSheet polling.
+// Redirects, client acknowledgements and client_secret are NEVER proof of charge.
+parityRouter.get('/payments/stripe/orders/:orderId/status',async(req,res)=>{
+ const who=await account(req,['customer']);
+ const id=param(req,'orderId');
+ const order=await db.marketOrder.findUnique({
+  where:{id},select:{id:true,userId:true,orderType:true,paymentMethod:true,
+   paymentStatus:true,paymentProvider:true,status:true,total:true,
+   inventoryRestoredAt:true},
+ });
+ if(!order||order.userId!==who.id||
+    order.orderType!=='pickup'||order.paymentMethod!=='stripe'||
+    order.paymentProvider!=='stripe')return bad(404,'Pago no encontrado');
+ const receipt=await db.stageFinancialLedgerEntry.findUnique({
+  where:{idempotencyKey:'order:'+id+':stripe-test:collected'},
+  select:{orderId:true,account:true,direction:true,kind:true,amount:true},
+ });
+ const ledgerVerified=receipt?.orderId===id&&
+  receipt.account==='stripe_test_collected'&&
+  receipt.direction==='credit'&&receipt.kind==='stripe_test_payment'&&
+  receipt.amount.toFixed(2)===order.total.toFixed(2);
+ const confirmed=order.paymentStatus==='paid'&&ledgerVerified;
+ memoPrivate(res);
+ res.json({order_id:id,provider:'stripe',mode:'test',
+  currency:'mxn',amount:order.total.toFixed(2),
+  payment_status:order.paymentStatus,order_status:order.status,
+  confirmed_by_server:confirmed,
+  requires_manual_review:order.paymentStatus==='paid'&&!ledgerVerified,
+  pending_provider_confirmation:order.paymentStatus==='pending'&&
+   order.status==='awaiting_payment',
+  inventory_restored:order.inventoryRestoredAt!==null,
+  test_checkout_enabled:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',
+  production_ready:false});
+});
+parityRouter.post('/payments/stripe/orders/:orderId/payment-intent',async(req,res)=>{
+ const who=await account(req,['customer']);
+ const result=await createTestPaymentIntent(param(req,'orderId'),who.id);
+ memoPrivate(res);
+ res.json(result);
 });
 parityRouter.post('/payments/stripe/webhook',async()=>{
  // A separate signed webhook at /api/v1/webhooks/stripe exists in the base
