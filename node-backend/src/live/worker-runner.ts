@@ -9,7 +9,7 @@
 import type {Pool} from 'pg';
 import type {LiveStripeApi} from './stripe-payments.js';
 import type {ValidatedLiveSettings} from './guard.js';
-import {drainLiveSignedReceipts,drainLiveRefundReceipts,drainLiveCanceledReceipts} from './webhook-inbox.js';
+import {drainLiveSignedReceipts,drainLiveRefundReceipts,drainLiveCanceledReceipts,drainLiveRefundFailures} from './webhook-inbox.js';
 import {inspectLiveFinancialData} from './financial-readiness.js';
 
 export type Rc8WorkerReport={
@@ -31,12 +31,13 @@ export async function rc8WorkerIteration(
   const result=await drainLiveSignedReceipts(provider,pool,settings,batchSize);
   const refunds=await drainLiveRefundReceipts(provider,pool,Math.min(batchSize,20));
   const cancellations=await drainLiveCanceledReceipts(provider,pool,Math.min(batchSize,20));
+  const refundFailures=await drainLiveRefundFailures(provider,pool,Math.min(batchSize,20));
   const audit=await inspectLiveFinancialData(pool);
   const c=audit.counters;
   return {
-    checked:result.checked+refunds.checked+cancellations.checked,
-    reconciled:result.reconciled+refunds.reconciled+cancellations.reconciled,
-    held:result.held+refunds.held+cancellations.held,
+    checked:result.checked+refunds.checked+cancellations.checked+refundFailures.checked,
+    reconciled:result.reconciled+refunds.reconciled+cancellations.reconciled+refundFailures.reconciled,
+    held:result.held+refunds.held+cancellations.held+refundFailures.held,
     pendingPaymentEvents:c.pendingPaymentReceipts,
     pendingRefundOrDisputeEvents:c.pendingRefundOrDisputeEvents,
     orphanedProviderReservations:c.stuckProviderReservations,
