@@ -63,6 +63,9 @@ export async function ingestSignedLiveStripeWebhook(
  * Bounded, re-entrant worker sweep. Signed HTTP ingest happened previously;
  * the worker re-fetches the durable event and PaymentIntent from Stripe and
  * relies on PostgreSQL row locks to serialize duplicate payment callbacks.
+ * Reversal/dispute receipts remain in HOLD outside this payments-only sweep;
+ * their handler must reconcile reversals separately. This prevents a dispute
+ * from starving all ordinary payment receipts in a bounded retry batch.
  * Errors preserve RECEIVED receipts for reconciliation; never lose a charge.
  */
 export async function drainLiveSignedReceipts(
@@ -76,11 +79,7 @@ export async function drainLiveSignedReceipts(
       AND "stripeAccountId" IS NULL
       AND type IN ('payment_intent.succeeded',
                    'payment_intent.payment_failed',
-                   'payment_intent.canceled',
-                   'charge.refunded','charge.dispute.created',
-                   'charge.dispute.closed','refund.created',
-                   'refund.updated','refund.failed',
-                   'charge.refund.updated')
+                   'payment_intent.canceled')
     ORDER BY "receivedAt",id
     LIMIT $1
   `,[maximum]);
