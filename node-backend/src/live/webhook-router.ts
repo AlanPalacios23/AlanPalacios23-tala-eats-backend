@@ -9,9 +9,10 @@ import {LiveGateError,type ValidatedLiveSettings} from './guard.js';
 import {ingestSignedLiveStripeWebhook} from './webhook-inbox.js';
 
 export function buildIsolatedWebhookRouter(
- stripe:Pick<Stripe,'webhooks'>,pool:Pool,settings:ValidatedLiveSettings){
+ stripe:Pick<Stripe,'webhooks'>,pool:Pool,settings:ValidatedLiveSettings,
+ endpointPath:'/stripe'|'/webhook'='/stripe'){
  const router=Router();
- router.post('/stripe',raw({type:'application/json',limit:'256kb'}),
+ router.post(endpointPath,raw({type:'application/json',limit:'256kb'}),
  async(req,res)=>{
   res.setHeader('Cache-Control','no-store');
   const signature=req.get('stripe-signature');
