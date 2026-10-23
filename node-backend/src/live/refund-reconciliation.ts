@@ -49,7 +49,9 @@ export async function reconcileRecordedLiveRefund(
    throw new LiveGateError('REFUND_REMOTE_EVENT_MISMATCH');
  const refund=await provider.refunds.retrieve(saved.objectId);
  const piId=typeof refund.payment_intent==='string'?refund.payment_intent:null;
- if(!refund.livemode||refund.id!==saved.objectId||
+ // Refund has no livemode field in Stripe SDK v23. LIVE is proven by
+ // the signed Stripe event and the independently retrieved PaymentIntent.
+ if(refund.id!==saved.objectId||
     refund.status!=='succeeded'||refund.currency!=='mxn'||
     !Number.isSafeInteger(refund.amount)||refund.amount<1||
     !piId||!/^pi_[A-Za-z0-9]+$/.test(piId))
