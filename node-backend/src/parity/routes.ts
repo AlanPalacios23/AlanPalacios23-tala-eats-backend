@@ -187,7 +187,7 @@ parityRouter.get('/withdrawals/:role/:recipientId/balance',async(req,res)=>{
        direction:'credit'},
      select:{orderId:true,amount:true,idempotencyKey:true},
    }):[];
- const candidates=new Map(stageCards.map(o=>[o.id,o]));
+ const candidates=new Map<number,(typeof stageCards)[number]>(stageCards.map(o=>[o.id,o] as const));
  const trustedReceipts=new Set(receipts.flatMap(entry=>{
    const o=entry.orderId===null?undefined:candidates.get(entry.orderId);
    return o&&entry.idempotencyKey==='order:'+o.id+':stripe-test:collected'&&
