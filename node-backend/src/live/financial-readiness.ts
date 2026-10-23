@@ -32,12 +32,23 @@ export async function inspectLiveFinancialData(pool:Pool):
          AND type IN ('payment_intent.succeeded',
            'payment_intent.payment_failed','payment_intent.canceled'))
        AS pending_payment_receipts,
-      (SELECT count(*) FROM stripe_webhook_events
-       WHERE status IN ('RECEIVED','FAILED')
-         AND type IN ('charge.refunded','charge.dispute.created',
-           'charge.dispute.closed','refund.created','refund.updated',
-           'refund.failed','charge.refund.updated'))
-       AS pending_refund_or_dispute_events,
+      -- Financial review is NOT completed merely because a webhook was
+      -- marked PROCESSED or an outbox notification was PUBLISHED. Refunds
+      -- and chargebacks require merchant-payable and fulfillment signoff.
+      (
+        (SELECT count(*) FROM stripe_webhook_events
+         WHERE (status IN ('RECEIVED','FAILED')
+           AND type IN ('charge.refunded','charge.dispute.created',
+             'charge.dispute.closed','refund.created','refund.updated',
+             'refund.failed','charge.refund.updated'))
+           OR type IN ('charge.dispute.created','charge.dispute.closed',
+             'charge.refunded','charge.refund.updated'))
+        +
+        (SELECT count(*) FROM event_outbox
+         WHERE event_type IN ('order.refund_review_required',
+           'order.refund_failure_review_required',
+           'order.dispute_review_required'))
+      ) AS pending_refund_or_dispute_events,
       -- A refunded order must never disappear from the financial audit:
       -- it still requires its original immutable captured-money receipt,
       -- and all reversals must match the actual cumulative refunded amount.
