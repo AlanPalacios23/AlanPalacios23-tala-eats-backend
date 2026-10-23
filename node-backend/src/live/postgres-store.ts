@@ -4,7 +4,7 @@
  * This adapter is not referenced by staging app.ts or worker.ts.
  */
 import { Pool } from 'pg';
-import { LiveGateError,type ValidatedLiveSettings } from './guard.js';
+import { LiveGateError,livePilotAmount,type ValidatedLiveSettings } from './guard.js';
 import { LIVE_PI_RESERVED,type LivePaymentStore,type LivePendingOrder } from './stripe-payments.js';
 
 export function productionPool(settings:ValidatedLiveSettings):Pool {
@@ -21,7 +21,7 @@ type Row={
 };
 export class PostgresLivePaymentStore implements LivePaymentStore {
   constructor(private readonly pool:Pool) {}
-  async reserveForPayment(orderId:number,buyerId:number):Promise<LivePendingOrder|null>{
+  async reserveForPayment(orderId:number,buyerId:number,maxOrderMinor:number):Promise<LivePendingOrder|null>{
     const client=await this.pool.connect();
     try{
       await client.query('BEGIN');
@@ -46,6 +46,7 @@ export class PostgresLivePaymentStore implements LivePaymentStore {
       if(!decimal.test(row.total))throw new LiveGateError('ORDER_TOTAL_INVALID');
       const [major,fraction]=row.total.split('.');
       const minor=Number(major)*100+Number(fraction);
+      livePilotAmount(minor,maxOrderMinor);
       const createdAtMs=new Date(row.created_at).getTime();
       if(!Number.isFinite(createdAtMs)||createdAtMs>Date.now()+60_000||
          Date.now()-createdAtMs>30*60_000)
