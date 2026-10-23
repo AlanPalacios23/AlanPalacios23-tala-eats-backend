@@ -142,6 +142,29 @@ async function reconcileLiveVerifiedEvent(
       FROM orders WHERE id=$1 FOR UPDATE
     `,[orderId]);
     const order=found.rows[0];
+    // Crash recovery: Stripe created/captured the PI but API died before
+    // attaching its ID. A signed receipt + remote Stripe fetch + bound
+    // order, amount and metadata provide independent proof. Reattach under
+    // the locked order row; never release a reservation on an unknown PI.
+    if(order?.payment_provider_id==='pi_reserving_rc8_live' &&
+       order.payment_status==='pending'&&order.status==='awaiting_payment'&&
+       order.user_id===buyerId&&
+       order.order_type==='pickup'&&order.payment_method==='stripe'&&
+       order.payment_provider==='stripe'&&
+       Number(order.refunded_amount)===0 &&
+       minor(order.total)===intent.amount&&
+       intent.metadata.tala_mode==='rc8_live_pickup' &&
+       intent.metadata.order_id===String(orderId) &&
+       intent.metadata.buyer_id===String(buyerId)){
+      const linked=await client.query(`
+        UPDATE orders SET payment_provider_id=$1
+        WHERE id=$2 AND payment_provider_id='pi_reserving_rc8_live'
+          AND payment_status='pending' AND status='awaiting_payment'
+        RETURNING id
+      `,[intent.id,orderId]);
+      if(linked.rowCount!==1)throw new LiveGateError('PI_RECOVERY_POINTER_CONFLICT');
+      order.payment_provider_id=intent.id;
+    }
     if(!order||order.user_id!==buyerId||
        order.order_type!=='pickup'||order.payment_method!=='stripe'||
        order.payment_provider!=='stripe'||
