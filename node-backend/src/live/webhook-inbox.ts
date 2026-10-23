@@ -17,17 +17,11 @@ const paymentTypes=new Set([
   'payment_intent.payment_failed',
   'payment_intent.canceled',
 ]);
-// Reversals may originate from Stripe Dashboard, banks or card schemes,
-// even if Tala Eats has no refund/transfer endpoint. Persist them rather
-// than silently ACK-and-discard. Pending reversals block LIVE readiness.
+// Refund/dispute events can come from Stripe itself or a bank. Never lose
+// them: persist as actionable holds until reversal logic is implemented.
 const reversalTypes=new Set([
-  'charge.refunded',
-  'charge.dispute.created',
-  'charge.dispute.closed',
-  'refund.created',
-  'refund.updated',
-  'refund.failed',
-  'charge.refund.updated',
+  'charge.refunded','charge.dispute.created','charge.dispute.closed',
+  'refund.created','refund.updated','refund.failed','charge.refund.updated',
 ]);
 
 export async function ingestSignedLiveStripeWebhook(
@@ -46,7 +40,8 @@ export async function ingestSignedLiveStripeWebhook(
   const prefix=type==='payment_intent'?'pi_':
     type==='charge'?'ch_':type==='dispute'?'dp_':'re_';
   if(object.object!==type||!object.id||
-     !new RegExp('^'+prefix+'[A-Za-z0-9]+
+     !new RegExp('^'+prefix+'[A-Za-z0-9]+$').test(object.id))
+    throw new LiveGateError('BAD_LIVE_EVENT_OBJECT');
   // Conditional ON CONFLICT protects immutable Stripe event identity.
   // Do not overwrite type or object_id when the same evt ID arrives again.
   const r=await pool.query<{status:string}>(`
@@ -97,59 +92,6 @@ export async function drainLiveSignedReceipts(
     }catch{
       // No PII/provider response leaked to worker logs; PG receipt remains
       // RECEIVED/FAILED and manual monitoring must alert on stale records.
-      held++;
-    }
-  }
-  return {checked:rows.rows.length,reconciled,held};
-}
-).test(object.id))
-    throw new LiveGateError('BAD_LIVE_EVENT_OBJECT');
-  // Conditional ON CONFLICT protects immutable Stripe event identity.
-  // Do not overwrite type or object_id when the same evt ID arrives again.
-  const r=await pool.query<{status:string}>(`
-    INSERT INTO stripe_webhook_events
-      (id,type,stripe_account_id,object_id,status,delivery_count,received_at)
-    VALUES($1,$2,NULL,$3,'RECEIVED',1,NOW())
-    ON CONFLICT (id) DO UPDATE
-      SET delivery_count=stripe_webhook_events.delivery_count+1
-      WHERE stripe_webhook_events.type=EXCLUDED.type
-        AND stripe_webhook_events.object_id=EXCLUDED.object_id
-        AND stripe_webhook_events.stripe_account_id IS NULL
-    RETURNING status
-  `,[event.id,event.type,object.id]);
-  if(r.rowCount!==1)throw new LiveGateError('DURABLE_EVENT_IDENTITY_CONFLICT');
-  return {received:true,queued:r.rows[0]?.status!=='PROCESSED'};
-}
-
-/**
- * Bounded, re-entrant worker sweep. Signed HTTP ingest happened previously;
- * the worker re-fetches the durable event and PaymentIntent from Stripe and
- * relies on PostgreSQL row locks to serialize duplicate payment callbacks.
- * Errors preserve RECEIVED receipts for reconciliation; never lose a charge.
- */
-export async function drainLiveSignedReceipts(
-  provider:LiveStripeApi,pool:Pool,settings:ValidatedLiveSettings,
-  maximum=20):Promise<{checked:number;reconciled:number;held:number}>{
-  if(!Number.isSafeInteger(maximum)||maximum<1||maximum>50)
-    throw new LiveGateError('LIVE_DRAIN_BATCH_INVALID');
-  const rows=await pool.query<{id:string}>(`
-    SELECT id FROM stripe_webhook_events
-    WHERE status IN ('RECEIVED','FAILED')
-      AND stripe_account_id IS NULL
-      AND type IN ('payment_intent.succeeded',
-                   'payment_intent.payment_failed',
-                   'payment_intent.canceled')
-    ORDER BY received_at,id
-    LIMIT $1
-  `,[maximum]);
-  let reconciled=0,held=0;
-  for(const row of rows.rows){
-    try{
-      await reconcileRecordedLiveStripeEvent(row.id,provider,pool,settings);
-      reconciled++;
-    }catch{
-      // No PII/provider response leaked to worker logs; PG receipt remains
-      // RECIEVED/FAILED and manual monitoring must alert on stale records.
       held++;
     }
   }
