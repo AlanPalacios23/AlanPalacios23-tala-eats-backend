@@ -15,6 +15,7 @@ import {reconcileRecordedLiveRefund} from './refund-reconciliation.js';
 import {reconcileRecordedLiveCanceledIntent} from './cancel-reconciliation.js';
 import {reconcileRecordedLiveRefundFailure} from './refund-failure-reconciliation.js';
 import {holdRecordedLiveDispute} from './dispute-reconciliation.js';
+import {reconcileRecordedLivePaymentFailure} from './payment-failure-reconciliation.js';
 
 const paymentTypes=new Set([
   'payment_intent.succeeded',
@@ -198,4 +199,27 @@ export async function drainLiveDisputeReceipts(
    }catch{held++;}
  }
  return {checked:records.rows.length,reconciled,held};
+}
+
+
+/** Consume a signed declined-card receipt without interpreting it as final
+ * cancellation. A subsequent successful payment is independently settled.
+ */
+export async function drainLivePaymentFailures(
+ provider:LiveStripeApi,pool:Pool,maximum=20
+):Promise<{checked:number;reconciled:number;held:number}>{
+ if(!Number.isSafeInteger(maximum)||maximum<1||maximum>50)
+  throw new LiveGateError('LIVE_PAYMENT_FAILURE_BATCH_INVALID');
+ const sql="SELECT id FROM stripe_webhook_events WHERE status IN ('RECEIVED','FAILED') "+
+  "AND \"stripeAccountId\" IS NULL AND type='payment_intent.payment_failed' "+
+  "ORDER BY \"receivedAt\",id LIMIT $1";
+ const rows=await pool.query<{id:string}>(sql,[maximum]);
+ let reconciled=0,held=0;
+ for(const row of rows.rows){
+  try{
+   await reconcileRecordedLivePaymentFailure(row.id,provider,pool);
+   reconciled++;
+  }catch{held++;}
+ }
+ return {checked:rows.rows.length,reconciled,held};
 }
