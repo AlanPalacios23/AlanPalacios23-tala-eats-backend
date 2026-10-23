@@ -9,7 +9,7 @@
 import type {Pool} from 'pg';
 import type {LiveStripeApi} from './stripe-payments.js';
 import type {ValidatedLiveSettings} from './guard.js';
-import {drainLiveSignedReceipts} from './webhook-inbox.js';
+import {drainLiveSignedReceipts,drainLiveRefundReceipts} from './webhook-inbox.js';
 import {inspectLiveFinancialData} from './financial-readiness.js';
 
 export type Rc8WorkerReport={
@@ -29,10 +29,13 @@ export async function rc8WorkerIteration(
   // Do not guess from Stripe event delivery timing: successful captures are
   // reconciled under PG row locks. No other event classes are compensated.
   const result=await drainLiveSignedReceipts(provider,pool,settings,batchSize);
+  const refunds=await drainLiveRefundReceipts(provider,pool,Math.min(batchSize,20));
   const audit=await inspectLiveFinancialData(pool);
   const c=audit.counters;
   return {
-    checked:result.checked,reconciled:result.reconciled,held:result.held,
+    checked:result.checked+refunds.checked,
+    reconciled:result.reconciled+refunds.reconciled,
+    held:result.held+refunds.held,
     pendingPaymentEvents:c.pendingPaymentReceipts,
     pendingRefundOrDisputeEvents:c.pendingRefundOrDisputeEvents,
     orphanedProviderReservations:c.stuckProviderReservations,
