@@ -1,0 +1,53 @@
+name: TALA EATS | RC8 Kali isolated locked Docker deployment
+on:
+  pull_request:
+    branches:
+      - release/rc7-kali-test-candidate-final-20261023
+    paths:
+      - 'node-backend/deploy/rc8-kali-locked/**'
+      - 'node-backend/scripts/rc8-kali-deploy-locked-sidecar.sh'
+      - 'node-backend/src/live/server.ts'
+      - '.github/workflows/tala-node-rc8-locked-kali-docker.yml'
+permissions:
+  contents: read
+jobs:
+  smoke-locked-container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Bash and Compose syntax
+        run: |
+          bash -n node-backend/scripts/rc8-kali-deploy-locked-sidecar.sh
+          docker compose -f node-backend/deploy/rc8-kali-locked/compose.yaml config --quiet
+      - name: Build and run locked RC8 sidecar
+        run: |
+          docker compose --project-name rc8-locked-ci \
+            -f node-backend/deploy/rc8-kali-locked/compose.yaml \
+            up --detach --build --no-deps rc8-locked
+      - name: Assert loopback and all money routes disabled
+        run: |
+          set -Eeuo pipefail
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsS http://127.0.0.1:18290/api/v1/health > /tmp/health-rc8; then break; fi
+            sleep 2
+          done
+          node -e 'const v=require("/tmp/health-rc8");' 2>/dev/null && exit 1 || true
+          node -e '
+            const fs=require("fs");
+            const data=JSON.parse(fs.readFileSync("/tmp/health-rc8","utf8"));
+            if(data.checkoutEnabled!==false||data.transfersEnabled!==false||
+               data.productionReady!==false)process.exit(1);
+          '
+          test "$(curl -sS -o /dev/null -w '%{http_code}' \
+            http://127.0.0.1:18290/api/v1/ready)" = 503
+          test "$(curl -sS -o /dev/null -w '%{http_code}' \
+            -X POST http://127.0.0.1:18290/api/v1/orders/5/stripe/payment-intent)" = 503
+          echo RC8_LOCKED_DOCKER_SIDECAR=PASS
+          echo LIVE_STRIPE_MONEY_WRITES=DISABLED
+      - name: Cleanup disposable CI project
+        if: always()
+        run: |
+          docker compose --project-name rc8-locked-ci \
+            -f node-backend/deploy/rc8-kali-locked/compose.yaml \
+            down --remove-orphans || true
