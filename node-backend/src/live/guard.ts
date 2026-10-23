@@ -17,9 +17,9 @@ export type ValidatedLiveSettings = {
   maxOrderMinor:number; databaseUrl:string; redisUrl:string;
   refundsEnabled:boolean; transfersEnabled:false;
 };
-const assert=(condition:unknown,reason:string):asserts condition=>{
+function assert(condition:unknown,reason:string):asserts condition {
   if(!condition)throw new LiveGateError(reason);
-};
+}
 export function validateLiveSettings(raw:LiveSettings):ValidatedLiveSettings {
   assert(raw.nodeEnv==='production','NODE_ENV_NOT_PRODUCTION');
   assert(raw.explicitlyEnabled==='true','LIVE_EXPLICIT_OPT_IN_REQUIRED');
