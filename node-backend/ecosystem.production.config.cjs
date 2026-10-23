@@ -1,5 +1,5 @@
 // RC8 LIVE: replaces the TWO existing public PM2 app definitions in-place.
-// DO NOT "pm2 start" as a second public stack. Promote/reload only after
+// Never launch a second public stack. Promote/reload only after
 // backups, full payment QA and final operator GO/NO-GO approval.
 const fs=require('node:fs');
 const path=require('node:path');
