@@ -58,7 +58,7 @@ export class PostgresLivePaymentStore implements LivePaymentStore {
       if(!pointer){
         const update=await client.query(`
           UPDATE orders SET payment_provider_id=$1 WHERE id=$2
-          AND user_id=$3 AND payment_provider_id=''
+          AND user_id=$3 AND (payment_provider_id IS NULL OR payment_provider_id='')
         `,[LIVE_PI_RESERVED,orderId,buyerId]);
         if(update.rowCount!==1)throw new LiveGateError('RESERVATION_UPDATE_FAILED');
         pointer=LIVE_PI_RESERVED;
