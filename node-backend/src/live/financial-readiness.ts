@@ -58,12 +58,19 @@ export async function inspectLiveFinancialData(pool:Pool):
            OR (o.payment_status='refunded' AND o.refunded_amount <> o.total)
            OR (o.payment_status='partially_refunded' AND
                 (o.refunded_amount <= 0 OR o.refunded_amount >= o.total))
-           OR (o.refunded_amount > 0 AND
+           OR (
              COALESCE((SELECT SUM(l.amount) FROM financial_ledger_entries l
                WHERE l.order_id=o.id
                  AND l.account='stripe_live_collected'
                  AND l.direction='debit'
-                 AND l.kind='stripe_live_refund'),0) <> o.refunded_amount)
+                 AND l.kind='stripe_live_refund'),0)
+             -
+             COALESCE((SELECT SUM(l.amount) FROM financial_ledger_entries l
+               WHERE l.order_id=o.id
+                 AND l.account='stripe_live_collected'
+                 AND l.direction='credit'
+                 AND l.kind='stripe_live_refund_failure'),0)
+             <> o.refunded_amount)
          ))
        AS suspect_captured_orders,
       (SELECT count(*) FROM orders
