@@ -41,6 +41,18 @@ export class PostgresLivePaymentStore implements LivePaymentStore {
         await client.query('ROLLBACK');
         throw new LiveGateError('ORDER_STATE_NOT_ELIGIBLE');
       }
+      // Validate money and freshness BEFORE creating the provider reservation.
+      const decimal=/^(?:0|[1-9]\d{0,7})\.\d{2}$/;
+      if(!decimal.test(row.total))throw new LiveGateError('ORDER_TOTAL_INVALID');
+      const [major,fraction]=row.total.split('.');
+      const minor=Number(major)*100+Number(fraction);
+      const createdAtMs=new Date(row.created_at).getTime();
+      if(!Number.isFinite(createdAtMs)||createdAtMs>Date.now()+60_000||
+         Date.now()-createdAtMs>30*60_000)
+        throw new LiveGateError('ORDER_RESERVATION_WINDOW_EXPIRED');
+      if(row.payment_provider_id && row.payment_provider_id!==LIVE_PI_RESERVED &&
+         !/^pi_[A-Za-z0-9]+$/.test(row.payment_provider_id))
+        throw new LiveGateError('ORDER_PROVIDER_POINTER_INVALID');
       let pointer=row.payment_provider_id;
       if(!pointer){
         const update=await client.query(`
@@ -50,12 +62,6 @@ export class PostgresLivePaymentStore implements LivePaymentStore {
         if(update.rowCount!==1)throw new LiveGateError('RESERVATION_UPDATE_FAILED');
         pointer=LIVE_PI_RESERVED;
       }
-      const decimal=/^(?:0|[1-9]\d{0,7})\.\d{2}$/;
-      if(!decimal.test(row.total))throw new LiveGateError('ORDER_TOTAL_INVALID');
-      const [major,fraction]=row.total.split('.');
-      const minor=Number(major)*100+Number(fraction);
-      const createdAtMs=new Date(row.created_at).getTime();
-      if(!Number.isFinite(createdAtMs))throw new LiveGateError('ORDER_TIMESTAMP_INVALID');
       await client.query('COMMIT');
       return {id:row.id,buyerId:row.user_id,amountMinor:minor,
         currency:'mxn',method:'stripe',fulfillment:'pickup',
