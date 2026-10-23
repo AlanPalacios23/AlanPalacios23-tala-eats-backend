@@ -9,7 +9,7 @@ import {inspectLiveFinancialData} from './live/financial-readiness.js';
 import { db } from './db.js';
 import { config } from './config.js';
 import { stripeWebhook } from './webhook.js';
-import { authRouter } from './auth/routes.js';
+import { authRouter,current } from './auth/routes.js';
 import { platformRouter, platformErrors } from './platform/routes.js';
 import { adminRouter, operationsRouter, opsErrors } from './operational/routes.js';
 import { v9Router, v10Router, v11Router } from './versions/routes.js';
@@ -56,6 +56,29 @@ if(live){
       if(audit.classification!=='LIVE_FINANCIAL_DATA_PASS'){
         res.status(503).json({error:'LIVE_FINANCIAL_RECONCILIATION_HOLD'});
         return;
+      }
+      // Financial ownership is verified BEFORE reserving menu stock:
+      // a restaurant must have its OWN approved and payout-enabled Connect.
+      const session=await current(req);
+      if(session.user.role!=='customer') {
+        res.status(403).json({error:'CARD_BUYER_REQUIRED'});return;
+      }
+      const id=req.body?.restaurant_id;
+      if(!Number.isSafeInteger(id)||id<1){
+        res.status(422).json({error:'RESTAURANT_ID_INVALID'});return;
+      }
+      const mapping=await live.pool.query<{
+        stripe_account_id:string;owner_approved_at:Date|null;
+      }>('SELECT stripe_account_id,owner_approved_at FROM tala_live_merchant_accounts WHERE restaurant_id=$1',
+       [id]);
+      const seller=mapping.rows[0];
+      if(!seller?.owner_approved_at){
+        res.status(409).json({error:'SELLER_CONNECT_NOT_APPROVED'});return;
+      }
+      const account=await live.stripe.accounts.retrieve(seller.stripe_account_id);
+      if(!account||account.country!=='MX'||account.details_submitted!==true||
+         account.capabilities?.transfers!=='active'||account.payouts_enabled!==true){
+        res.status(409).json({error:'SELLER_CONNECT_NOT_READY'});return;
       }
       next();
     }catch{
