@@ -14,6 +14,7 @@ import {reconcileRecordedLiveStripeEvent} from './reconcile.js';
 import {reconcileRecordedLiveRefund} from './refund-reconciliation.js';
 import {reconcileRecordedLiveCanceledIntent} from './cancel-reconciliation.js';
 import {reconcileRecordedLiveRefundFailure} from './refund-failure-reconciliation.js';
+import {holdRecordedLiveDispute} from './dispute-reconciliation.js';
 
 const paymentTypes=new Set([
   'payment_intent.succeeded',
@@ -174,4 +175,27 @@ export async function drainLiveRefundFailures(
   }catch{held++;}
  }
  return {checked:rows.rows.length,reconciled,held};
+}
+
+
+/** Disputes are never silently auto-refunded or auto-transferred.
+ * Record Stripe-verified manual settlement holds against the matched order.
+ */
+export async function drainLiveDisputeReceipts(
+ provider:LiveStripeApi,pool:Pool,maximum=10
+):Promise<{checked:number;reconciled:number;held:number}>{
+ if(!Number.isSafeInteger(maximum)||maximum<1||maximum>50)
+   throw new LiveGateError('LIVE_DISPUTE_DRAIN_BATCH_INVALID');
+ const sql="SELECT id FROM stripe_webhook_events WHERE status IN ('RECEIVED','FAILED') "+
+   "AND \"stripeAccountId\" IS NULL AND type IN ('charge.dispute.created','charge.dispute.closed') "+
+   "ORDER BY \"receivedAt\",id LIMIT $1";
+ const records=await pool.query<{id:string}>(sql,[maximum]);
+ let reconciled=0,held=0;
+ for(const row of records.rows){
+   try{
+     await holdRecordedLiveDispute(row.id,provider,pool);
+     reconciled++;
+   }catch{held++;}
+ }
+ return {checked:records.rows.length,reconciled,held};
 }
