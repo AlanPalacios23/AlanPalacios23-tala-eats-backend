@@ -6,6 +6,7 @@ on:
     paths:
       - 'node-backend/src/live/**'
       - 'node-backend/scripts/ci-rc8-live-pg-webhook.mjs'
+      - 'node-backend/scripts/ci-rc8-live-finance-pg15.mjs'
       - 'node-backend/prisma/**'
       - '.github/workflows/tala-node-rc8-live-pg15-schema.yml'
 permissions:
@@ -49,3 +50,4 @@ jobs:
         run: |
           npm run build
           node scripts/ci-rc8-live-pg-webhook.mjs
+          node scripts/ci-rc8-live-finance-pg15.mjs
