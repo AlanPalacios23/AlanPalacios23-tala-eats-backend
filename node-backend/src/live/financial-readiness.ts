@@ -1,0 +1,73 @@
+/**
+ * Read-only RC8 go-live financial data gate, separately connected to
+ * PRODUCTION PostgreSQL. No PII, SQL writes, Stripe calls or deployment side
+ * effects. This is a necessary, never sufficient, production release gate.
+ */
+import type {Pool} from 'pg';
+
+export type LiveFinancialCounters={
+  pendingPaymentReceipts:number;
+  pendingRefundOrDisputeEvents:number;
+  suspectCapturedOrders:number;
+  stuckProviderReservations:number;
+};
+export function assessLiveFinancialCounters(c:LiveFinancialCounters):
+  'LIVE_FINANCIAL_DATA_PASS'|'LIVE_FINANCIAL_DATA_HOLD'{
+  return Object.values(c).length===4&&
+    Object.values(c).every(n=>Number.isSafeInteger(n)&&n===0)
+      ? 'LIVE_FINANCIAL_DATA_PASS':'LIVE_FINANCIAL_DATA_HOLD';
+}
+export async function inspectLiveFinancialData(pool:Pool):
+ Promise<{classification:'LIVE_FINANCIAL_DATA_PASS'|'LIVE_FINANCIAL_DATA_HOLD';
+          liveEnabled:false;counters:LiveFinancialCounters}>{
+  const result=await pool.query<{
+    pending_payment_receipts:string;
+    pending_refund_or_dispute_events:string;
+    suspect_captured_orders:string;
+    stuck_provider_reservations:string;
+  }>(`
+    SELECT
+      (SELECT count(*) FROM stripe_webhook_events
+       WHERE status IN ('RECEIVED','FAILED')
+         AND type IN ('payment_intent.succeeded',
+           'payment_intent.payment_failed','payment_intent.canceled'))
+       AS pending_payment_receipts,
+      (SELECT count(*) FROM stripe_webhook_events
+       WHERE status IN ('RECEIVED','FAILED')
+         AND type IN ('charge.refunded','charge.dispute.created',
+           'charge.dispute.closed','refund.created','refund.updated',
+           'refund.failed','charge.refund.updated'))
+       AS pending_refund_or_dispute_events,
+      (SELECT count(*) FROM orders o
+       WHERE o.payment_method='stripe' AND o.payment_status='paid'
+         AND NOT EXISTS (SELECT 1 FROM financial_ledger_entries l
+            WHERE l.order_id=o.id
+              AND l.account='stripe_live_collected'
+              AND l.kind='stripe_live_payment'
+              AND l.direction='credit'
+              AND l.idempotency_key=('order:'||o.id||':stripe-live:collected')
+              AND l.amount=o.total))
+       AS suspect_captured_orders,
+      (SELECT count(*) FROM orders
+       WHERE payment_method='stripe' AND payment_status='pending'
+         AND payment_provider_id='pi_reserving_rc8_live'
+         AND created_at < NOW() - INTERVAL '10 minutes')
+       AS stuck_provider_reservations
+  `);
+  const row=result.rows[0];
+  if(!row||result.rows.length!==1)throw Error('LIVE_FINANCIAL_AUDIT_INVALID');
+  const parse=(v:string):number=>{
+    if(!/^(0|[1-9]\d*)$/.test(v))throw Error('LIVE_AUDIT_COUNT_INVALID');
+    const n=Number(v);
+    if(!Number.isSafeInteger(n))throw Error('LIVE_AUDIT_COUNT_OVERFLOW');
+    return n;
+  };
+  const counters={
+    pendingPaymentReceipts:parse(row.pending_payment_receipts),
+    pendingRefundOrDisputeEvents:parse(row.pending_refund_or_dispute_events),
+    suspectCapturedOrders:parse(row.suspect_captured_orders),
+    stuckProviderReservations:parse(row.stuck_provider_reservations),
+  };
+  return {classification:assessLiveFinancialCounters(counters),
+    liveEnabled:false,counters};
+}

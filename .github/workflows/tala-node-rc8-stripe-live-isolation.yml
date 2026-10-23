@@ -1,0 +1,49 @@
+name: TALA EATS | RC8 Stripe LIVE isolated unit gates
+on:
+  pull_request:
+    branches:
+      - release/rc7-kali-test-candidate-final-20261023
+    paths:
+      - 'node-backend/src/live/**'
+      - 'node-backend/tests/rc8-**'
+      - 'node-backend/docs/RC8-**'
+      - 'node-backend/scripts/rc8-**'
+      - '.github/workflows/tala-node-rc8-stripe-live-isolation.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compile-and-test:
+    name: RC8 isolated production primitives (NO LIVE KEYS / NO CHARGES)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: node-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Dependencies pinned
+        run: npm ci --no-audit --no-fund
+      - name: Prisma generate and schema validate without DB connection
+        run: |
+          npm run generate
+          npm run db:validate
+      - name: Strict TypeScript
+        run: npm run build
+      - name: Bash syntax of RC8 installers and activation gate
+        run: |
+          bash -n scripts/rc8-kali-install-candidate.sh
+          bash -n scripts/rc8-kali-next-deployment-preflight.sh
+          bash -n scripts/rc8-kali-live-activation-gate.sh
+          if bash scripts/rc8-kali-live-activation-gate.sh --activate; then exit 1; fi
+      - name: Entire unit suite including RC8 LIVE (all synthetic)
+        run: npm test
+      - name: Critical RC7 live separation unchanged
+        run: |
+          node scripts/release-readiness.mjs --stage
+          ! grep -R -E "from ['\"](\./|\.\./)live/" src/app.ts src/worker.ts src/webhook.ts src/config.ts src/stripe.ts

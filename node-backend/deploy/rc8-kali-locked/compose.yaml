@@ -1,0 +1,37 @@
+name: tala-node-rc8-locked
+services:
+  rc8-locked:
+    build:
+      context: ../..
+      dockerfile: deploy/rc8-kali-locked/Dockerfile
+    image: tala-eats-rc8-locked:local
+    container_name: tala-node-rc8-locked
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 256m
+    ports:
+      - "127.0.0.1:18290:18290"
+    environment:
+      NODE_ENV: production
+      RC8_LOCKED_DOCKER_SIDECAR: "true"
+      RC8_LIVE_CHARGES_ENABLED: "false"
+      RC8_LIVE_TRANSFERS_ENABLED: "false"
+      RC8_LIVE_REFUNDS_ENABLED: "false"
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:18290/api/v1/health').then(r=>r.json()).then(j=>{if(j.productionReady!==false||j.checkoutEnabled!==false||j.transfersEnabled!==false)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 20s
+      timeout: 4s
+      retries: 3
+      start_period: 8s
