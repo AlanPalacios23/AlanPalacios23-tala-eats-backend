@@ -1,4 +1,6 @@
 import {test} from 'node:test';
+import {spawnSync} from 'node:child_process';
+import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {validateLiveSettings,LiveGateError} from '../dist/live/guard.js';
 import {PostgresLivePaymentStore} from '../dist/live/postgres-store.js';
@@ -158,4 +160,18 @@ test('release financial data gate fails closed for any outstanding risk',async()
   assert.match(rawQuery,/stripe_live_collected/);
   assert.match(rawQuery,/charge\.dispute\.created/);
   assert.doesNotMatch(rawQuery,/\bUPDATE\b|\bDELETE\b|\bINSERT\b/);
+});
+
+test('RC8 deployment preflight is read-only and fails with unreviewed modes',()=>{
+  const path=new URL('../scripts/rc8-kali-next-deployment-preflight.sh',import.meta.url);
+  const source=readFileSync(path,'utf8');
+  assert.match(source,/EXPECTED_STAGE=/);
+  assert.match(source,/RC8_CODE_ONLY_PREFLIGHT=PASS/);
+  assert.match(source,/LIVE_PAYMENT_CUTOVER=NOT_AUTHORIZED/);
+  assert.doesNotMatch(source,/pm2 (?:start|delete|restart|reload)/);
+  assert.doesNotMatch(source,/prisma migrate deploy|stripe refunds create/);
+  const syntax=spawnSync('bash',['-n',path.pathname]);
+  assert.equal(syntax.status,0,syntax.stderr?.toString());
+  const unsafe=spawnSync('bash',[path.pathname,'--apply','a'.repeat(40)]);
+  assert.equal(unsafe.status,2);
 });
