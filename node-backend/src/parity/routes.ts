@@ -171,20 +171,38 @@ parityRouter.get('/withdrawals/:role/:recipientId/balance',async(req,res)=>{
    orderBy:{id:'desc'},take:5001,
    select:{id:true,status:true,paymentStatus:true,paymentMethod:true,
      orderType:true,restaurantPayout:true,driverEarning:true,tip:true,
-     cashCollected:true},
+     cashCollected:true,refundedAmount:true,total:true},
   }),
  ]);
  const payoutListComplete=payouts.length<=10000;
  const pendingPayouts=payoutListComplete?payouts.filter(x=>x.status==='pending')
   .reduce((n,x)=>n+minor(x.amount),0n):null;
+ // A persisted paid flag alone cannot prove Stripe funds.
+ const stageCards=orders.filter(o=>o.paymentMethod==='stripe'&&
+   o.status==='delivered'&&o.paymentStatus==='paid');
+ const receipts=orders.length<=5000&&stageCards.length
+   ?await db.stageFinancialLedgerEntry.findMany({
+     where:{orderId:{in:stageCards.map(o=>o.id)},
+       kind:'stripe_test_payment',account:'stripe_test_collected',
+       direction:'credit'},
+     select:{orderId:true,amount:true,idempotencyKey:true},
+   }):[];
+ const candidates=new Map(stageCards.map(o=>[o.id,o]));
+ const trustedReceipts=new Set(receipts.flatMap(entry=>{
+   const o=entry.orderId===null?undefined:candidates.get(entry.orderId);
+   return o&&entry.idempotencyKey==='order:'+o.id+':stripe-test:collected'&&
+     entry.amount.toFixed(2)===o.total.toFixed(2)?[o.id]:[];
+ }));
  const snapshot=orders.length<=5000
-  ?previewRecipientOrders(role==='restaurant'?'restaurant':'driver',orders.map(o=>({
-    id:o.id,status:o.status,paymentStatus:o.paymentStatus,
-    paymentMethod:o.paymentMethod,orderType:o.orderType,
-    restaurantPayout:euro(o.restaurantPayout),driverEarning:euro(o.driverEarning),
-    tip:euro(o.tip),cashCollected:euro(o.cashCollected),
+   ?previewRecipientOrders(role==='restaurant'?'restaurant':'driver',orders.map(o=>({
+     id:o.id,status:o.status,paymentStatus:o.paymentStatus,
+     paymentMethod:o.paymentMethod,orderType:o.orderType,
+     restaurantPayout:euro(o.restaurantPayout),driverEarning:euro(o.driverEarning),
+     tip:euro(o.tip),cashCollected:euro(o.cashCollected),
+     refundedAmount:euro(o.refundedAmount),total:euro(o.total),
+     stripeReceiptVerified:trustedReceipts.has(o.id),
    })),true)
-  :null;
+   :null;
  memoPrivate(res);
  res.json({role,recipient_id:identifier,currency:'MXN',
   pending_payouts:pendingPayouts===null?null:fmt(pendingPayouts),
