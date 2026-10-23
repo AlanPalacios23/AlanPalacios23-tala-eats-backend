@@ -175,3 +175,17 @@ test('RC8 deployment preflight is read-only and fails with unreviewed modes',()=
   const unsafe=spawnSync('bash',[path.pathname,'--apply','a'.repeat(40)]);
   assert.equal(unsafe.status,2);
 });
+
+test('SHA-pinned RC8 installer is code-only and denies apply mode',()=>{
+  const path=new URL('../scripts/rc8-kali-install-candidate.sh',import.meta.url);
+  const source=readFileSync(path,'utf8');
+  assert.match(source,/git clone --depth 1/);
+  assert.match(source,/rev-parse --verify HEAD/);
+  assert.match(source,/npm ci --no-audit --no-fund/);
+  assert.match(source,/npm test/);
+  assert.match(source,/RC8_CODE_ONLY_INSTALL=PASS/);
+  assert.doesNotMatch(source,/pm2 (?:start|restart|delete|reload|save)/);
+  assert.doesNotMatch(source,/migrate deploy|stripe refunds create/);
+  assert.equal(spawnSync('bash',['-n',path.pathname]).status,0);
+  assert.equal(spawnSync('bash',[path.pathname,'--apply','a'.repeat(40)]).status,2);
+});
