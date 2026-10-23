@@ -54,6 +54,10 @@ export async function inspectLiveFinancialData(pool:Pool):
                AND l.amount=o.total)
            OR o.refunded_amount < 0
            OR o.refunded_amount > o.total
+           OR (o.payment_status='paid' AND o.refunded_amount > 0)
+           OR (o.payment_status='refunded' AND o.refunded_amount <> o.total)
+           OR (o.payment_status='partially_refunded' AND
+                (o.refunded_amount <= 0 OR o.refunded_amount >= o.total))
            OR (o.refunded_amount > 0 AND
              COALESCE((SELECT SUM(l.amount) FROM financial_ledger_entries l
                WHERE l.order_id=o.id
