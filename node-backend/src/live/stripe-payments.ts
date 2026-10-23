@@ -22,7 +22,7 @@ export interface LivePaymentStore{
   attachStripeIntent(orderId:number,buyerId:number,intentId:string):
     Promise<boolean>;
 }
-export type LiveStripeApi=Pick<Stripe,'paymentIntents'|'webhooks'|'events'|'refunds'>;
+export type LiveStripeApi=Pick<Stripe,'paymentIntents'|'webhooks'|'events'|'refunds'|'charges'|'disputes'>;
 const reserved='pi_reserving_rc8_live';
 export const LIVE_PI_RESERVED=reserved;
 function assertOrder(order:LivePendingOrder|undefined|null,buyerId:number,settings:ValidatedLiveSettings){
