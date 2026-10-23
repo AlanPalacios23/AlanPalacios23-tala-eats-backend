@@ -123,6 +123,9 @@ export async function reconcileRecordedLiveRefund(
    if(cents(order.refunded_amount)<refund.amount)
      throw new LiveGateError('REFUND_LEDGER_BALANCE_CONFLICT');
   }
+  await client.query(
+   "INSERT INTO tala_live_financial_cases (order_id,case_type,stripe_object_id,last_event_id,status,updated_at) VALUES ($1,'refund',$2,$3,'open',NOW()) ON CONFLICT(case_type,stripe_object_id) DO UPDATE SET last_event_id=EXCLUDED.last_event_id,status='open',reviewed_by_user_id=NULL,reviewed_at=NULL,resolved_by_user_id=NULL,resolved_at=NULL,evidence_ref=NULL,updated_at=NOW()",
+   [orderId,refund.id,eventId]);
   await client.query(Q.processed,[eventId]);
   await client.query('COMMIT');
   return {received:true,alreadyProcessed:existing.rows.length===1,
