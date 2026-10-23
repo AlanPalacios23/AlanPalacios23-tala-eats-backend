@@ -17,9 +17,11 @@ const liveReady={...stageReady,productionReady:true,environment:'production',
  financialWrites:true,onlinePaymentsEnabled:true};
 function pm2(mode='stage'){
  return [{name:'tala-node-stage-api',pid:101,pm2_env:{status:'online',
-  NODE_ENV:mode==='stage'?'staging':'production',pm_cwd:cwd}},
+  NODE_ENV:mode==='stage'?'staging':'production',pm_cwd:cwd,
+  pm_exec_path:cwd+'/dist/server.js'}},
  {name:'tala-node-stage-worker',pid:102,pm2_env:{status:'online',
-  NODE_ENV:mode==='stage'?'staging':'production',pm_cwd:cwd}}];
+  NODE_ENV:mode==='stage'?'staging':'production',pm_cwd:cwd,
+  pm_exec_path:cwd+'/dist/worker.js'}}];
 }
 test('postdeploy stage and live contracts distinguish financial modes',()=>{
  assert.equal(validateApiContract('stage',stageHealth,stageReady),true);
@@ -41,6 +43,7 @@ test('postdeploy PM2 audit requires two exact processes, mode, cwd and immutable
  assert.equal(validatePm2Snapshot(pm2().map(x=>({...x,pm2_env:{...x.pm2_env,status:'stopped'}})),sha,'stage'),null);
  assert.equal(validatePm2Snapshot(pm2().map(x=>({...x,pid:101})),sha,'stage'),null);
  assert.equal(validatePm2Snapshot(pm2().map(x=>({...x,pm2_env:{...x.pm2_env,pm_cwd:'/tmp/other'}})),sha,'stage'),null);
+ assert.equal(validatePm2Snapshot(pm2().map(x=>({...x,pm2_env:{...x.pm2_env,pm_exec_path:'/tmp/wrong.js'}})),sha,'stage'),null);
  assert.equal(validatePm2Snapshot(pm2().map(x=>({...x,name:'other'})),sha,'stage'),null);
 });
 test('postdeploy rejects nonprivate env modes and foreign ownership',()=>{
