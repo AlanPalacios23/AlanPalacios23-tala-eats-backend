@@ -79,3 +79,19 @@ El preflight ahora también requiere `refund.created`, `refund.updated`, `refund
 - Nunca afirmar `LIVE_ACTIVATED` por el hecho de guardar `rk_live_`/`sk_live_` o superar pruebas sintéticas.
 
 **Criterio de salida:** API pública lista para recibir órdenes y Stripe LIVE con transacciones confirmadas/compensadas, sin pérdida de inventario ni eventos, sin exposición de secretos y con rollback probado. Si falla cualquier requisito, se mantiene el checkout LIVE bloqueado.
+
+## 7. RC8.1 — recuperación de cancelaciones y reembolsos fallidos
+
+- cancel-reconciliation.ts: exige evento LIVE firmado y persistido, consulta API de Stripe, comprueba canceled con importe capturado cero, vincula comprador y pedido, y restaura menú/ingredientes exactamente una vez con row locks, CAS, outbox y un commit PostgreSQL. Rechaza ledger existente.
+- refund-failure-reconciliation.ts: verifica refund.failed remoto y el PaymentIntent LIVE; compensa con un crédito contable inmutable e idempotente el débito de un reembolso que falló. No origina refund ni libera payout/stock; faltas de evidencia se retienen para revisión.
+- webhook-inbox.ts y worker-runner.ts: incorporan los barridos durables independientes de estas dos clases.
+- financial-readiness.ts: usa reembolsos netos = débitos de refund menos créditos refund_failure para detectar discrepancias antes de liberar cobros.
+- Tests: rc8-live-cancel-reconciliation.test.mjs y rc8-live-refund-failure.test.mjs, más pruebas del worker.
+
+QA de las mejoras anteriores: SHA 62667042fd23e390bf1ea879cc1d1f62e665513c. 3/3 workflows PASS: Stripe staging/PG15/Redis8, ADMIN MFA y 500 pedidos sintéticos.
+
+### Veredicto de despliegue
+
+El runtime público src/config.ts, src/app.ts, src/server.ts y src/worker.ts continúa en STAGING y no monta las rutas ni el worker LIVE. Falta un runtime integrado de producción, creación de pedidos reales, compensación completa de disputas, conciliación de merchant payable/stock con reembolsos, DB y Redis de producción, onboarding Connect, cobertura completa de webhooks y transacción LIVE firmada realmente verificada. El módulo isolated-app continúa fallando cerrado.
+
+**RC8.1_FINANCE_CODE_QA=PASS. LIVE_FUNCTIONAL_DEPLOY=NO_GO.** No se alteró Kali ni Stripe remoto. Mantener PR draft hasta solucionar y verificar el lanzamiento.
