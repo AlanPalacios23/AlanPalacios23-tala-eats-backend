@@ -21,6 +21,10 @@ test('isolated RC8 HTTP composition refuses checkout with release off',async()=>
     }},
     redis:{eval:async()=>{throw Error('should not access Redis');}}
   };
+  assert.throws(
+    ()=>buildIsolatedLiveApp({...deps,checkoutApproved:true}),
+    /LIVE_REFUND_COMPENSATION_REQUIRED_BEFORE_CHARGES/
+  );
   const app=buildIsolatedLiveApp(deps);
   const server=app.listen(0,'127.0.0.1');
   try{
