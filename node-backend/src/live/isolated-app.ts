@@ -8,7 +8,7 @@ import helmet from 'helmet';
 import type Stripe from 'stripe';
 import type {Pool} from 'pg';
 import type {Redis} from 'ioredis';
-import type {ValidatedLiveSettings} from './guard.js';
+import {LiveGateError,type ValidatedLiveSettings} from './guard.js';
 import type {LiveStripeApi} from './stripe-payments.js';
 import {buildIsolatedCheckoutRouter} from './checkout-router.js';
 import {buildIsolatedWebhookRouter} from './webhook-router.js';
@@ -24,6 +24,11 @@ type Deps={
   checkoutApproved:boolean;
 };
 export function buildIsolatedLiveApp(deps:Deps){
+ // Never expose a LIVE money-moving route via a config toggle alone. This
+ // contract remains NO-GO until refunds/disputes and recipient compensation
+ // are implemented and validated via the production-only settings gate.
+ if(deps.checkoutApproved && deps.settings.refundsEnabled!==true)
+   throw new LiveGateError('LIVE_REFUND_COMPENSATION_REQUIRED_BEFORE_CHARGES');
  const app=express();
  app.disable('x-powered-by');
  app.use(helmet());
