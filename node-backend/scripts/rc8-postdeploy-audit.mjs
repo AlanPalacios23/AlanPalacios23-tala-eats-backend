@@ -42,8 +42,11 @@ export function validatePm2Snapshot(processes,sha,mode){
  const expected=join('/home/tala-node-stage/tala-node-releases',sha,'node-backend');
  for(const p of processes){
    const e=p.pm2_env??{};
-   const executable=join(expected,'dist',
-     p.name==='tala-node-stage-api'?'server.js':'worker.js');
+   const executable=p.name==='tala-node-stage-api'
+      ?join(expected,'dist','server.js')
+      :mode==='live'
+        ?join(expected,'dist','live','production-worker.js')
+        :join(expected,'dist','worker.js');
    if(e.status!=='online'||e.pm_cwd!==expected||
       e.pm_exec_path!==executable||
       e.NODE_ENV!==(mode==='stage'?'staging':'production')||
