@@ -101,7 +101,8 @@ async function reconcileLiveVerifiedEvent(
     provider.events.retrieve(signed.id),
     provider.paymentIntents.retrieve(object.id),
   ]);
-  if(!stripeEvent.livemode||stripeEvent.type!==signed.type||
+  if(!stripeEvent.livemode||stripeEvent.account||
+     stripeEvent.id!==signed.id||stripeEvent.type!==signed.type||
      (stripeEvent.data.object as {id?:string}).id!==object.id||
      !intent.livemode||intent.id!==object.id||intent.currency!=='mxn')
     throw new LiveGateError('STRIPE_REMOTE_PROOF_MISMATCH');
