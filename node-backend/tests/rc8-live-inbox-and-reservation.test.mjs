@@ -76,7 +76,8 @@ test('LIVE webhook persists signed identity before acknowledging and catches con
     Buffer.from('payload'),'sig',provider,pool,settings());
   assert.deepEqual(result,{received:true,queued:true});
   assert.match(calls[0].sql,/ON CONFLICT \(id\)/);
-  assert.match(calls[0].sql,/stripe_webhook_events\.object_id=EXCLUDED\.object_id/);
+  assert.match(calls[0].sql,/"stripeAccountId","objectId"/);
+  assert.match(calls[0].sql,/stripe_webhook_events\."objectId"=EXCLUDED\."objectId"/);
   assert.deepEqual(calls[0].params,['evt_ABC123','payment_intent.succeeded','pi_ABC123']);
 
   pool.query=async()=>({rowCount:0,rows:[]});
