@@ -1,16 +1,21 @@
 import 'dotenv/config';
 import { z } from 'zod';
 const schema = z.object({
-  NODE_ENV: z.literal('staging'),
+  NODE_ENV: z.enum(['staging','production']),
   HOST: z.literal('127.0.0.1'),
   PORT: z.coerce.number().int().min(1024).max(65535),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
-  STRIPE_SECRET_KEY: z.string().regex(/^(?:sk_test_|rk_test_)[A-Za-z0-9]+$/).optional(),
+  STRIPE_SECRET_KEY: z.string().regex(/^(?:sk_test_|rk_test_|sk_live_|rk_live_)[A-Za-z0-9]+$/).optional(),
   STRIPE_WEBHOOK_SECRET: z.string().startsWith('whsec_').optional(),
-  STRIPE_PUBLISHABLE_KEY: z.string().startsWith('pk_test_').optional(),
+  STRIPE_PUBLISHABLE_KEY: z.string().regex(/^pk_(?:test|live)_[A-Za-z0-9]+$/).optional(),
   STAGE_STRIPE_TEST_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
-  STRIPE_FINANCIAL_WRITES_ENABLED: z.literal('false'),
+  STRIPE_FINANCIAL_WRITES_ENABLED: z.enum(['false','true']).default('false'),
+  STRIPE_LIVE_ENABLED: z.enum(['false','true']).default('false'),
+  STRIPE_LIVE_RELEASE_APPROVED: z.enum(['false','true']).default('false'),
+  STRIPE_REFUNDS_ENABLED: z.enum(['false','true']).default('false'),
+  STRIPE_CONNECT_TRANSFERS_ENABLED: z.enum(['false','true']).default('false'),
+  STRIPE_LIVE_MAX_ORDER_MINOR: z.coerce.number().int().min(100).max(50000).default(50000),
   AUTH_V02_ENABLED: z.enum(['false', 'true']).default('false'),
   MARKETPLACE_B_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_SUPPORT_EMAIL: z.email().optional(),
@@ -46,18 +51,58 @@ if(config.STAGE_EMAIL_DELIVERY_MODE==='resend') {
 }
 const pg = new URL(config.DATABASE_URL);
 const redis = new URL(config.REDIS_URL);
-if (config.PORT!==18190 ||
-    !['postgres:', 'postgresql:'].includes(pg.protocol) ||
-    pg.hostname!=='127.0.0.1' || pg.port!=='15435' ||
-    pg.pathname!=='/tala_node_stage' || pg.username!=='tala_node_stage' ||
-    !pg.password || /REPLACE|CHANGE/i.test(pg.password)) {
-  throw new Error('STAGING_POSTGRES_ISOLATION_REQUIRED');
-}
-if (!['redis:', 'rediss:'].includes(redis.protocol) ||
-    redis.hostname!=='127.0.0.1' || redis.port!=='16379' ||
-    redis.pathname!=='/0' || !redis.password ||
-    /REPLACE|CHANGE/i.test(redis.password)) {
-  throw new Error('STAGING_REDIS_ISOLATION_REQUIRED');
+if(config.NODE_ENV==='staging'){
+  if(config.PORT!==18190||
+     !['postgres:','postgresql:'].includes(pg.protocol)||
+     pg.hostname!=='127.0.0.1'||pg.port!=='15435'||
+     pg.pathname!=='/tala_node_stage'||pg.username!=='tala_node_stage'||
+     !pg.password||/REPLACE|CHANGE/i.test(pg.password))
+    throw new Error('STAGING_POSTGRES_ISOLATION_REQUIRED');
+  if(!['redis:','rediss:'].includes(redis.protocol)||
+     redis.hostname!=='127.0.0.1'||redis.port!=='16379'||
+     redis.pathname!=='/0'||!redis.password||
+     /REPLACE|CHANGE/i.test(redis.password))
+    throw new Error('STAGING_REDIS_ISOLATION_REQUIRED');
+  if(config.STRIPE_FINANCIAL_WRITES_ENABLED!=='false'||
+     config.STRIPE_LIVE_ENABLED!=='false'||
+     config.STRIPE_LIVE_RELEASE_APPROVED!=='false'||
+     config.STRIPE_REFUNDS_ENABLED!=='false'||
+     config.STRIPE_CONNECT_TRANSFERS_ENABLED!=='false')
+    throw new Error('STAGING_MONEY_WRITES_FORBIDDEN');
+  if(config.STRIPE_SECRET_KEY&&!/^(sk|rk)_test_/.test(config.STRIPE_SECRET_KEY))
+    throw new Error('STAGING_REQUIRES_STRIPE_TEST_KEY');
+  if(config.STRIPE_PUBLISHABLE_KEY&&!config.STRIPE_PUBLISHABLE_KEY.startsWith('pk_test_'))
+    throw new Error('STAGING_REQUIRES_STRIPE_TEST_PUBLISHABLE');
+}else{
+  // Same public PM2 port/domain. Separate authenticated production data,
+  // new customer auth and signed Stripe LIVE only. All settings fail closed.
+  if(config.HOST!=='127.0.0.1'||config.PORT!==18190||
+     !['postgres:','postgresql:'].includes(pg.protocol)||
+     !pg.username||!pg.password||!pg.hostname||
+     (pg.hostname==='127.0.0.1'&&pg.port==='15435')||
+     pg.pathname==='/tala_node_stage'||pg.username==='tala_node_stage')
+    throw new Error('LIVE_PRODUCTION_POSTGRES_ISOLATION_REQUIRED');
+  if(!['redis:','rediss:'].includes(redis.protocol)||
+     !redis.password||!redis.hostname||
+     (redis.hostname==='127.0.0.1'&&redis.port==='16379'&&
+      (redis.pathname===''||redis.pathname==='/0')))
+    throw new Error('LIVE_PRODUCTION_REDIS_ISOLATION_REQUIRED');
+  if(config.AUTH_V02_ENABLED!=='true'||config.MARKETPLACE_B_ENABLED!=='true'||
+     !config.AUTH_JWT_SECRET||
+     config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='false'||
+     config.STAGE_DRIVER_DELIVERY_ENABLED!=='false')
+    throw new Error('LIVE_MARKETPLACE_AUTH_AND_TEST_ISOLATION_REQUIRED');
+  if(config.STRIPE_CONNECT_TRANSFERS_ENABLED!=='false')
+    throw new Error('LIVE_CONNECT_PAYOUTS_REQUIRE_SEPARATE_AUDIT');
+  if(!config.STRIPE_SECRET_KEY||!/^(sk|rk)_live_/.test(config.STRIPE_SECRET_KEY)||
+     !config.STRIPE_PUBLISHABLE_KEY?.startsWith('pk_live_')||
+     !config.STRIPE_WEBHOOK_SECRET)
+    throw new Error('LIVE_STRIPE_SECRETS_REQUIRED');
+  if(config.STRIPE_LIVE_ENABLED!=='true'||
+     config.STRIPE_LIVE_RELEASE_APPROVED!=='true'||
+     config.STRIPE_FINANCIAL_WRITES_ENABLED!=='true'||
+     config.STRIPE_REFUNDS_ENABLED!=='true')
+    throw new Error('LIVE_FINANCIAL_RELEASE_NOT_APPROVED');
 }
 if (config.STRIPE_SECRET_KEY?.includes('CHANGE') ||
     config.STRIPE_WEBHOOK_SECRET?.includes('CHANGE')) {
@@ -79,7 +124,8 @@ if (config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED === 'true' &&
 }
 
 if(config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true' &&
-   (config.AUTH_V02_ENABLED!=='true' || config.MARKETPLACE_B_ENABLED!=='true' ||
+   (config.NODE_ENV!=='staging'||
+    config.AUTH_V02_ENABLED!=='true' || config.MARKETPLACE_B_ENABLED!=='true' ||
     !config.STRIPE_SECRET_KEY || !config.STRIPE_WEBHOOK_SECRET || !config.STRIPE_PUBLISHABLE_KEY ||
     config.STRIPE_FINANCIAL_WRITES_ENABLED!=='false')){
   throw new Error('STAGE_STRIPE_TEST_REQUIRES_ISOLATED_AUTH_KEYS_AND_NO_LIVE_WRITES');
