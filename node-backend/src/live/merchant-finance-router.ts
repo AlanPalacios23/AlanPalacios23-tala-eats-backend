@@ -39,6 +39,10 @@ export function buildLiveMerchantFinanceRouter(pool:Pool,stripe:Provider){
    const owners=await pool.query<{owner_id:number;email:string}>(
     'SELECT r.owner_id,u.email FROM restaurants r JOIN users u ON u.id=r.owner_id WHERE r.id=$1 AND r.owner_id IS NOT NULL',[rid]);
    if(owners.rows.length!==1){res.status(404).json({error:'SELLER_OWNER_REQUIRED'});return;}
+   // Platform funds must never be mapped as a seller's Connect recipient.
+   // Both accounts are read through Stripe: IDs aren't trusted from the app.
+   const platform=await stripe.accounts.retrieve();
+   if(account===platform.id){res.status(409).json({error:'PLATFORM_ACCOUNT_IS_NOT_MERCHANT'});return;}
    const remote=await stripe.accounts.retrieve(account);
    if(remote.id!==account||remote.country!=='MX'||!remote.email||
       remote.email.trim().toLowerCase()!==owners.rows[0]!.email.trim().toLowerCase()){
