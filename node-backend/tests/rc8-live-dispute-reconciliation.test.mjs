@@ -38,6 +38,7 @@ function fixture({chargeLive=true,wrongEvent=false,wrongOrder=false,refundOnly=f
      payment_status:refundOnly?'pending':'paid'}]};
     if(sql.includes("kind='stripe_live_payment'"))
       return {rows:[{amount:'12.50'}]};
+    if(sql.includes('INSERT INTO tala_live_financial_cases'))return {rowCount:1};
     if(sql.includes('INSERT INTO event_outbox')){
       outbox++;
       assert.match(sql,/order\.dispute_review_required/);
