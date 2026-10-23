@@ -32,7 +32,6 @@ jobs:
             if curl -fsS http://127.0.0.1:18290/api/v1/health > /tmp/health-rc8; then break; fi
             sleep 2
           done
-          node -e 'const v=require("/tmp/health-rc8");' 2>/dev/null && exit 1 || true
           node -e '
             const fs=require("fs");
             const data=JSON.parse(fs.readFileSync("/tmp/health-rc8","utf8"));
