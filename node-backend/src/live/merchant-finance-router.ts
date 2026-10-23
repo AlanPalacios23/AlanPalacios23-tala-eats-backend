@@ -3,6 +3,7 @@ import {Router,type Request} from 'express';
 import type Stripe from 'stripe';
 import type {Pool} from 'pg';
 import {current} from '../auth/routes.js';
+import {config} from '../config.js';
 type Provider=Pick<Stripe,'accounts'|'accountLinks'|'refunds'|'disputes'>;
 const id=(raw:unknown)=>{const s=String(raw??'');if(!/^[1-9][0-9]{0,9}$/.test(s))throw Error('ID_INVALID');return Number(s);};
 const money=(s:string)=>{if(!/^(?:0|[1-9]\d{0,7})\.\d{2}$/.test(s))throw Error('MONEY_INVALID');const [a,b]=s.split('.');return Number(a)*100+Number(b);};
@@ -41,8 +42,9 @@ export function buildLiveMerchantFinanceRouter(pool:Pool,stripe:Provider){
    if(owners.rows.length!==1){res.status(404).json({error:'SELLER_OWNER_REQUIRED'});return;}
    // Platform funds must never be mapped as a seller's Connect recipient.
    // Both accounts are read through Stripe: IDs aren't trusted from the app.
-   const platform=await stripe.accounts.retrieve();
-   if(account===platform.id){res.status(409).json({error:'PLATFORM_ACCOUNT_IS_NOT_MERCHANT'});return;}
+   if(account===config.STRIPE_PLATFORM_ACCOUNT_ID){
+    res.status(409).json({error:'PLATFORM_ACCOUNT_IS_NOT_MERCHANT'});return;
+   }
    const remote=await stripe.accounts.retrieve(account);
    if(remote.id!==account||remote.country!=='MX'||!remote.email||
       remote.email.trim().toLowerCase()!==owners.rows[0]!.email.trim().toLowerCase()){
