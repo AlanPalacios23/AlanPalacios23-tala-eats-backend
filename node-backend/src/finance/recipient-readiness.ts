@@ -21,6 +21,10 @@ export type RecipientOrderSnapshot={
   driverEarning:string;
   tip:string;
   cashCollected:string;
+  refundedAmount:string;
+  total:string;
+  /** Must come from the immutable Stripe TEST ledger, never Flutter. */
+  stripeReceiptVerified:boolean;
 };
 export type RecipientPreview={
   currency:'MXN';
@@ -35,6 +39,7 @@ export type RecipientPreview={
   includes_unpaid_orders:false;
   complete:boolean;
   sampled_orders:number;
+  held_for_review_orders:number;
 };
 const cents=(raw:string):bigint=>{
   if(!/^(?:0|[1-9]\d{0,9})\.\d{2}$/.test(raw))
@@ -53,7 +58,7 @@ export function previewRecipientOrders(
   if(!complete||orders.length>5000)
     throw new Error('RECIPIENT_PREVIEW_REQUIRES_COMPLETE_PAGINATION');
   const seen=new Set<number>();
-  let pendingCash=0n,pendingTest=0n;
+  let pendingCash=0n,pendingTest=0n,heldForReview=0;
   for(const order of orders){
     if(!Number.isSafeInteger(order.id)||order.id<=0||seen.has(order.id))
       throw new Error('DUPLICATE_OR_INVALID_ORDER_SNAPSHOT');
@@ -63,6 +68,13 @@ export function previewRecipientOrders(
     // NOT Stripe receivables or available Connect funds.
     if(order.paymentMethod!=='cash'&&order.paymentMethod!=='stripe')continue;
     if(order.paymentMethod==='stripe'&&order.orderType!=='pickup')continue;
+    // Even the non-withdrawable preview must NOT count refunded sales or
+    // fraudulent/legacy paid flags without a provider-backed receipt.
+    if(cents(order.refundedAmount)!==0n||
+       (order.paymentMethod==='stripe'&&!order.stripeReceiptVerified)){
+      heldForReview++;
+      continue;
+    }
     const restaurant=cents(order.restaurantPayout);
     const driver=cents(order.driverEarning);
     const tip=cents(order.tip);
@@ -76,6 +88,8 @@ export function previewRecipientOrders(
     else{
       if(physicalCash!==0n)
         throw new Error('STRIPE_ORDER_CANNOT_CONTAIN_CASH_COLLECTED');
+      if(cents(order.total)===0n)
+        throw new Error('STRIPE_RECEIPT_ZERO_TOTAL');
       pendingTest+=earning;
     }
   }
@@ -87,5 +101,6 @@ export function previewRecipientOrders(
     available_for_withdrawal:'0.00',eligible:false,
     connect_capability_verified:false,reconciliation_hold:true,
     includes_unpaid_orders:false,complete:true,sampled_orders:orders.length,
+    held_for_review_orders:heldForReview,
   };
 }
