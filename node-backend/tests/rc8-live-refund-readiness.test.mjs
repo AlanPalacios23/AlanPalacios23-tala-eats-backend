@@ -21,7 +21,7 @@ test('LIVE account probe checks real webhook URL, refunds and disputes without S
  assert.match(script,/LIVE_WEBHOOK_SIGNATURE_DELIVERY=UNVERIFIED_UNTIL_SIGNED_EVENT/);
  assert.doesNotMatch(script,/method:\s*'POST'|method:\s*"POST"|\.create\(|\.update\(/);
 });
-test('financial audit covers refunds, cumulative payouts and immutable captured receipt',async()=>{
+test('financial audit covers refund state, cumulative refunded amount and immutable receipt',async()=>{
  let statement='';
  const pool={query:async sql=>{
   statement=sql;
@@ -36,6 +36,9 @@ test('financial audit covers refunds, cumulative payouts and immutable captured 
  for(const value of [
   "o.payment_status IN ('paid','partially_refunded','refunded')",
   'o.refunded_amount > o.total',
+  "o.payment_status='paid' AND o.refunded_amount > 0",
+  "o.payment_status='refunded' AND o.refunded_amount <> o.total",
+  "o.payment_status='partially_refunded'",
   "l.kind='stripe_live_refund'",
   "l.kind='stripe_live_payment'",
   "l.account='stripe_live_collected'",
