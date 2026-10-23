@@ -16,6 +16,7 @@ const schema = z.object({
   STRIPE_REFUNDS_ENABLED: z.enum(['false','true']).default('false'),
   STRIPE_CONNECT_TRANSFERS_ENABLED: z.enum(['false','true']).default('false'),
   STRIPE_MANUAL_SETTLEMENT_APPROVED: z.enum(['false','true']).default('false'),
+  STRIPE_PLATFORM_ACCOUNT_ID: z.string().regex(/^acct_[A-Za-z0-9]+$/).optional(),
   STRIPE_LIVE_MAX_ORDER_MINOR: z.coerce.number().int().min(100).max(50000).default(50000),
   AUTH_V02_ENABLED: z.enum(['false', 'true']).default('false'),
   MARKETPLACE_B_ENABLED: z.enum(['false','true']).default('false'),
@@ -96,7 +97,8 @@ if(config.NODE_ENV==='staging'){
     throw new Error('LIVE_MARKETPLACE_AUTH_AND_TEST_ISOLATION_REQUIRED');
   if(config.STRIPE_CONNECT_TRANSFERS_ENABLED!=='false')
     throw new Error('LIVE_CONNECT_PAYOUTS_REQUIRE_SEPARATE_AUDIT');
-  if(!config.STRIPE_SECRET_KEY||!/^(sk|rk)_live_/.test(config.STRIPE_SECRET_KEY)||
+  if(!config.STRIPE_PLATFORM_ACCOUNT_ID||
+     !config.STRIPE_SECRET_KEY||!/^(sk|rk)_live_/.test(config.STRIPE_SECRET_KEY)||
      !config.STRIPE_PUBLISHABLE_KEY?.startsWith('pk_live_')||
      !config.STRIPE_WEBHOOK_SECRET)
     throw new Error('LIVE_STRIPE_SECRETS_REQUIRED');
