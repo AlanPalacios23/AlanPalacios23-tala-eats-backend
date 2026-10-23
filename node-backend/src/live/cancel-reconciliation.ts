@@ -29,7 +29,7 @@ const milli=(v:string):string=>{
   if(!/^(?:0|[1-9]\d{0,9})(?:\.\d{1,3})?$/.test(v))
     return error('LIVE_CANCEL_INGREDIENT_INVALID');
   const [a,b='']=v.split('.');
-  const units=BigInt(a)*1000n+BigInt((b+'000').slice(0,3));
+  const units=BigInt(a!)*1000n+BigInt((b+'000').slice(0,3));
   if(units<=0n)return error('LIVE_CANCEL_INGREDIENT_NONPOSITIVE');
   return (units/1000n)+'.'+(units%1000n).toString().padStart(3,'0');
 };
