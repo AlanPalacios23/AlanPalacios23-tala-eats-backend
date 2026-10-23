@@ -35,10 +35,28 @@ if(live){
 app.use(express.json({ limit: '128kb' }));
 // Existing order routes remain public. LIVE card PaymentIntents are created
 // only for authenticated/customer-owned persisted Stripe pickup orders.
-if(live)app.use('/api/v1',buildIsolatedCheckoutRouter({
-  enabled:true,authSecret:config.AUTH_JWT_SECRET!,pool:live.pool,
-  redis:live.redis,stripe:live.stripe,settings:live.settings,
-}));
+if(live){
+  app.use('/api/v1',buildIsolatedCheckoutRouter({
+    enabled:true,authSecret:config.AUTH_JWT_SECRET!,pool:live.pool,
+    redis:live.redis,stripe:live.stripe,settings:live.settings,
+  }));
+  // Do not reserve customer stock when Stripe LIVE reconciliation is down.
+  // This gate precedes POST /orders while preserving cash order semantics.
+  app.use('/api/v1/orders',async(req,res,next)=>{
+    if(req.method!=='POST'||req.path!=='/'||
+       req.body?.payment_method!=='stripe'){next();return;}
+    try{
+      const audit=await inspectLiveFinancialData(live.pool);
+      if(audit.classification!=='LIVE_FINANCIAL_DATA_PASS'){
+        res.status(503).json({error:'LIVE_FINANCIAL_RECONCILIATION_HOLD'});
+        return;
+      }
+      next();
+    }catch{
+      res.status(503).json({error:'LIVE_FINANCIAL_DATA_UNAVAILABLE'});
+    }
+  });
+}
 // Opt-in only after dedicated stage auth migration and tested secret provisioning.
 if (config.AUTH_V02_ENABLED === 'true') app.use('/api/v1/auth', authRouter);
 if (config.MARKETPLACE_B_ENABLED === 'true') {
