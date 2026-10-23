@@ -26,7 +26,8 @@ export function buildIsolatedCheckoutRouter(g:Gate){
  if(g.authSecret.length<48)throw new LiveGateError('PROD_SESSION_SECRET_REQUIRED');
  const router=Router();
  const store=new PostgresLivePaymentStore(g.pool);
- router.post('/orders/:id/stripe/payment-intent',async(req,res)=>{
+ router.post(['/orders/:id/stripe/payment-intent',
+  '/payments/stripe/orders/:id/payment-intent'],async(req,res)=>{
   res.setHeader('Cache-Control','no-store');
   if(!g.enabled){res.status(503).json({error:'LIVE_PILOT_NOT_APPROVED'});return;}
   const id=req.params.id;
