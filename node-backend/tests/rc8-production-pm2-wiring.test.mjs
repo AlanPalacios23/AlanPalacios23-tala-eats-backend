@@ -72,3 +72,21 @@ test('existing Flutter payment routes now have signed LIVE API with same user/wo
  assert.match(pm2,/dist\/live\/production-worker\.js/);
  assert.doesNotMatch(pm2,/pm2 (?:start|restart|reload|delete)|docker compose/);
 });
+
+
+test('Kali production provisioning wizard is valid Python, secret-hidden and cannot activate charges',()=>{
+ const file=path.join(root,'scripts','kali-rc83-live-env-wizard.py');
+ const script=readFileSync(file,'utf8');
+ const ast=spawnSync('python3',['-c','import ast,sys; ast.parse(sys.stdin.read())'],
+   {input:script,encoding:'utf8'});
+ assert.equal(ast.status,0,ast.stderr);
+ assert.match(script,/getpass\.getpass/);
+ assert.match(script,/os\.fchmod\(fd,0o600\)/);
+ assert.match(script,/os\.replace\(temporary,TARGET\)/);
+ for(const name of ['STRIPE_LIVE_ENABLED','STRIPE_LIVE_RELEASE_APPROVED',
+ 'STRIPE_FINANCIAL_WRITES_ENABLED','STRIPE_REFUNDS_ENABLED',
+ 'STRIPE_MANUAL_SETTLEMENT_APPROVED','STRIPE_CONNECT_TRANSFERS_ENABLED']){
+  assert.ok(script.includes('"'+name+'":"false"'),name);
+ }
+ assert.doesNotMatch(script,/subprocess\.|os\.system|paymentIntents\.create|stripe\.charges/);
+});
