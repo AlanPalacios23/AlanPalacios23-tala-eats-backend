@@ -5,28 +5,16 @@
  */
 import { db } from '../db.js';
 import { config } from '../config.js';
+import {classifyRc7FinancialData, type Rc7GateCounters} from './rc7-financial-gate-core.js';
 
 export type Rc7FinancialGateResult={
   classification:'STAGE_FINANCIAL_DATA_PASS'|'STAGE_FINANCIAL_DATA_HOLD';
   productionReady:false;
   stripeMode:'test';
   inspectedPaidOrders:number;
-  counters:{
-    stuckIntentReservations:number;
-    overdueUnpaidCardOrders:number;
-    unreconciledSignedWebhooks:number;
-    paidOrdersMissingTrustedReceipt:number;
-    cardCashMisclassification:number;
-    paidOrderSampleTruncated:number;
-  };
+  counters:Rc7GateCounters;
   issues:string[];
 };
-
-export function classifyRc7FinancialData(input:Rc7FinancialGateResult['counters']):
-  Rc7FinancialGateResult['classification'] {
-  return Object.values(input).every(n=>Number.isSafeInteger(n)&&n===0)
-    ?'STAGE_FINANCIAL_DATA_PASS':'STAGE_FINANCIAL_DATA_HOLD';
-}
 
 export async function inspectRc7FinancialData():Promise<Rc7FinancialGateResult>{
   if(config.NODE_ENV!=='staging'||config.STRIPE_FINANCIAL_WRITES_ENABLED!=='false')
