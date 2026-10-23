@@ -31,7 +31,9 @@ export function validateLiveSettings(raw:LiveSettings):ValidatedLiveSettings {
   assert(/^pk_live_[A-Za-z0-9]{16,}$/.test(raw.publishableKey),'LIVE_PUBLISHABLE_KEY_REQUIRED');
   assert(/^whsec_[A-Za-z0-9]{16,}$/.test(raw.webhookSecret),'LIVE_WEBHOOK_SIGNATURE_REQUIRED');
   assert(raw.transfersEnabled==='false','CONNECT_TRANSFERS_UNIMPLEMENTED');
-  assert(['true','false'].includes(raw.refundsEnabled),'REFUND_FLAG_INVALID');
+  // There is no audited refundable-money compensation handler yet.
+  // Refusing to claim refunds are enabled prevents a false LIVE release.
+  assert(raw.refundsEnabled==='false','LIVE_REFUND_COMPENSATION_NOT_IMPLEMENTED');
   const max=Number(raw.maxOrderMinor);
   assert(Number.isSafeInteger(max)&&max>=100&&max<=50_000,'PILOT_MAX_AMOUNT_INVALID');
   let db:URL,redis:URL;
@@ -54,7 +56,7 @@ export function validateLiveSettings(raw:LiveSettings):ValidatedLiveSettings {
   return {secretKey:raw.key,publishableKey:raw.publishableKey,
     webhookSecret:raw.webhookSecret,maxOrderMinor:max,
     databaseUrl:raw.databaseUrl,redisUrl:raw.redisUrl,
-    refundsEnabled:raw.refundsEnabled==='true',transfersEnabled:false};
+    refundsEnabled:false,transfersEnabled:false};
 }
 export function livePilotAmount(amount:number,maxAmountMinor:number):number {
   assert(Number.isSafeInteger(amount)&&amount>=100&&amount<=maxAmountMinor,
