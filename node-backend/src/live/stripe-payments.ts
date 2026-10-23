@@ -17,7 +17,7 @@ export type LivePendingOrder={
 export interface LivePaymentStore{
   // Both methods must be PostgreSQL transactions with row locking. reserve
   // claims the same order before Stripe API and NEVER releases it on timeout.
-  reserveForPayment(orderId:number,buyerId:number):
+  reserveForPayment(orderId:number,buyerId:number,maxOrderMinor:number):
     Promise<LivePendingOrder|null>;
   attachStripeIntent(orderId:number,buyerId:number,intentId:string):
     Promise<boolean>;
@@ -40,7 +40,7 @@ export async function createLivePickupPaymentIntent(
   if(!Number.isSafeInteger(orderId)||orderId<=0||
      !Number.isSafeInteger(buyerId)||buyerId<=0)
     throw new LiveGateError('INVALID_ORDER_ID');
-  const order=await store.reserveForPayment(orderId,buyerId);
+  const order=await store.reserveForPayment(orderId,buyerId,settings.maxOrderMinor);
   assertOrder(order,buyerId,settings);
   if(order!.intentId!==reserved&&!/^pi_[A-Za-z0-9]+$/.test(order!.intentId??''))
     throw new LiveGateError('ORDER_RESERVATION_NOT_ATOMIC');
@@ -55,7 +55,8 @@ export async function createLivePickupPaymentIntent(
         description:'Tala Eats pedido '+orderId,
       },{idempotencyKey:'tala-live-v1-pickup-order-'+orderId})
     : await provider.paymentIntents.retrieve(order!.intentId!);
-  if(!intent.livemode||intent.currency!=='mxn'||intent.amount!==order!.amountMinor||
+  if((order!.intentId!==reserved&&intent.id!==order!.intentId)||
+     !intent.livemode||intent.currency!=='mxn'||intent.amount!==order!.amountMinor||
      intent.metadata.tala_mode!==metadata.tala_mode||
      intent.metadata.order_id!==metadata.order_id||
      intent.metadata.buyer_id!==metadata.buyer_id||
