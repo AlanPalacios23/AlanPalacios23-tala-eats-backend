@@ -6,6 +6,8 @@ import {ingestSignedLiveStripeWebhook,drainLiveSignedReceipts}
  from '../dist/live/webhook-inbox.js';
 import {reconcileRecordedLiveStripeEvent}
  from '../dist/live/reconcile.js';
+import {assessLiveFinancialCounters,inspectLiveFinancialData}
+ from '../dist/live/financial-readiness.js';
 
 const settings=()=>validateLiveSettings({
   nodeEnv:'production',explicitlyEnabled:'true',readinessApproved:'true',
@@ -105,4 +107,55 @@ test('worker cannot reconcile event absent from signed durable inbox',async()=>{
   await assert.rejects(
     ()=>reconcileRecordedLiveStripeEvent('evt_MISSING',provider,pool,settings()),
     LiveGateError);
+});
+
+test('refunds and charge disputes are durably held instead of ignored',async()=>{
+  for(const [type,object,id] of [
+    ['charge.refunded','charge','ch_AAAA'],
+    ['charge.dispute.created','dispute','dp_AAAA'],
+    ['refund.updated','refund','re_AAAA'],
+  ]){
+    let writes=0;
+    const event={id:'evt_FIN'+writes,livemode:true,type,
+      data:{object:{object,id}}};
+    const p={webhooks:{constructEvent:()=>event}};
+    const pool={query:async(_sql,_args)=>{
+      writes++;
+      return {rowCount:1,rows:[{status:'RECEIVED'}]};
+    }};
+    const r=await ingestSignedLiveStripeWebhook(
+      Buffer.from('{}'),'sig',p,pool,settings());
+    assert.deepEqual(r,{received:true,queued:true});
+    assert.equal(writes,1,type);
+  }
+});
+test('release financial data gate fails closed for any outstanding risk',async()=>{
+  const zero={pendingPaymentReceipts:0,pendingRefundOrDisputeEvents:0,
+    suspectCapturedOrders:0,stuckProviderReservations:0};
+  assert.equal(assessLiveFinancialCounters(zero),'LIVE_FINANCIAL_DATA_PASS');
+  for(const key of Object.keys(zero)){
+    assert.equal(assessLiveFinancialCounters({...zero,[key]:1}),
+      'LIVE_FINANCIAL_DATA_HOLD',key);
+  }
+  for(const value of [-1,undefined,1.5,Infinity,NaN]){
+    assert.equal(assessLiveFinancialCounters({...zero,
+      stuckProviderReservations:value}),'LIVE_FINANCIAL_DATA_HOLD');
+  }
+  let rawQuery='';
+  const pool={query:async(sql)=>{
+    rawQuery=sql;
+    return {rows:[{
+      pending_payment_receipts:'0',
+      pending_refund_or_dispute_events:'1',
+      suspect_captured_orders:'0',
+      stuck_provider_reservations:'0',
+    }]};
+  }};
+  const r=await inspectLiveFinancialData(pool);
+  assert.equal(r.classification,'LIVE_FINANCIAL_DATA_HOLD');
+  assert.equal(r.counters.pendingRefundOrDisputeEvents,1);
+  assert.equal(r.liveEnabled,false);
+  assert.match(rawQuery,/stripe_live_collected/);
+  assert.match(rawQuery,/charge\.dispute\.created/);
+  assert.doesNotMatch(rawQuery,/\bUPDATE\b|\bDELETE\b|\bINSERT\b/);
 });
