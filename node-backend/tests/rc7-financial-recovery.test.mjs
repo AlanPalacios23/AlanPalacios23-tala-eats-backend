@@ -69,7 +69,7 @@ test('Kali wizard/preflight fail closed and never place keys in code',()=>{
 test('TEST Stripe cannot accrue GMV or merchant liability before verified payment',()=>{
  const checkout=read('src/marketplace/checkout.ts');
  const receipt=read('src/stage-stripe-test.ts');
- assert.match(checkout,/if\(!testStripe\)\{/);
+ assert.match(checkout,/if\(!cardStripe\)\{/);
  assert.match(checkout,/cash-only accrual; Stripe is posted atomically on confirmed charge/);
  const start=receipt.indexOf('if(event.type===\'payment_intent.succeeded\')');
  const ledger=receipt.indexOf("const accrual=[",start);
@@ -101,8 +101,8 @@ test('abandoned TEST pickup reservations expire only after Stripe safe cancel',(
 test('no accounts payable or order-created dispatch before Stripe TEST receipt',()=>{
   const checkout=read('src/marketplace/checkout.ts');
   const processor=read('src/stage-stripe-test.ts');
-  assert.match(checkout,/if\(!testStripe\)\{/);
-  assert.match(checkout,/if\(testStripe&&account\.role!=='customer'\)/);
+  assert.match(checkout,/if\(!cardStripe\)\{/);
+  assert.match(checkout,/if\(cardStripe&&account\.role!=='customer'\)/);
   assert.match(processor,/existingAccrual!==0/);
   assert.match(processor,/eventKey:'order:'\+orderId\+':created'/);
   assert.match(processor,/account:'stripe_test_collected'/);
