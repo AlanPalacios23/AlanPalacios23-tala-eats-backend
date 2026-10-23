@@ -123,9 +123,17 @@ export async function main(argv=process.argv.slice(2), deps={}){
       'LOCAL_API_FINANCIAL_CONTRACT');
    guard(validateApiContract(mode,publicHealth,publicReady),
       'PUBLIC_API_FINANCIAL_CONTRACT');
-   guard(JSON.stringify(localHealth)===JSON.stringify(publicHealth) &&
-     JSON.stringify(localReady)===JSON.stringify(publicReady),
+   // Dynamic diagnostic keys may differ between sequential requests.
+   // Compare stable release/version and financial flags rather than JSON bytes.
+   guard(typeof localHealth.version==='string'&&localHealth.version.length>0&&
+     localHealth.version===publicHealth.version&&
+     localHealth.digital_payment_provider===publicHealth.digital_payment_provider&&
+     localHealth.online_payment_writes===publicHealth.online_payment_writes&&
+     localReady.environment===publicReady.environment&&
+     localReady.financialWrites===publicReady.financialWrites&&
+     localReady.onlinePaymentsEnabled===publicReady.onlinePaymentsEnabled,
       'PUBLIC_LOCAL_ROUTE_CONSISTENCY');
+   console.log('POSTDEPLOY_VERSION=RC8-POSTDEPLOY-20261023.1');
    console.log('POSTDEPLOY_RC8_SHA='+sha);
    console.log('POSTDEPLOY_RC8_MODE='+mode);
    console.log('POSTDEPLOY_READ_ONLY=PASS');
