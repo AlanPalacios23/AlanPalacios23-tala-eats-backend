@@ -63,6 +63,26 @@ migrated production PostgreSQL environment. Existing stage DB/Redis cannot be
 used for it. No finance endpoint is mounted in RC7. No new host service or
 `.env` on Kali is created by this PR.
 
+## Next Kali release: code-only installation (no PM2 cutover)
+
+RC8 includes **two** safe operator scripts under `node-backend/scripts/`:
+
+- `rc8-kali-install-candidate.sh --prepare <FULL_RC8_SHA>`: pins a specific
+  reviewed commit from the RC8 branch, clones to its own
+  `~/tala-node-releases/<SHA>` directory, runs frozen npm dependencies,
+  Prisma generate/schema validate, strict TypeScript and all unit tests.
+  Does **not** migrate a database, restart PM2, change Cloudflared or use
+  Stripe LIVE API. Requires current RC7 PM2 to remain the reviewed SHA.
+- `rc8-kali-next-deployment-preflight.sh --plan <FULL_RC8_SHA>`: validates
+  the SHA, paths, code gate, current RC7 PM2 identity, financial-writes OFF
+  and local/public health. Does not display secrets or mutate services.
+
+Do not claim the above constitutes Stripe LIVE production deployment:
+it installs **reviewable code** in a separate directory only. The operational
+rollout will require its own production entrypoint, authenticated API,
+persistent queue/worker, refund/chargeback compensation, Connect, PaymentSheet,
+independent PostgreSQL/Redis, full TEST and pilot LIVE approval.
+
 ## Required before any live charge (strict NO-GO pending)
 
 1. Provision independent production PostgreSQL/Redis, backup+restore, migration
