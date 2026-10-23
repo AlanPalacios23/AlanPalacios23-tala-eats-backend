@@ -68,18 +68,18 @@ export async function reconcileRecordedLiveStripeEvent(
   if(!/^evt_[A-Za-z0-9]+$/.test(eventId))
     throw new LiveGateError('INVALID_RECORDED_EVENT_ID');
   const recorded=await pool.query<{
-    type:string;object_id:string;stripe_account_id:string|null;
-  }>(`SELECT type,object_id,stripe_account_id
+    type:string;objectId:string;stripeAccountId:string|null;
+  }>(`SELECT type,"objectId","stripeAccountId"
       FROM stripe_webhook_events WHERE id=$1`,[eventId]);
   const existing=recorded.rows[0];
-  if(!existing||existing.stripe_account_id!==null||
-     !allowed.has(existing.type)||!/^pi_[A-Za-z0-9]+$/.test(existing.object_id))
+  if(!existing||existing.stripeAccountId!==null||
+     !allowed.has(existing.type)||!/^pi_[A-Za-z0-9]+$/.test(existing.objectId))
     throw new LiveGateError('SIGNED_RECEIPT_NOT_RECORDED');
   // Stripe's authenticated API is the second trust boundary.
   const signed=await provider.events.retrieve(eventId);
   const object=signed.data.object as {id?:string};
   if(!signed.livemode||signed.account||signed.id!==eventId||
-     signed.type!==existing.type||object.id!==existing.object_id)
+     signed.type!==existing.type||object.id!==existing.objectId)
     throw new LiveGateError('DURABLE_AND_STRIPE_EVENT_MISMATCH');
   return reconcileLiveVerifiedEvent(signed,provider,pool,settings);
 }
@@ -117,17 +117,17 @@ async function reconcileLiveVerifiedEvent(
     // rolls back both the receipt and the order/ledger changes; Stripe retries.
     await client.query(`
       INSERT INTO stripe_webhook_events
-        (id,type,stripe_account_id,object_id,status,delivery_count,received_at)
+        (id,type,"stripeAccountId","objectId",status,"deliveryCount","receivedAt")
       VALUES ($1,$2,NULL,$3,'RECEIVED',1,NOW())
-      ON CONFLICT(id) DO UPDATE SET delivery_count=
-        stripe_webhook_events.delivery_count+1
+      ON CONFLICT(id) DO UPDATE SET "deliveryCount"=
+        stripe_webhook_events."deliveryCount"+1
     `,[signed.id,signed.type,object.id]);
     const receipt=await client.query<{
-      type:string;object_id:string;status:string;
-    }>(`SELECT type,object_id,status FROM stripe_webhook_events
+      type:string;objectId:string;status:string;
+    }>(`SELECT type,"objectId",status FROM stripe_webhook_events
        WHERE id=$1 FOR UPDATE`,[signed.id]);
     const stored=receipt.rows[0];
-    if(!stored||stored.type!==signed.type||stored.object_id!==object.id)
+    if(!stored||stored.type!==signed.type||stored.objectId!==object.id)
       throw new LiveGateError('WEBHOOK_EVENT_IDENTITY_CONFLICT');
     if(stored.status==='PROCESSED'){
       await client.query('COMMIT');
@@ -235,7 +235,7 @@ async function reconcileLiveVerifiedEvent(
     // without a separate provider-confirmed cancel/compensation transaction.
     await client.query(`
       UPDATE stripe_webhook_events
-      SET status='PROCESSED',processed_at=NOW() WHERE id=$1
+      SET status='PROCESSED',"processedAt"=NOW() WHERE id=$1
     `,[signed.id]);
     await client.query('COMMIT');
     return {received:true,alreadyProcessed:false};
