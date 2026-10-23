@@ -21,7 +21,7 @@ function pm2(mode='stage'){
   pm_exec_path:cwd+'/dist/server.js'}},
  {name:'tala-node-stage-worker',pid:102,pm2_env:{status:'online',
   NODE_ENV:mode==='stage'?'staging':'production',pm_cwd:cwd,
-  pm_exec_path:cwd+'/dist/worker.js'}}];
+  pm_exec_path:mode==='live'?cwd+'/dist/live/production-worker.js':cwd+'/dist/worker.js'}}];
 }
 test('postdeploy stage and live contracts distinguish financial modes',()=>{
  assert.equal(validateApiContract('stage',stageHealth,stageReady),true);
