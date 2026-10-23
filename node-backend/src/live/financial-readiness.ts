@@ -36,18 +36,38 @@ export async function inspectLiveFinancialData(pool:Pool):
       -- marked PROCESSED or an outbox notification was PUBLISHED. Refunds
       -- and chargebacks require merchant-payable and fulfillment signoff.
       (
-        (SELECT count(*) FROM stripe_webhook_events
-         WHERE (status IN ('RECEIVED','FAILED')
-           AND type IN ('charge.refunded','charge.dispute.created',
-             'charge.dispute.closed','refund.created','refund.updated',
-             'refund.failed','charge.refund.updated'))
-           OR type IN ('charge.dispute.created','charge.dispute.closed',
-             'charge.refunded','charge.refund.updated'))
+        (SELECT count(*) FROM stripe_webhook_events e
+         WHERE
+           ((e.status IN ('RECEIVED','FAILED') AND e.type IN
+              ('charge.refunded','charge.dispute.created',
+               'charge.dispute.closed','refund.created','refund.updated',
+               'refund.failed','charge.refund.updated'))
+             OR e.type IN ('charge.dispute.created','charge.dispute.closed',
+               'charge.refunded','charge.refund.updated'))
+           AND NOT EXISTS (
+             SELECT 1 FROM tala_live_financial_cases c
+             WHERE c.stripe_object_id=e."objectId"
+               AND c.case_type=CASE
+                 WHEN e.type LIKE 'charge.dispute.%' THEN 'dispute'
+                 WHEN e.type='refund.failed' THEN 'refund_failure'
+                 WHEN e.type LIKE 'refund.%' THEN 'refund'
+                 ELSE 'charge_refund' END
+               AND c.status='resolved'))
         +
-        (SELECT count(*) FROM event_outbox
-         WHERE event_type IN ('order.refund_review_required',
+        (SELECT count(*) FROM tala_live_financial_cases
+          WHERE status IN ('open','reviewed'))
+        +
+        (SELECT count(*) FROM event_outbox o
+         WHERE o.event_type IN ('order.refund_review_required',
            'order.refund_failure_review_required',
-           'order.dispute_review_required'))
+           'order.dispute_review_required')
+           AND NOT EXISTS (
+             SELECT 1 FROM tala_live_financial_cases c
+             WHERE c.order_id::text=o.aggregate_id
+               AND c.status='resolved'
+               AND ((o.event_type='order.refund_review_required' AND c.case_type='refund')
+                 OR (o.event_type='order.refund_failure_review_required' AND c.case_type='refund_failure')
+                 OR (o.event_type='order.dispute_review_required' AND c.case_type='dispute'))))
       ) AS pending_refund_or_dispute_events,
       -- A refunded order must never disappear from the financial audit:
       -- it still requires its original immutable captured-money receipt,
