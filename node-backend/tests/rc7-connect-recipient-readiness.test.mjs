@@ -7,7 +7,8 @@ const good=(id,more={})=>({
  id,status:'delivered',paymentStatus:'paid',
  paymentMethod:'cash',orderType:'pickup',
  restaurantPayout:'85.00',driverEarning:'0.00',
- tip:'10.00',cashCollected:'117.00',...more,
+ tip:'10.00',cashCollected:'117.00',refundedAmount:'0.00',
+ total:'117.00',stripeReceiptVerified:false,...more,
 });
 test('cash income is NEVER Stripe balance even when pickup is delivered',()=>{
  const v=previewRecipientOrders('restaurant',[good(1)],true);
@@ -20,7 +21,7 @@ test('cash income is NEVER Stripe balance even when pickup is delivered',()=>{
 });
 test('Stripe TEST is not transferable LIVE or withdrawable',()=>{
  const v=previewRecipientOrders('restaurant',[good(2,{
-  paymentMethod:'stripe',cashCollected:'0.00',
+  paymentMethod:'stripe',cashCollected:'0.00',stripeReceiptVerified:true,
  })],true);
  assert.equal(v.pending_review_stripe_test,'85.00');
  assert.equal(v.available_for_withdrawal,'0.00');
@@ -47,7 +48,7 @@ test('unpaid, canceled or unsupported delivered orders excluded',()=>{
 });
 test('anomalous card cash capture, duplicate IDs or incomplete pages fail closed',()=>{
  assert.throws(()=>previewRecipientOrders('restaurant',[
-  good(1,{paymentMethod:'stripe'}),
+  good(1,{paymentMethod:'stripe',stripeReceiptVerified:true}),
  ],true),/STRIPE_ORDER_CANNOT_CONTAIN_CASH_COLLECTED/);
  assert.throws(()=>previewRecipientOrders('restaurant',[good(1),good(1)],true),
   /DUPLICATE_OR_INVALID_ORDER_SNAPSHOT/);
@@ -73,4 +74,27 @@ test('routes preserve authorization and never enable Stripe Connect payout write
  assert.match(src,/previewRecipientOrders/);
  assert.match(src,/financialUnavailable\('withdrawal_requires_verified_ledger_and_provider'\)/);
  assert.match(src,/financialUnavailable\('stripe_split_settlement'\)/);
+});
+
+test('refunded and unverified card orders never inflate recipient pending income',()=>{
+ const result=previewRecipientOrders('restaurant',[
+   good(1,{paymentMethod:'stripe',cashCollected:'0.00',
+     stripeReceiptVerified:false}),
+   good(2,{paymentMethod:'stripe',cashCollected:'0.00',
+     stripeReceiptVerified:true,refundedAmount:'10.00'}),
+   good(3,{paymentMethod:'cash',refundedAmount:'5.00'}),
+   good(4,{paymentMethod:'stripe',cashCollected:'0.00',
+     stripeReceiptVerified:true}),
+ ],true);
+ assert.equal(result.pending_review_stripe_test,'85.00');
+ assert.equal(result.pending_review_cash,'0.00');
+ assert.equal(result.held_for_review_orders,3);
+ assert.equal(result.available_for_withdrawal,'0.00');
+});
+test('recipient status uses ledger-backed Stripe evidence, never the paid flag alone',()=>{
+ const src=readFileSync(new URL('../src/parity/routes.ts',import.meta.url),'utf8');
+ assert.match(src,/stageFinancialLedgerEntry.findMany/);
+ assert.match(src,/stripe_test_collected/);
+ assert.match(src,/refundedAmount:euro\(o.refundedAmount\)/);
+ assert.match(src,/stripeReceiptVerified:trustedReceipts.has\(o.id\)/);
 });
