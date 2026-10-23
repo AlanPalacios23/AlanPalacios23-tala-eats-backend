@@ -5,7 +5,7 @@ const read=(file)=>readFileSync(new URL('../'+file,import.meta.url),'utf8');
 
 test('RC7 cannot allow Stripe LIVE and requires TEST credentials',()=>{
  const config=read('src/config.ts');
- assert.match(config,/NODE_ENV: z\\.enum\\(\\['staging','production'\\]\\)/);
+ assert.match(config,/NODE_ENV: z\.enum\(\['staging','production'\]\)/);
  assert.match(config,/STRIPE_SECRET_KEY: z\.string\(\)\.regex\(/);
  assert.match(config,/(?:sk_test_|rk_test_)/);
  assert.match(config,/STAGING_REQUIRES_STRIPE_TEST_PUBLISHABLE/);
