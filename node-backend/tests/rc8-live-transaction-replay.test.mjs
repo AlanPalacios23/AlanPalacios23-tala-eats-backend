@@ -30,8 +30,8 @@ function fixture({
     restaurant_payout:'10.00',platform_revenue:'2.50',
     payment_processing_fee:'0.25',contribution_margin:'2.25',
   };
-  const receipt={type:event.type,object_id:piid,
-    stripe_account_id:null,status:'RECEIVED'};
+  const receipt={type:event.type,objectId:piid,
+    stripeAccountId:null,status:'RECEIVED'};
   const entries=[],events=[],orderEvents=[],queries=[];
   let committed=0,rolledBack=0;
   const query=async(sql,params=[])=>{
@@ -40,7 +40,7 @@ function fixture({
     if(sql==='COMMIT'){committed++;return {rows:[],rowCount:null};}
     if(sql==='ROLLBACK'){rolledBack++;return {rows:[],rowCount:null};}
     if(sql.includes('INSERT INTO stripe_webhook_events'))return {rows:[],rowCount:1};
-    if(sql.includes('SELECT type,object_id,status FROM stripe_webhook_events'))
+    if(sql.includes('SELECT type,"objectId",status FROM stripe_webhook_events'))
       return {rows:[receipt],rowCount:1};
     if(sql.includes('SELECT id,user_id,restaurant_id,total::text,status'))
       return {rows:[order],rowCount:1};
@@ -78,7 +78,7 @@ function fixture({
   };
   const pool={
     query:async(sql)=>{
-      if(sql.includes('SELECT type,object_id,stripe_account_id')){
+      if(sql.includes('SELECT type,"objectId","stripeAccountId"')){
         return {rows:receiptExists?[receipt]:[],rowCount:receiptExists?1:0};
       }
       throw Error('unexpected outside-transaction SQL');
