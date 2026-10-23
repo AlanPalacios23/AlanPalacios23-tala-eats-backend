@@ -34,6 +34,8 @@ La cuenta Connect tiene requisitos de alta pendientes. Una cuenta Connect creada
 | `src/live/reconcile.ts` | coteja la identidad de eventos remotos y bloquea eventos Connect fuera del flujo |
 | `src/live/isolated-app.ts` y `src/live/webhook-router.ts` | soportan el webhook original de Stripe y el alias canónico, siempre con cuerpo bruto y firma |
 | `src/live/financial-readiness.ts` | auditoría incluye pedidos `paid`, `partially_refunded` y `refunded`, y exige que los reembolsos estén conciliados en el ledger |
+| `src/live/refund-reconciliation.ts` | Reconciliación de reembolsos LIVE ya confirmados por Stripe mediante evento duradero y API; débito idempotente de fondos cobrados, saldo reembolsado y evento de revisión. **No** inicia devoluciones ni libera inventario/pagos a comercios. |
+| `src/live/webhook-inbox.ts` / `src/live/worker-runner.ts` | Barrido limitado de recibos `refund.created` / `refund.updated` con reintentos y retención segura; sucesos de disputa continúan bloqueados hasta implementar el resto del ciclo. |
 | Pruebas `rc8-live-*.test.mjs` | reglas de webhook, sintaxis de instalador, fail-closed, auditoría financiera |
 
 **La rama RC8 base todavía NO conecta un checkout financiero LIVE operativo al runtime público**. El módulo `isolated-app` exige `refundsEnabled=true` para activar checkout, y `guard.ts` aún no permite declarar reembolsos implementados. Es correcto que falle cerrado mientras falta compensación.
@@ -54,7 +56,7 @@ El preflight ahora también requiere `refund.created`, `refund.updated`, `refund
 
 1. **Producción Node completa**: `config.ts`, `server.ts` y `worker.ts` públicos fuerzan staging y no montan todo el checkout LIVE. Se requiere una migración del runtime preservando rutas comerciales, autenticación, soporte, admin, conductores y las apps existentes.
 2. **Datos de producción**: provisionar PostgreSQL/Redis protegidos; migraciones y respaldo/restauración completos, validación de cuentas, restaurantes, pedidos, inventario y saldos. El entorno staging no puede convertirse implícitamente en tesorería real.
-3. **Reembolsos/chargebacks**: no existe todavía compensación financiera completa, reversos de inventario, controles de liquidación y tratamiento de entregas iniciadas. Eventos de reverso se guardan en HOLD; deben procesarse sin doble contabilización.
+3. **Reembolsos/chargebacks**: ya se contabilizan con idempotencia los reembolsos confirmados, pero NO existe aún compensación financiera integral de cuentas a pagar a comercios, restauración de inventario, gestión de disputas ni reversos de entregas iniciadas. Los eventos no conciliables siguen en HOLD. No confundir débito de Stripe cobrado con reversión completa de la operación.
 4. **Webhook/worker**: eventos firmados, duplicados, reordenados, caída de Stripe/DB, reintentos durables, alertas operativas, refund/chargeback; no basta HTTP 200.
 5. **Stripe Connect**: completar alta de la cuenta receptora antes de transferir o liquidar. Mantener transfers/payouts deshabilitados hasta cierre independiente.
 6. **Activación**: instalación privada de credenciales LIVE, permisos mínimos, comprobación de API, prueba controlada autorizada con dinero real + reembolso, reconciliación y rollback. Nunca automatizar cargos a clientes al instalar claves.
