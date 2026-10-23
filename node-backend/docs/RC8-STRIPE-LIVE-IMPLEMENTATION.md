@@ -28,6 +28,35 @@ Live code is deliberately **NOT imported by the RC7 API or worker**.
 - `tests/rc8-stripe-live-isolation.test.mjs`: pure tests with synthetic
   Stripe provider; **no LIVE API calls** and no live keys used.
 
+### Hardening increment for next Kali deployment review
+
+- Prevent ineligible amount, corrupted provider ID and expired (>30 minute)
+  order from writing `pi_reserving_rc8_live` to PostgreSQL at all. The
+  maximum amount check runs **under the order row lock before reservation**.
+- Re-fetching existing PaymentIntent must match its exact stored ID; metadata
+  matching alone is not enough.
+- Recover a provider-created-but-not-attached PaymentIntent after an API crash
+  **only from a signed, LIVE Stripe event and a remote-fetched intent**, under
+  an order row lock with exact amount, buyer ID, order ID, mode and status.
+- `src/live/webhook-inbox.ts` stores signed payment events durably before
+  acknowledging HTTP; a future dedicated worker can reconcile bounded retries
+  using Stripe-retrieved events. Failures stay RECEIVED for investigation.
+- Signed **refund and dispute** events are not dropped: record durable HOLD
+  receipts even though reversal accounting is deliberately not implemented.
+  Do not mark such receipts PROCESSED until the reversal and liability logic
+  is reviewed.
+- `src/live/financial-readiness.ts`: aggregate read-only PASS/HOLD counters
+  for unprocessed payment receipts, refund/dispute events, captured orders
+  missing the unique LIVE ledger proof, and old reserved PaymentIntents.
+  PASS is necessary but does **not** authorize commercial checkout.
+- `scripts/rc8-kali-next-deployment-preflight.sh --plan <40-char-RC8-SHA>`
+  verifies RC7 remains the active PM2 release and payments stay disabled,
+  while validating the reviewed RC8 source from a separate checkout. It does
+  not change PostgreSQL, Cloudflared, PM2 or Stripe.
+- New unit tests cover expired orders, price ceilings, provider-ID mismatch,
+  signed durable webhook storage and immutable event identity, reversal HOLD,
+  backlog inspection and deployment script syntax.
+
 **This is a development milestone, not a public HTTP entrypoint or complete
 LIVE checkout.** The database adapter is intended for a future independent,
 migrated production PostgreSQL environment. Existing stage DB/Redis cannot be
