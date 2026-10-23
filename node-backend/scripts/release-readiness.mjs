@@ -31,19 +31,23 @@ const files=[
  'scripts/actualizar.sh',
 ];
 const stageChecks=[
- {id:'isolated-runtime',ok:/NODE_ENV:\s*z\.literal\('staging'\)/.test(config) &&
+ {id:'isolated-runtime',ok:config.includes("config.NODE_ENV==='staging'") &&
+     config.includes('STAGING_MONEY_WRITES_FORBIDDEN')&&
      /HOST:\s*z\.literal\('127\.0\.0\.1'\)/.test(config),
   detail:'Runtime restringido al proceso staging local'},
  {id:'isolated-postgres-redis',ok:config.includes('STAGING_POSTGRES_ISOLATION_REQUIRED')&&
      config.includes('STAGING_REDIS_ISOLATION_REQUIRED'),
   detail:'PostgreSQL y Redis privados, separados del Python productivo'},
- {id:'stripe-live-disabled',ok:config.includes("STRIPE_FINANCIAL_WRITES_ENABLED: z.literal('false')")&&
-     stripe.includes("startsWith('sk_test_')")===false &&
-     config.includes("STRIPE_SECRET_KEY: z.string().regex(/^(?:sk_test_|rk_test_)"),
-  detail:'Credenciales Stripe únicamente TEST; operaciones financieras apagadas'},
- {id:'explicit-stage-ready',ok:app.includes('productionReady: false')&&
-     app.includes("environment: 'staging'")&&app.includes('financialWrites: false'),
-  detail:'HTTP /ready no significa aptitud comercial'},
+ {id:'stripe-live-disabled',ok:config.includes('STAGING_MONEY_WRITES_FORBIDDEN')&&
+     config.includes('STAGING_REQUIRES_STRIPE_TEST_KEY')&&
+     config.includes('STAGING_REQUIRES_STRIPE_TEST_PUBLISHABLE')&&
+     stripe.includes("startsWith('sk_test_')")===false,
+  detail:'En staging se rechazan claves LIVE y escrituras financieras'},
+ {id:'explicit-stage-ready',ok:app.includes("const live=config.NODE_ENV==='production'?")&&
+     app.includes("environment:live?'production':'staging'")&&
+     app.includes('financialWrites:Boolean(live&&ready)')&&
+     app.includes('online_payment_writes:Boolean(live)'),
+  detail:'Readiness de staging separado de la aptitud financiera LIVE'},
  {id:'worker-heartbeat',ok:app.includes('workerHeartbeat')===false &&
      app.includes("tala:node:stage:worker:heartbeat") &&
      worker.includes("workerHeartbeatTimer"),
