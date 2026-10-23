@@ -13,6 +13,7 @@ import {verifyLiveStripeEvent,type LiveStripeApi} from './stripe-payments.js';
 import {reconcileRecordedLiveStripeEvent} from './reconcile.js';
 import {reconcileRecordedLiveRefund} from './refund-reconciliation.js';
 import {reconcileRecordedLiveCanceledIntent} from './cancel-reconciliation.js';
+import {reconcileRecordedLiveRefundFailure} from './refund-failure-reconciliation.js';
 
 const paymentTypes=new Set([
   'payment_intent.succeeded',
@@ -148,6 +149,29 @@ export async function drainLiveCanceledReceipts(
      // Signed receipt remains on HOLD, no lost inventory/financial writes.
      held++;
    }
+ }
+ return {checked:rows.rows.length,reconciled,held};
+}
+
+
+/** Preserve failed refund evidence while posting a compensating collected-
+ * money credit once. No provider mutations or merchant payout release.
+ */
+export async function drainLiveRefundFailures(
+ provider:LiveStripeApi,pool:Pool,maximum=10
+):Promise<{checked:number;reconciled:number;held:number}>{
+ if(!Number.isSafeInteger(maximum)||maximum<1||maximum>50)
+   throw new LiveGateError('LIVE_REFUND_FAILURE_BATCH_INVALID');
+ const sql="SELECT id FROM stripe_webhook_events WHERE status IN ('RECEIVED','FAILED') "+
+  "AND \"stripeAccountId\" IS NULL AND type='refund.failed' "+
+  "ORDER BY \"receivedAt\",id LIMIT $1";
+ const rows=await pool.query<{id:string}>(sql,[maximum]);
+ let reconciled=0,held=0;
+ for(const row of rows.rows){
+  try{
+   await reconcileRecordedLiveRefundFailure(row.id,provider,pool);
+   reconciled++;
+  }catch{held++;}
  }
  return {checked:rows.rows.length,reconciled,held};
 }
