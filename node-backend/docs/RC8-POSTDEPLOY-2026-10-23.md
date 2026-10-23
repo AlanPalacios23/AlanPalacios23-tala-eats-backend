@@ -22,7 +22,8 @@
 5. Endpoints local y HTTPS público responden JSON de salud/readiness, base de datos y Redis operativos, heartbeat de worker y proveedor Stripe.
 6. Los estados financieros del contrato son inequívocos: staging **sin** cobros, LIVE **con** cobros solo cuando exista runtime de producción aprobado.
 7. Ambos orígenes anuncian la misma versión, entorno y banderas financieras. Esto es consistencia observable, **no prueba criptográfica** de que el tráfico pasó por el mismo proceso.
-8. No se invocan cambios de Cloudflare, PM2, SQL, Stripe, Docker ni hooks de transferencia.
+8. En modo LIVE ejecuta únicamente consultas GET a Stripe para verificar la **cuenta principal**, habilitación de cobros, **Connect** (registro completo, transferencias y retiros) y la suscripción del webhook existente a los eventos de pagos, reembolsos y disputas. Esto falla actualmente con Connect incompleto/eventos ausentes.
+9. No se invocan cambios de Cloudflare, PM2, SQL, Stripe, Docker ni hooks de transferencia.
 
 ### Comando futuro — verificar RC8 staging promovido
 
