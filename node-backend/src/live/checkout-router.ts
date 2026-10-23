@@ -11,6 +11,7 @@ import type {ValidatedLiveSettings} from './guard.js';
 import {LiveGateError} from './guard.js';
 import {PostgresLivePaymentStore} from './postgres-store.js';
 import {createLivePickupPaymentIntent,type LiveStripeApi} from './stripe-payments.js';
+import {inspectLiveFinancialData} from './financial-readiness.js';
 
 type Gate={
   enabled:boolean;
@@ -53,6 +54,15 @@ export function buildIsolatedCheckoutRouter(g:Gate){
     const user=verified.rows[0];
     if(!user||!user.active||!user.is_active||user.role!=='customer'){
       res.status(401).json({error:'SESSION_REVOKED'});return;
+    }
+    // A release flag is not permission to charge a card when a prior
+    // refund/dispute, captured-but-unposted order or orphaned PI exists.
+    // Read-only query on the SAME independent PostgreSQL connection that
+    // will hold the order's immutable financial ledger. Fail closed on error.
+    const audit=await inspectLiveFinancialData(g.pool);
+    if(audit.classification!=='LIVE_FINANCIAL_DATA_PASS'){
+      res.status(503).json({error:'LIVE_FINANCIAL_RECONCILIATION_HOLD'});
+      return;
     }
     const key='rc8:live:checkout:buyer:'+sha(String(buyer));
     const n=await g.redis.eval(
