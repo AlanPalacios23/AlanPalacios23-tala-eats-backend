@@ -46,8 +46,32 @@ if(Object.values(checks).some(x=>!x)){
     }catch{
       console.log('CONNECT_STATUS=UNVERIFIED_READ_PERMISSION_OR_STRIPE_ERROR');
     }
-    console.log('LIVE_API_READ_ONLY_CHECK='+(match&&cards&&enabled?'PASS':'BLOCKED'));
-    if(!match||!cards||!enabled)process.exitCode=1;
+    // Verify the existing LIVE destination before an operator enables charges.
+    // GET-only: no endpoint changes and no fabricated webhook deliveries.
+    let webhookReady=false;
+    try{
+      const destination='https://talaeats.alan-palacios-dev.com/api/v1/payments/stripe/webhook';
+      const listed=await get('/v1/webhook_endpoints?limit=100');
+      if(listed.has_more===true)throw Error('INCOMPLETE_WEBHOOK_PAGE');
+      const candidate=Array.isArray(listed.data)?listed.data.find(x=>
+        x.url===destination&&x.status==='enabled'&&x.livemode===true):undefined;
+      const events=new Set(candidate?.enabled_events??[]);
+      const required=[
+        'payment_intent.succeeded','payment_intent.payment_failed',
+        'payment_intent.canceled','refund.created','refund.updated',
+        'refund.failed','charge.dispute.created','charge.dispute.closed',
+      ];
+      const covered=events.has('*')||required.every(x=>events.has(x));
+      console.log('LIVE_WEBHOOK_DESTINATION='+(candidate?'MATCH':'BLOCKED'));
+      console.log('LIVE_WEBHOOK_EVENT_COVERAGE='+(covered?'PASS':'BLOCKED'));
+      webhookReady=Boolean(candidate&&covered);
+    }catch{
+      console.log('LIVE_WEBHOOK_VERIFICATION=BLOCKED_READ_ACCESS_OR_STRIPE_ERROR');
+    }
+    const ready=match&&cards&&enabled&&webhookReady;
+    console.log('LIVE_API_READ_ONLY_CHECK='+(ready?'PASS':'BLOCKED'));
+    console.log('LIVE_WEBHOOK_SIGNATURE_DELIVERY=UNVERIFIED_UNTIL_SIGNED_EVENT');
+    if(!ready)process.exitCode=1;
   }catch{
     console.log('LIVE_API_READ_ONLY_CHECK=BLOCKED_ACCOUNT_LOOKUP_FAILED');
     process.exitCode=1;
