@@ -256,6 +256,31 @@ parityRouter.get('/payments/stripe/orders/:orderId/status',async(req,res)=>{
  if(!order||order.userId!==who.id||
     order.orderType!=='pickup'||order.paymentMethod!=='stripe'||
     order.paymentProvider!=='stripe')return bad(404,'Pago no encontrado');
+ // Flutter Users calls the SAME order status endpoint in both modes.
+ // A LIVE confirmation is based on the verified, immutable receipt posted
+ // by the signed Stripe webhook worker, never a client or PI response.
+ if(config.NODE_ENV==='production'){
+   const liveReceipt=await db.stageFinancialLedgerEntry.findUnique({
+     where:{idempotencyKey:'order:'+id+':stripe-live:collected'},
+     select:{orderId:true,account:true,direction:true,kind:true,amount:true},
+   });
+   const recorded=liveReceipt?.orderId===id&&
+     liveReceipt.account==='stripe_live_collected'&&
+     liveReceipt.direction==='credit'&&liveReceipt.kind==='stripe_live_payment'&&
+     liveReceipt.amount.toFixed(2)===order.total.toFixed(2);
+   const verified=order.paymentStatus==='paid'&&recorded;
+   memoPrivate(res);
+   res.json({order_id:id,provider:'stripe',mode:'live',
+     currency:'mxn',amount:order.total.toFixed(2),
+     payment_status:order.paymentStatus,order_status:order.status,
+     confirmed_by_server:verified,
+     requires_manual_review:order.paymentStatus==='paid'&&!recorded,
+     pending_provider_confirmation:order.paymentStatus==='pending'&&
+       order.status==='awaiting_payment',
+     inventory_restored:order.inventoryRestoredAt!==null,
+     test_checkout_enabled:false,production_ready:verified});
+   return;
+ }
  const receipt=await db.stageFinancialLedgerEntry.findUnique({
   where:{idempotencyKey:'order:'+id+':stripe-test:collected'},
   select:{orderId:true,account:true,direction:true,kind:true,amount:true},
