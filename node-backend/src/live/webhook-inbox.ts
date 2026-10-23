@@ -12,6 +12,7 @@ import {LiveGateError,type ValidatedLiveSettings} from './guard.js';
 import {verifyLiveStripeEvent,type LiveStripeApi} from './stripe-payments.js';
 import {reconcileRecordedLiveStripeEvent} from './reconcile.js';
 import {reconcileRecordedLiveRefund} from './refund-reconciliation.js';
+import {reconcileRecordedLiveCanceledIntent} from './cancel-reconciliation.js';
 
 const paymentTypes=new Set([
   'payment_intent.succeeded',
@@ -118,6 +119,33 @@ export async function drainLiveRefundReceipts(
      reconciled++;
    }catch{
      // Retry later: never drop a signed refund event or expose payment data.
+     held++;
+   }
+ }
+ return {checked:rows.rows.length,reconciled,held};
+}
+
+
+/** Reconcile durable LIVE cancellation events, never payment_failed:
+ * payment_failed is not terminal and may still be retried by the customer.
+ * Inventory is returned only when remote Stripe proves zero capture.
+ */
+export async function drainLiveCanceledReceipts(
+ provider:LiveStripeApi,pool:Pool,maximum=10
+):Promise<{checked:number;reconciled:number;held:number}>{
+ if(!Number.isSafeInteger(maximum)||maximum<1||maximum>50)
+   throw new LiveGateError('LIVE_CANCEL_DRAIN_BATCH_INVALID');
+ const sql="SELECT id FROM stripe_webhook_events WHERE status IN ('RECEIVED','FAILED') "+
+   "AND \"stripeAccountId\" IS NULL AND type='payment_intent.canceled' "+
+   "ORDER BY \"receivedAt\",id LIMIT $1";
+ const rows=await pool.query<{id:string}>(sql,[maximum]);
+ let reconciled=0,held=0;
+ for(const row of rows.rows){
+   try{
+     await reconcileRecordedLiveCanceledIntent(row.id,provider,pool);
+     reconciled++;
+   }catch{
+     // Signed receipt remains on HOLD, no lost inventory/financial writes.
      held++;
    }
  }
