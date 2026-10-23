@@ -43,16 +43,16 @@ export async function ingestSignedLiveStripeWebhook(
      !new RegExp('^'+prefix+'[A-Za-z0-9]+$').test(object.id))
     throw new LiveGateError('BAD_LIVE_EVENT_OBJECT');
   // Conditional ON CONFLICT protects immutable Stripe event identity.
-  // Do not overwrite type or object_id when the same evt ID arrives again.
+  // Do not overwrite type or "objectId" when the same evt ID arrives again.
   const r=await pool.query<{status:string}>(`
     INSERT INTO stripe_webhook_events
-      (id,type,stripe_account_id,object_id,status,delivery_count,received_at)
+      (id,type,"stripeAccountId","objectId",status,"deliveryCount","receivedAt")
     VALUES($1,$2,NULL,$3,'RECEIVED',1,NOW())
     ON CONFLICT (id) DO UPDATE
-      SET delivery_count=stripe_webhook_events.delivery_count+1
+      SET "deliveryCount"=stripe_webhook_events."deliveryCount"+1
       WHERE stripe_webhook_events.type=EXCLUDED.type
-        AND stripe_webhook_events.object_id=EXCLUDED.object_id
-        AND stripe_webhook_events.stripe_account_id IS NULL
+        AND stripe_webhook_events."objectId"=EXCLUDED."objectId"
+        AND stripe_webhook_events."stripeAccountId" IS NULL
     RETURNING status
   `,[event.id,event.type,object.id]);
   if(r.rowCount!==1)throw new LiveGateError('DURABLE_EVENT_IDENTITY_CONFLICT');
@@ -73,7 +73,7 @@ export async function drainLiveSignedReceipts(
   const rows=await pool.query<{id:string}>(`
     SELECT id FROM stripe_webhook_events
     WHERE status IN ('RECEIVED','FAILED')
-      AND stripe_account_id IS NULL
+      AND "stripeAccountId" IS NULL
       AND type IN ('payment_intent.succeeded',
                    'payment_intent.payment_failed',
                    'payment_intent.canceled',
@@ -81,7 +81,7 @@ export async function drainLiveSignedReceipts(
                    'charge.dispute.closed','refund.created',
                    'refund.updated','refund.failed',
                    'charge.refund.updated')
-    ORDER BY received_at,id
+    ORDER BY "receivedAt",id
     LIMIT $1
   `,[maximum]);
   let reconciled=0,held=0;
