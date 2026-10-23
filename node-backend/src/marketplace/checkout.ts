@@ -102,18 +102,25 @@ const safeMatch=(a:unknown,b:string):boolean=>{
 
 export async function createStagePickupOrder(raw:unknown, account:AuthUser):Promise<number> {
   const cash=isCashPickupIntent(raw);
-  const testStripe=isStripePickupIntent(raw);
+  const cardStripe=isStripePickupIntent(raw);
+  const testStripe=cardStripe&&config.NODE_ENV==='staging'&&
+    config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true';
+  const liveStripe=cardStripe&&config.NODE_ENV==='production'&&
+    config.STRIPE_LIVE_ENABLED==='true'&&
+    config.STRIPE_LIVE_RELEASE_APPROVED==='true'&&
+    config.STRIPE_FINANCIAL_WRITES_ENABLED==='true'&&
+    config.STRIPE_MANUAL_SETTLEMENT_APPROVED==='true';
   if(!((cash&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true')||
-       (testStripe&&config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true')))
-    throw new CheckoutError(503,'Checkout de efectivo o tarjeta TEST no habilitado');
+       testStripe||liveStripe))
+    throw new CheckoutError(503,'Checkout efectivo o Stripe no autorizado');
   if(!['customer','admin'].includes(account.role))
     throw new CheckoutError(403,'No tienes permisos para crear pedidos');
   // Administrators may create synthetic CASH fixtures, but never PaymentIntents
   // they cannot authorize as the actual cardholder.
-  if(testStripe&&account.role!=='customer')
+  if(cardStripe&&account.role!=='customer')
     throw new CheckoutError(403,'Stripe TEST requiere comprador customer');
-  if(!cash&&!testStripe)
-    throw new CheckoutError(503,'Este checkout de staging sólo admite recoger con efectivo o Stripe TEST');
+  if(!cash&&!cardStripe)
+    throw new CheckoutError(503,'Este checkout sólo admite recoger con efectivo o Stripe');
   const parsed=mobilePickupSchema.safeParse(raw);
   if(!parsed.success)throw new CheckoutError(422,'Datos del pedido inválidos');
   // The metadata fields are not part of the financial signature or insert.
@@ -244,7 +251,7 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
         address:data.address,notes:data.notes,clientReference:data.client_reference,
         deliveryPin:String(randomInt(0,10_000)).padStart(4,'0'),
         orderType:'pickup',paymentMethod:data.payment_method,paymentStatus:'pending',
-        paymentProvider:data.payment_method,status:testStripe?'awaiting_payment':'received',
+        paymentProvider:data.payment_method,status:cardStripe?'awaiting_payment':'received',
         subtotal:fromMinor(subtotal),deliveryFee:'0.00',
         tip:fromMinor(tip),total:fromMinor(total),
         platformCommission:fromMinor(commission),serviceFee:fromMinor(serviceFee),
@@ -287,7 +294,7 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
     }});
     // Stripe TEST is an unpaid reservation. No seller balance, GMV or
     // order.created outbox is payable/visible until a verified PSP webhook.
-    if(!testStripe){
+    if(!cardStripe){
       const payload={order_id:order.id,status:'received',payment_status:'pending',
         user_id:account.id,restaurant_id:restaurant.id};
       await tx.stageEventOutbox.create({data:{
@@ -314,10 +321,10 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
     }
     } // cash-only accrual; Stripe is posted atomically on confirmed charge.
     await tx.authNotification.create({data:{
-      userId:account.id,kind:'order',title:testStripe?'Esperando pago TEST':'Pedido recibido',
-      message:testStripe?'Pedido de prueba #'+order.id+' pendiente de Stripe TEST.':'Tu pedido #'+order.id+' llegó a '+restaurant.name+'.',
+      userId:account.id,kind:'order',title:cardStripe?(liveStripe?'Esperando pago':'Esperando pago TEST'):'Pedido recibido',
+      message:cardStripe?(liveStripe?'Pedido #'+order.id+' pendiente de confirmación Stripe.':'Pedido de prueba #'+order.id+' pendiente de Stripe TEST.'):'Tu pedido #'+order.id+' llegó a '+restaurant.name+'.',
     }});
-    if(restaurant.ownerId&&!testStripe){
+    if(restaurant.ownerId&&!cardStripe){
       await tx.authNotification.create({data:{
         userId:restaurant.ownerId,kind:'restaurant_order',title:'Nuevo pedido',
         message:'Pedido #'+order.id+' recibido en '+restaurant.name+'.',
