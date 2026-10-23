@@ -38,21 +38,20 @@ export async function inspectLiveFinancialData(pool:Pool):
       (
         (SELECT count(*) FROM stripe_webhook_events e
          WHERE
-           ((e.status IN ('RECEIVED','FAILED') AND e.type IN
+           (e.status IN ('RECEIVED','FAILED') AND e.type IN
               ('charge.refunded','charge.dispute.created',
                'charge.dispute.closed','refund.created','refund.updated',
                'refund.failed','charge.refund.updated'))
-             OR e.type IN ('charge.dispute.created','charge.dispute.closed',
-               'charge.refunded','charge.refund.updated'))
-           AND NOT EXISTS (
-             SELECT 1 FROM tala_live_financial_cases c
-             WHERE c.stripe_object_id=e."objectId"
-               AND c.case_type=CASE
-                 WHEN e.type LIKE 'charge.dispute.%' THEN 'dispute'
-                 WHEN e.type='refund.failed' THEN 'refund_failure'
-                 WHEN e.type LIKE 'refund.%' THEN 'refund'
-                 ELSE 'charge_refund' END
-               AND c.status='resolved'))
+           OR (
+             e.type IN ('charge.dispute.created','charge.dispute.closed',
+               'charge.refunded','charge.refund.updated')
+             AND NOT EXISTS (
+               SELECT 1 FROM tala_live_financial_cases c
+               WHERE c.stripe_object_id=e."objectId"
+                 AND c.case_type=CASE
+                   WHEN e.type LIKE 'charge.dispute.%' THEN 'dispute'
+                   ELSE 'charge_refund' END
+                 AND c.status='resolved'))
         +
         (SELECT count(*) FROM tala_live_financial_cases
           WHERE status IN ('open','reviewed'))
