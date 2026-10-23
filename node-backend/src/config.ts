@@ -6,7 +6,7 @@ const schema = z.object({
   PORT: z.coerce.number().int().min(1024).max(65535),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
-  STRIPE_SECRET_KEY: z.string().regex(/^(?:sk_test_|rk_test_|sk_live_|rk_live_)[A-Za-z0-9]+$/).optional(),
+  STRIPE_SECRET_KEY: z.string().regex(/^(?:sk_test_|rk_test_|(?:sk|rk)_live_)[A-Za-z0-9]+$/).optional(),
   STRIPE_WEBHOOK_SECRET: z.string().startsWith('whsec_').optional(),
   STRIPE_PUBLISHABLE_KEY: z.string().regex(/^pk_(?:test|live)_[A-Za-z0-9]+$/).optional(),
   STAGE_STRIPE_TEST_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
