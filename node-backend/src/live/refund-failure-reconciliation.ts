@@ -113,6 +113,9 @@ export async function reconcileRecordedLiveRefundFailure(
      throw new LiveGateError('FAILED_REFUND_BALANCE_INVALID');
   }
   await client.query(
+   "INSERT INTO tala_live_financial_cases (order_id,case_type,stripe_object_id,last_event_id,status,updated_at) VALUES ($1,'refund_failure',$2,$3,'open',NOW()) ON CONFLICT(case_type,stripe_object_id) DO UPDATE SET last_event_id=EXCLUDED.last_event_id,status='open',reviewed_by_user_id=NULL,reviewed_at=NULL,resolved_by_user_id=NULL,resolved_at=NULL,evidence_ref=NULL,updated_at=NOW()",
+   [id,refund.id,eventId]);
+  await client.query(
    'UPDATE stripe_webhook_events SET status=$2,"processedAt"=NOW() WHERE id=$1',
    [eventId,'PROCESSED']);
   await client.query('COMMIT');
