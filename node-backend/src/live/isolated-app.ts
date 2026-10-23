@@ -39,6 +39,12 @@ export function buildIsolatedLiveApp(deps:Deps){
  // Stripe signature is verified against the exact raw request body.
  app.use('/api/v1/webhooks',buildIsolatedWebhookRouter(
    deps.stripe as Pick<Stripe,'webhooks'>,deps.pool,deps.settings));
+ // Existing Stripe LIVE destination in the platform account:
+ // https://talaeats.alan-palacios-dev.com/api/v1/payments/stripe/webhook
+ // Accept both signed paths under the SAME production-only router, before
+ // express.json(), without touching the live Stripe endpoint in staging.
+ app.use('/api/v1/payments/stripe',buildIsolatedWebhookRouter(
+   deps.stripe as Pick<Stripe,'webhooks'>,deps.pool,deps.settings,'/webhook'));
  app.use(express.json({limit:'32kb',strict:true}));
  app.get('/api/v1/health',(_req,res)=>res.json({
   status:'ok',version:'rc8-isolated-service',
