@@ -45,3 +45,28 @@ test('financial audit covers refund state, cumulative refunded amount and immuta
  ])assert.ok(statement.includes(value),value);
  assert.doesNotMatch(statement,/\bUPDATE\b|\bDELETE\b|\bINSERT\b/);
 });
+
+
+test('LIVE financial readiness retains dispute and merchant-refund HOLD after webhook/outbox delivered',async()=>{
+ let sql='';
+ const pool={query:async statement=>{
+  sql=statement;
+  return {rows:[{
+   pending_payment_receipts:'0',pending_refund_or_dispute_events:'2',
+   suspect_captured_orders:'0',stuck_provider_reservations:'0',
+  }]};
+ }};
+ const report=await inspectLiveFinancialData(pool);
+ assert.equal(report.classification,'LIVE_FINANCIAL_DATA_HOLD');
+ assert.equal(report.counters.pendingRefundOrDisputeEvents,2);
+ // An already PROCESSED signed dispute still has financial consequences:
+ // the capture can be withdrawn after a merchant payout.
+ assert.match(sql,/OR type IN \('charge\.dispute\.created','charge\.dispute\.closed'/);
+ // Outbox published means notification delivery, NOT merchant payout resolved.
+ for(const name of ['order.refund_review_required',
+  'order.refund_failure_review_required','order.dispute_review_required']){
+  assert.ok(sql.includes("'"+name+"'"),name);
+ }
+ assert.match(sql,/FROM event_outbox/);
+ assert.doesNotMatch(sql,/event_outbox\s+WHERE\s+status\s*=/);
+});
