@@ -11,6 +11,7 @@ const production={
  NODE_ENV:'production',HOST:'127.0.0.1',PORT:'18190',
  DATABASE_URL:'postgresql://tala_live:longsecret@127.0.0.1:15445/tala_node_live',
  REDIS_URL:'redis://:longsecret@127.0.0.1:16389/1',
+ STRIPE_PLATFORM_ACCOUNT_ID:'acct_'+'Z'.repeat(20),
  STRIPE_SECRET_KEY:'sk_live_'+'A'.repeat(30),
  STRIPE_PUBLISHABLE_KEY:'pk_live_'+'B'.repeat(30),
  STRIPE_WEBHOOK_SECRET:'whsec_'+'C'.repeat(30),
