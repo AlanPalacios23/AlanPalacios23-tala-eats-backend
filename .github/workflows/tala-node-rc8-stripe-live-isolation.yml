@@ -7,6 +7,7 @@ on:
       - 'node-backend/src/live/**'
       - 'node-backend/tests/rc8-**'
       - 'node-backend/docs/RC8-**'
+      - 'node-backend/scripts/rc8-**'
       - '.github/workflows/tala-node-rc8-stripe-live-isolation.yml'
   workflow_dispatch:
 permissions:
@@ -34,6 +35,12 @@ jobs:
           npm run db:validate
       - name: Strict TypeScript
         run: npm run build
+      - name: Bash syntax of RC8 installers and activation gate
+        run: |
+          bash -n scripts/rc8-kali-install-candidate.sh
+          bash -n scripts/rc8-kali-next-deployment-preflight.sh
+          bash -n scripts/rc8-kali-live-activation-gate.sh
+          if bash scripts/rc8-kali-live-activation-gate.sh --activate; then exit 1; fi
       - name: Entire unit suite including RC8 LIVE (all synthetic)
         run: npm test
       - name: Critical RC7 live separation unchanged
