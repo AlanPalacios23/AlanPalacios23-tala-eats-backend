@@ -36,6 +36,12 @@ echo "RC8_CANDIDATE_SHA=$SHA"
   echo "RC8_CODE_COMPILED=NO";exit 1;
 }
 echo "RC8_CODE_COMPILED=YES"
+# This probe never collects payments; it exists for isolated QA only.
+if [[ -f "$ROOT/dist/live/server.js" ]]; then
+  echo "RC8_LOOPBACK_LOCKED_PROBE=COMPILED"
+else
+  echo "RC8_LOOPBACK_LOCKED_PROBE=MISSING"
+fi
 
 # Independent runtime is required to serve customers. RC8 currently
 # contains isolated library primitives, not a complete LIVE application.
