@@ -36,6 +36,7 @@ function fixture({status='succeeded',amount=500,livemode=true,remoteId='evt_REFU
    balance=params[0];paymentStatus=params[1];
    return {rowCount:1};
   }
+  if(sql.includes('INSERT INTO tala_live_financial_cases'))return {rowCount:1};
   if(sql.includes('INSERT INTO event_outbox')){outbox++;return {rowCount:1};}
   if(sql.includes('INSERT INTO order_events')){orderEvents++;return {rowCount:1};}
   if(sql.includes('UPDATE stripe_webhook_events')){
