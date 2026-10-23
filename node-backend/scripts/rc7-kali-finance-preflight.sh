@@ -47,13 +47,13 @@ assert body.get("digitalPaymentProvider") == "stripe"
 
 check_ready "$LOCAL" LOCAL
 check_ready "$API" PUBLIC
-for unit in tala-node-stage-pg15.service tala-node-stage-redis.service tala-node-stage-pm2.service; do
-  if ! systemctl --user is-active --quiet "$unit"; then
-    echo "RC7_PREFLIGHT_ABORT=UNIT_DOWN"
-    exit 1
-  fi
-done
-echo "RC7_STAGE_USER_UNITS=PASS"
+# Do NOT assume PM2/PG/Redis run under these exact systemd unit names.
+# Earlier RC6 deployments use local ports and a PM2 worker, but their systemd
+# unit layout is host-specific. /ready independently verifies DB, Redis,
+# worker heartbeat and public proxy connectivity; a false unit check would
+# block a healthy Kali stage. Inventory concrete units in the host runbook.
+echo "RC7_BACKEND_SERVICES_FROM_READINESS=PASS"
+echo "RC7_SYSTEMD_UNITS=NOT_ASSERTED"
 echo "RC7_ENV_PRIVATE_0600=PASS"
 echo "RC7_LIVE_PAYMENT_WRITES_DISABLED=YES"
 echo "RC7_CHECKOUT_NOT_ACTIVATED=YES"
