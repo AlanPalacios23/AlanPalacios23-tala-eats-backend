@@ -42,7 +42,10 @@ export function validatePm2Snapshot(processes,sha,mode){
  const expected=join('/home/tala-node-stage/tala-node-releases',sha,'node-backend');
  for(const p of processes){
    const e=p.pm2_env??{};
+   const executable=join(expected,'dist',
+     p.name==='tala-node-stage-api'?'server.js':'worker.js');
    if(e.status!=='online'||e.pm_cwd!==expected||
+      e.pm_exec_path!==executable||
       e.NODE_ENV!==(mode==='stage'?'staging':'production')||
       !Number.isInteger(p.pid)||p.pid<1)return null;
  }
@@ -88,8 +91,11 @@ export async function main(argv=process.argv.slice(2), deps={}){
    const lst=lstatSync(privateEnv);
    guard(!lst.isSymbolicLink()&&validatePrivateEnv(statSync(privateEnv),process.getuid()),
       'PRIVATE_ENV_PERMISSIONS');
+   const releaseRoot=dirname(expected);
+   const rootMeta=lstatSync(releaseRoot);
    const releaseMeta=lstatSync(expected);
-   guard(releaseMeta.isDirectory()&&!releaseMeta.isSymbolicLink(),
+   guard(rootMeta.isDirectory()&&!rootMeta.isSymbolicLink()&&
+     releaseMeta.isDirectory()&&!releaseMeta.isSymbolicLink(),
      'RELEASE_DIRECTORY');
    // PM2 jlist may contain environment secrets: keep completely in memory.
    const raw=execFileSync('pm2',['jlist'],{
