@@ -49,8 +49,7 @@ export async function createLivePickupPaymentIntent(
   const intent=order!.intentId===reserved
     ? await provider.paymentIntents.create({
         amount:order!.amountMinor,currency:'mxn',
-        allowed_payment_method_types:['card'],
-        automatic_payment_methods:{enabled:true,allow_redirects:'never'},
+        payment_method_types:['card'],
         capture_method:'automatic',metadata,
         description:'Tala Eats pedido '+orderId,
       },{idempotencyKey:'tala-live-v1-pickup-order-'+orderId})
