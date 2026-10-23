@@ -19,7 +19,7 @@ test('TEST checkout creates only pickup order; client cannot choose amount',()=>
  assert.match(checkout,/order_type:z\.literal\('pickup'\)/);
  assert.match(checkout,/payment_method:z\.enum\(\['cash','stripe'\]\)/);
  assert.match(checkout,/isStripePickupIntent/);
- assert.match(checkout,/status:cardStripe\\?'awaiting_payment':'received'/);
+ assert.match(checkout,/status:cardStripe\?'awaiting_payment':'received'/);
  assert.match(checkout,/SELECT id FROM users WHERE id=\$\{account\.id\} FOR UPDATE/);
  assert.match(checkout,/clientReference:data\.client_reference/);
 });
