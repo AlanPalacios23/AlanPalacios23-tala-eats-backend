@@ -91,6 +91,8 @@ async function reconcileLiveVerifiedEvent(
   if(!/^evt_[A-Za-z0-9]+$/.test(signed.id))
     throw new LiveGateError('INVALID_SIGNED_EVENT_ID');
   if(!allowed.has(signed.type))return {received:true,alreadyProcessed:false};
+  if(signed.type!=='payment_intent.succeeded')
+    throw new LiveGateError('PAYMENT_FAILURE_OR_CANCEL_REQUIRES_COMPENSATION');
   const object=signed.data.object as Stripe.PaymentIntent;
   if(object.object!=='payment_intent'||!/^pi_[A-Za-z0-9]+$/.test(object.id))
     throw new LiveGateError('INVALID_PAYMENT_INTENT_OBJECT');
@@ -121,6 +123,9 @@ async function reconcileLiveVerifiedEvent(
       VALUES ($1,$2,NULL,$3,'RECEIVED',1,NOW())
       ON CONFLICT(id) DO UPDATE SET "deliveryCount"=
         stripe_webhook_events."deliveryCount"+1
+      WHERE stripe_webhook_events.type=EXCLUDED.type
+        AND stripe_webhook_events."objectId"=EXCLUDED."objectId"
+        AND stripe_webhook_events."stripeAccountId" IS NULL
     `,[signed.id,signed.type,object.id]);
     const receipt=await client.query<{
       type:string;objectId:string;status:string;
