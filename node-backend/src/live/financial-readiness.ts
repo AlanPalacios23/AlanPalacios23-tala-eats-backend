@@ -38,15 +38,29 @@ export async function inspectLiveFinancialData(pool:Pool):
            'charge.dispute.closed','refund.created','refund.updated',
            'refund.failed','charge.refund.updated'))
        AS pending_refund_or_dispute_events,
+      -- A refunded order must never disappear from the financial audit:
+      -- it still requires its original immutable captured-money receipt,
+      -- and all reversals must match the actual cumulative refunded amount.
       (SELECT count(*) FROM orders o
-       WHERE o.payment_method='stripe' AND o.payment_status='paid'
-         AND NOT EXISTS (SELECT 1 FROM financial_ledger_entries l
-            WHERE l.order_id=o.id
-              AND l.account='stripe_live_collected'
-              AND l.kind='stripe_live_payment'
-              AND l.direction='credit'
-              AND l.idempotency_key=('order:'||o.id||':stripe-live:collected')
-              AND l.amount=o.total))
+       WHERE o.payment_method='stripe'
+         AND o.payment_status IN ('paid','partially_refunded','refunded')
+         AND (
+           NOT EXISTS (SELECT 1 FROM financial_ledger_entries l
+             WHERE l.order_id=o.id
+               AND l.account='stripe_live_collected'
+               AND l.kind='stripe_live_payment'
+               AND l.direction='credit'
+               AND l.idempotency_key=('order:'||o.id||':stripe-live:collected')
+               AND l.amount=o.total)
+           OR o.refunded_amount < 0
+           OR o.refunded_amount > o.total
+           OR (o.refunded_amount > 0 AND
+             COALESCE((SELECT SUM(l.amount) FROM financial_ledger_entries l
+               WHERE l.order_id=o.id
+                 AND l.account='stripe_live_collected'
+                 AND l.direction='debit'
+                 AND l.kind='stripe_live_refund'),0) <> o.refunded_amount)
+         ))
        AS suspect_captured_orders,
       (SELECT count(*) FROM orders
        WHERE payment_method='stripe' AND payment_status='pending'
