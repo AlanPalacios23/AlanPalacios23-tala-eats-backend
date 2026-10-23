@@ -61,5 +61,9 @@ test('postdeploy script syntax safe, usage fail-closed and only read-only subpro
  const src=readFileSync(file,'utf8');
  assert.match(src,/execFileSync\('pm2',\['jlist'\]/);
  assert.match(src,/POSTDEPLOY_READ_ONLY=PASS/);
+ assert.match(src,/stripe-live-account-check\.mjs/);
+ assert.match(src,/LIVE_STRIPE_CONNECT_AND_WEBHOOK_COVERAGE/);
+ assert.match(src,/STRIPE_LIVE_RELEASE_APPROVED/);
+ assert.match(src,/LIVE_RELEASE_FLAGS/);
  assert.doesNotMatch(src,/pm2\s+(?:restart|reload|start|delete)|docker compose|stripe\.paymentIntents\.create/);
 });
