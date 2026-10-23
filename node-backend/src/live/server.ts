@@ -39,7 +39,10 @@ export function startLockedRc8Probe(env:NodeJS.ProcessEnv=process.env){
     env.RC8_LIVE_TRANSFERS_ENABLED!=='false' ||
     env.RC8_LIVE_REFUNDS_ENABLED!=='false')
    throw Error('RC8_PROBE_REQUIRES_PRODUCTION_WITH_ALL_MONEY_WRITES_DISABLED');
- return createLockedRc8Server().listen(RC8_LOOPBACK_PORT,'127.0.0.1');
+ // Bind all container interfaces only for the explicitly configured locked
+ // Docker sidecar. Docker Compose must publish to *host loopback* only.
+ const host=env.RC8_LOCKED_DOCKER_SIDECAR==='true'?'0.0.0.0':'127.0.0.1';
+ return createLockedRc8Server().listen(RC8_LOOPBACK_PORT,host);
 }
 // Explicit start only: does not run during import, npm build, CI or RC7 PM2.
 if(process.argv[1]?.endsWith('/live/server.js'))
