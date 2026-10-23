@@ -121,13 +121,20 @@ test('Stripe webhook requires signature and rejects TEST or Connect',()=>{
  assert.throws(()=>verifyLiveStripeEvent(client,settings,Buffer.from('{}'),'sig'),LiveGateError);
  assert.throws(()=>verifyLiveStripeEvent(client,settings,Buffer.from('{}'),''),LiveGateError);
 });
-test('Stage entrypoints cannot import or activate Stripe LIVE module',()=>{
- for(const p of ['src/app.ts','src/worker.ts','src/config.ts',
-                   'src/stripe.ts','src/webhook.ts']){
-  const s=source(p);
-  assert.doesNotMatch(s,/from ['\"]\.\/live\//);
-  assert.doesNotMatch(s,/from ['\"]\.\.\/live\//);
+test('Existing staging mode remains isolated despite new conditional LIVE runtime',()=>{
+ for(const p of ['src/worker.ts','src/stripe.ts','src/webhook.ts']){
+  const sourceCode=source(p);
+  assert.doesNotMatch(sourceCode,/from ['"]\.\/live\//);
+  assert.doesNotMatch(sourceCode,/from ['"]\.\.\/live\//);
  }
+ const app=source('src/app.ts'),config=source('src/config.ts');
+ assert.match(app,/config\.NODE_ENV==='production'\?buildLiveRuntimeDependencies\(\):null/);
+ assert.match(app,/if\(live\)\{/);
+ assert.match(app,/\}else\{\s*app\.post\('\/api\/v1\/webhooks\/stripe'/);
+ assert.match(config,/STAGING_MONEY_WRITES_FORBIDDEN/);
+ assert.match(config,/STAGING_REQUIRES_STRIPE_TEST_KEY/);
+ assert.match(config,/LIVE_PRODUCTION_POSTGRES_ISOLATION_REQUIRED/);
+ assert.match(config,/LIVE_FINANCIAL_RELEASE_NOT_APPROVED/);
  const reconcile=source('src/live/reconcile.ts');
  assert.match(reconcile,/stripe_webhook_events/);
  assert.match(reconcile,/ON CONFLICT\(id\)/);
