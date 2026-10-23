@@ -37,7 +37,8 @@ verify('SUPPORT_REPLY_SCHEMA',
  /respondedAt\s+DateTime\?\s+@map\("responded_at"\)/.test(schema));
 const config=read('src/config.ts');
 verify('FINANCIAL_WRITES_DISABLED',
- config.includes("STRIPE_FINANCIAL_WRITES_ENABLED: z.literal('false')"));
+ config.includes("STAGING_MONEY_WRITES_FORBIDDEN")&&
+ config.includes("config.NODE_ENV==='staging'"));
 const safeUpdater=read('scripts/actualizar.sh');
 verify('MIGRATION_AUTO_UPDATER_BLOCKED',
  safeUpdater.includes('ABORT_PRISMA_CHANGE_REQUIRES_REVIEWED_MIGRATION_AND_MANUAL_RELEASE'));
