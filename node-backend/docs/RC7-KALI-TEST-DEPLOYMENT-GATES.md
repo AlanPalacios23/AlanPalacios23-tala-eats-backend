@@ -35,6 +35,25 @@ Source PR: [Backend RC7 #133](https://github.com/AlanPalacios23/AlanPalacios23-t
 4. Test signed webhooks with successful/declined/3DS test cards, concurrent duplicate events, out-of-order events and complete inventory/ledger consistency. Verify cancellation, delayed events and 35-minute conservative expiry without returning stock if Stripe could have charged.
 5. Verify TEST earnings snapshots exclude refunded orders and charges missing an immutable Stripe receipt. They must always show `available_for_withdrawal='0.00'`, `eligible=false`, `reconciliation_hold=true` regardless of illustrative historical earnings.
 
+## Extra mandatory finance gate (read only)
+
+After creating the isolated stage candidate and loading its private stage-only env, execute in the candidate's `node-backend` directory:
+
+```bash
+npm run finance:stage:gate
+```
+
+This command **never** contacts Stripe, captures a payment, initiates a payout, alters the database or prints orders/customer IDs. It reports aggregate counters only. A nonzero exit code stops the deployment/activation decision:
+
+- `stuckIntentReservations`: the database still has PaymentIntent creation reservations older than 10 minutes. Never release their inventory until provider state has been reconciled.
+- `overdueUnpaidCardOrders`: unpaid Stripe TEST reservations older than 35 minutes (expiry requires provider confirmation, not a timer-only write).
+- `unreconciledSignedWebhooks`: signed payment events older than 15 minutes still `RECEIVED`/`FAILED`. Retry/reconcile before further checkout.
+- `paidOrdersMissingTrustedReceipt`: a Stripe order says paid but has no exact matching immutable ledger receipt; do not treat it as paid to a seller.
+- `cardCashMisclassification`: a Stripe card order mistakenly records a positive physical cash collection.
+- `paidOrderSampleTruncated`: more than 5,000 paid card orders need an independently paginated audit; do not silently classify a truncated subset as clean.
+
+The stage gate may legitimately HOLD an environment that has unresolved TEST fixtures. The resolution is **reconciliation and documented operator review**, never deleting rows to make a counter disappear. It is not a LIVE launch gate and does not substitute a Stripe Dashboard reconciliation, restore test, PaymentSheet E2E or a signed-off payments release.
+
 ## Phase 3 — reversible stage cutover
 
 - Require operator confirmation and comparison of local/public `/ready` before any cutover.
