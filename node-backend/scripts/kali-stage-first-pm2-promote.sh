@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # First-time promotion of a built Node.js staging candidate to PM2 in Kali.
+# RC8.12 requires WORKER BEFORE API so /ready cannot turn 200 for a checkout
+# while its outbox/reconciliation worker is still offline.
 # NO CI/CD, NO Docker, NO production API, NO Stripe financial writes.
 # --plan is read-only. --apply requires an explicit stage-only approval.
 # Never applies Prisma migrations: run the separate backup/restore+migrate gate.
@@ -144,13 +146,24 @@ rollback() {
   pm2 delete tala-node-stage-worker >/dev/null 2>&1 || true
   pm2 delete tala-node-stage-api >/dev/null 2>&1 || true
   cd "$ACTIVE_DIR" || exit "$original_status"
-  TALA_STAGE_ENV_FILE="$ENVFILE" pm2 start ecosystem.config.cjs --only tala-node-stage-api --update-env || true
+  # Rollback must restore the worker FIRST as well. An earlier (or later)
+  # version may also fail readiness when its worker heartbeat is missing.
   TALA_STAGE_ENV_FILE="$ENVFILE" pm2 start ecosystem.config.cjs --only tala-node-stage-worker --update-env || true
-  if curl -fsS --max-time 5 http://127.0.0.1:18190/api/v1/ready |
-    node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{
-      try{const v=JSON.parse(s);process.exit(v.ready===true&&v.database===true&&
-       v.redis===true&&v.financialWrites===false?0:1)}catch{process.exit(1)}
-    })' >/dev/null 2>&1; then
+  TALA_STAGE_ENV_FILE="$ENVFILE" pm2 start ecosystem.config.cjs --only tala-node-stage-api --update-env || true
+  ROLLBACK_READY=no
+  for attempt in $(seq 1 30); do
+    if curl -fsS --max-time 3 http://127.0.0.1:18190/api/v1/ready 2>/dev/null |
+      node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{
+        try{const v=JSON.parse(s);process.exit(v.ready===true&&v.database===true&&
+         v.redis===true&&v.workerOnline===true&&v.financialWrites===false?0:1)}
+        catch{process.exit(1)}
+      })' >/dev/null 2>&1; then
+      ROLLBACK_READY=yes
+      break
+    fi
+    sleep 2
+  done
+  if [[ "$ROLLBACK_READY" == yes ]]; then
     pm2 save >/dev/null || true
     echo "STAGE_PM2_ROLLBACK_READY=PASS"
   else
@@ -160,17 +173,41 @@ rollback() {
 }
 trap rollback EXIT
 
-# Change ONLY named stage processes, and start API before worker.
+# Change ONLY named stage processes. Start WORKER before API: RC8.12
+# rejects new orders and /ready while worker heartbeat is missing.
 ROLLOUT_STARTED=yes
 pm2 delete tala-node-stage-worker
 pm2 delete tala-node-stage-api
+TALA_STAGE_ENV_FILE="$ENVFILE" pm2 start ecosystem.config.cjs --only tala-node-stage-worker --update-env
+# An actual Redis heartbeat, rather than PM2 'online', is evidence the
+# independent worker has initialized. Do not print credentials to logs.
+WORKER_HEARTBEAT=no
+for attempt in $(seq 1 30); do
+  if node --env-file="$ENVFILE" --input-type=module - <<'JS' >/dev/null 2>&1
+import {Redis} from 'ioredis';
+const redis=new Redis(process.env.REDIS_URL,{
+  lazyConnect:true,connectTimeout:1000,maxRetriesPerRequest:1,retryStrategy:()=>null,
+});
+try{
+  await redis.connect();
+  if(await redis.get('tala:node:stage:worker:heartbeat')!=='online')process.exitCode=1;
+}catch{process.exitCode=1;}
+finally{redis.disconnect();}
+JS
+  then WORKER_HEARTBEAT=yes; break; fi
+  sleep 2
+done
+[[ "$WORKER_HEARTBEAT" == yes ]] || {
+  echo "ABORT_CANDIDATE_WORKER_HEARTBEAT_MISSING"; exit 1;
+}
 TALA_STAGE_ENV_FILE="$ENVFILE" pm2 start ecosystem.config.cjs --only tala-node-stage-api --update-env
 API_READY=no
 for attempt in $(seq 1 30); do
   if curl -fsS --max-time 3 http://127.0.0.1:18190/api/v1/ready 2>/dev/null |
     node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{
       try{const v=JSON.parse(s);process.exit(v.ready===true&&v.database===true&&
-       v.redis===true&&v.financialWrites===false?0:1)}catch{process.exit(1)}
+       v.redis===true&&v.workerOnline===true&&v.financialWrites===false?0:1)}
+      catch{process.exit(1)}
     })' >/dev/null 2>&1; then
     API_READY=yes
     break
@@ -178,7 +215,6 @@ for attempt in $(seq 1 30); do
   sleep 2
 done
 [[ "$API_READY" == yes ]] || { echo "ABORT_CANDIDATE_API_NOT_READY"; exit 1; }
-TALA_STAGE_ENV_FILE="$ENVFILE" pm2 start ecosystem.config.cjs --only tala-node-stage-worker --update-env
 bash scripts/kali-stage-postdeploy-smoke.sh "$EXPECTED_SHA"
 pm2 save
 ROLLOUT_OK=yes
