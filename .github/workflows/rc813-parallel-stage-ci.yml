@@ -1,0 +1,66 @@
+name: TALA EATS RC8.13 | Private Parallel Stage Safety
+on:
+  push:
+    branches: [fix/rc813-parallel-kali-stage-20261024]
+  pull_request:
+    paths:
+      - 'node-backend/src/config.ts'
+      - 'node-backend/scripts/rc813-*'
+      - 'node-backend/ecosystem.rc813-parallel.cjs'
+      - 'node-backend/tests/rc813-parallel-stage-safety.test.mjs'
+      - '.github/workflows/rc813-parallel-stage-ci.yml'
+permissions:
+  contents: read
+jobs:
+  parallel-stage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      NODE_ENV: staging
+      HOST: 127.0.0.1
+      PORT: '18190'
+      DATABASE_URL: postgresql://tala_node_stage:ci-only@127.0.0.1:15435/tala_node_stage
+      REDIS_URL: redis://:ci-only@127.0.0.1:16379/0
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+      STRIPE_LIVE_ENABLED: 'false'
+      STRIPE_CONNECT_TRANSFERS_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.11.1'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Dependencies, Prisma generated client and TypeScript
+        run: |
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run build
+      - name: RC813 parallel stage safety and existing regressions
+        run: npm test
+      - name: Stage-only shell and Python syntax
+        run: |
+          bash -n scripts/rc813-parallel-stage.sh
+          python3 -m py_compile scripts/rc813-create-parallel-stage-env.py
+          node --check ecosystem.rc813-parallel.cjs
+      - name: Parallel stage opt-in config isolation
+        run: |
+          env NODE_ENV=staging PORT=18192 STAGE_PARALLEL_ENABLED=true \
+              REDIS_URL=redis://:ci-only@127.0.0.1:16379/1 \
+              node --input-type=module -e "import('./dist/config.js').then(x => {if(x.config.PORT !== 18192 || x.config.STAGE_PARALLEL_ENABLED !== 'true') process.exit(1)})"
+          if env NODE_ENV=staging PORT=18192 STAGE_PARALLEL_ENABLED=false \
+              REDIS_URL=redis://:ci-only@127.0.0.1:16379/1 \
+              node --input-type=module -e "import('./dist/config.js')" >/dev/null 2>&1; then
+            echo 'RC813_BYPASS_UNEXPECTED'; exit 1
+          fi
+          if env NODE_ENV=staging PORT=18190 STAGE_PARALLEL_ENABLED=true \
+              REDIS_URL=redis://:ci-only@127.0.0.1:16379/1 \
+              node --input-type=module -e "import('./dist/config.js')" >/dev/null 2>&1; then
+            echo 'RC813_LIVE_PORT_COLLISION_UNEXPECTED'; exit 1
+          fi
+          echo 'RC813_STAGE_PARALLEL_BINDING_GATES=PASS'
