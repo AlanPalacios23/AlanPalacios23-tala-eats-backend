@@ -303,6 +303,12 @@ export function buildPayeeFinanceRouter(pool:Pool,stripe:StripeRead){
        }
      }
    }
+   // A source charge must cover ALL beneficiaries together, not merely
+   // each candidate transfer independently. Hold every proposal if split
+   // conservation cannot be proven.
+   const aggregateMinor=r1.rows.reduce((sum,item)=>sum+Number(item.amount_minor),0);
+   const aggregateSafe=Number.isSafeInteger(aggregateMinor)&&
+     aggregateMinor>0&&aggregateMinor<=capturedMinor;
    const proposals=[];
    for(const item of r1.rows){
     const acct=item.stripe_account_id?
@@ -320,6 +326,10 @@ export function buildPayeeFinanceRouter(pool:Pool,stripe:StripeRead){
       proof,refundedMinor:centavos(order.refunded_amount),
       openCases:caseCount,sourceMode:order.payment_method==='stripe'?'stripe':'cash'
     });
+    if(!aggregateSafe) {
+      plan.blockers.push('AGGREGATE_TRANSFERS_EXCEED_CAPTURE');
+      plan.eligible=false;
+    }
     proposals.push({...plan,record_state:item.state});
    }
    res.json({order_id:id,proposals,read_only:true,
