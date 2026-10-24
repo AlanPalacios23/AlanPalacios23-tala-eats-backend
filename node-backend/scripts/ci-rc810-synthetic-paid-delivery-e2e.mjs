@@ -108,6 +108,15 @@ try{
  const statusMismatch=await call('/payments/stripe/orders/'+id+'/status',{
     token:buyer.token});
  assert.equal(statusMismatch.data.confirmed_by_server,false);
+ const rejectedOwner=await call('/owner/orders',{token:seller.token});
+ assert.equal(rejectedOwner.code,200);
+ assert.ok(!rejectedOwner.data.some(x=>x.id===id),
+   'no forged paid flag/wrong settlement in merchant orders');
+ const deniedKds=await call('/owner/kds',{token:seller.token});
+ assert.equal(deniedKds.code,200);
+ assert.ok(!Object.values(deniedKds.data).some(rows=>
+   Array.isArray(rows)&&rows.some(x=>x.id===id)),
+   'no forged receipt in kitchen board');
  // NEVER mutate the immutable ledger. The wrong-amount order stays HELD.
  // Create a SECOND order, as if a verified signed webhook had atomically
  // posted its own exact receipt after capture.
