@@ -59,5 +59,7 @@ test('driver finance routes never perform Stripe monetary mutations',()=>{
  assert.match(src,/ON CONFLICT\(order_id,payee_kind\) DO NOTHING/);
  assert.match(src,/PAYEE_ALLOCATION_CONFLICT/);
  assert.match(src,/TRANSFER_PREVIEW_UNAVAILABLE/);
+ assert.match(src,/AGGREGATE_TRANSFERS_EXCEED_CAPTURE/);
+ assert.match(src,/aggregateMinor<=capturedMinor/);
  assert.doesNotMatch(src,/stripe\.transfers\.create\(|stripe\.payouts\.create\(/);
 });
