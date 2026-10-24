@@ -186,7 +186,7 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
         {lat:_lat!,lng:_lng!},restaurant.deliveryRadiusKm);
       deliveryDistanceMilli=geo.distanceMilliKm;
       // Prevent creating a normal delivery without any verified online driver.
-      if(!await hasReachableStageDriver())
+      if(!await hasReachableStageDriver({lat:restaurant.lat,lng:restaurant.lng}))
         throw new CheckoutError(409,'No hay repartidores disponibles con ubicación actual');
     }
     const pricingV162=config.COMMERCIAL_PRICING_V162_ENABLED==='true';
