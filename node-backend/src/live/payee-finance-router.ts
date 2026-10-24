@@ -8,7 +8,8 @@ import type Stripe from 'stripe';
 import {current} from '../auth/routes.js';
 import {config} from '../config.js';
 import {buildMoneyPlan,cashCollectorWhoMaySubmit} from './payee-allocation.js';
-type StripeRead=Pick<Stripe,'accounts'|'accountLinks'>;
+import {buildTransferProposal} from './transfer-planning.js';
+type StripeRead=Pick<Stripe,'accounts'|'accountLinks'|'paymentIntents'|'charges'>;
 const numeric=(v:unknown)=>{
  const s=String(v??'');
  if(!/^[1-9][0-9]{0,9}$/.test(s))throw Error('ID_INVALID');
@@ -252,6 +253,80 @@ export function buildPayeeFinanceRouter(pool:Pool,stripe:StripeRead){
      {error:'CASH_REVIEW_CONFLICT'});
   }catch{res.status(403).json({error:'CASH_REVIEW_DENIED'});}
  });
+
+ // ADMIN read-only: validate the ORIGINAL captured charge and independent
+ // Connect status for every beneficiary. No transfers created.
+ r.get('/admin/finance/orders/:orderId/transfer-preview',async(req,res)=>{
+  try{
+   await admin(req);
+   const id=numeric(req.params.orderId);
+   const r0=await pool.query<{
+    id:number;status:string;payment_method:string;payment_status:string;
+    total:string;refunded_amount:string;payment_provider_id:string;
+   }>(
+    'SELECT id,status,payment_method,payment_status,total::text,refunded_amount::text,payment_provider_id FROM orders WHERE id=$1',
+    [id]);
+   const order=r0.rows[0];
+   if(!order){res.status(404).json({error:'ORDER_NOT_FOUND'});return;}
+   const r1=await pool.query<{
+    payee_kind:'restaurant'|'driver';payee_id:number;amount_minor:string;
+    state:string;stripe_account_id:string|null;owner_approved_at:Date|null;
+   }>(
+    "SELECT a.payee_kind,a.payee_id,a.amount_minor::text,a.state,"+
+    "CASE WHEN a.payee_kind='restaurant' THEN m.stripe_account_id ELSE d.stripe_account_id END AS stripe_account_id,"+
+    "CASE WHEN a.payee_kind='restaurant' THEN m.owner_approved_at ELSE d.owner_approved_at END AS owner_approved_at "+
+    "FROM tala_live_payee_allocations a LEFT JOIN tala_live_merchant_accounts m ON a.payee_kind='restaurant' AND m.restaurant_id=a.payee_id "+
+    "LEFT JOIN tala_live_driver_accounts d ON a.payee_kind='driver' AND d.user_id=a.payee_id "+
+    "WHERE a.order_id=$1 ORDER BY a.payee_kind",
+    [id]);
+   const flags=await pool.query<{cases:string;proof:string;prior_transfers:string}>(
+     "SELECT (SELECT count(*) FROM tala_live_financial_cases WHERE order_id=$1 AND status<>'resolved')::text AS cases,"+
+     "(SELECT count(*) FROM delivery_proofs WHERE order_id=$1 AND pin_verified=true)::text AS proof,"+
+     "(SELECT count(*) FROM tala_live_settlement_proposals WHERE order_id=$1 AND state='transferred')::text AS prior_transfers",
+     [id]);
+   const caseCount=Number(flags.rows[0]?.cases??'1');
+   const proof=flags.rows[0]?.proof==='1';
+   let capturedMinor=0,chargeId:string|null=null;
+   if(order.payment_method==='stripe'&&/^pi_[A-Za-z0-9]+$/.test(order.payment_provider_id)){
+     const pi=await stripe.paymentIntents.retrieve(order.payment_provider_id);
+     if(pi.livemode&&pi.status==='succeeded'&&pi.currency==='mxn'&&
+        pi.metadata.order_id===String(id)&&
+        pi.amount_received===centavos(order.total)){
+       const ch=typeof pi.latest_charge==='string'?pi.latest_charge:pi.latest_charge?.id;
+       if(ch){
+        const remote=await stripe.charges.retrieve(ch);
+        if(remote.livemode&&remote.paid&&remote.currency==='mxn'&&
+           remote.id===ch&&remote.amount_captured===pi.amount_received){
+         capturedMinor=remote.amount_captured;
+         chargeId=remote.id;
+        }
+       }
+     }
+   }
+   const proposals=[];
+   for(const item of r1.rows){
+    const acct=item.stripe_account_id?
+      await stripe.accounts.retrieve(item.stripe_account_id):null;
+    const plan=buildTransferProposal({
+      orderId:id,kind:item.payee_kind,payeeId:item.payee_id,
+      amountMinor:Number(item.amount_minor),stripeAccountId:item.stripe_account_id,
+      approvedByOwner:Boolean(item.owner_approved_at),
+      connectReady:acct?.country==='MX'&&
+        acct.capabilities?.transfers==='active'&&
+        acct.payouts_enabled===true&&acct.details_submitted===true,
+      chargeId,capturedAmountMinor:capturedMinor,
+      alreadyTransferred:item.state==='settled'||flags.rows[0]?.prior_transfers!=='0',
+      delivered:order.status==='delivered'&&order.payment_status==='paid',
+      proof,refundedMinor:centavos(order.refunded_amount),
+      openCases:caseCount,sourceMode:order.payment_method==='stripe'?'stripe':'cash'
+    });
+    proposals.push({...plan,record_state:item.state});
+   }
+   res.json({order_id:id,proposals,read_only:true,
+    marketplace_settlement_automation:false});
+  }catch{res.status(503).json({error:'TRANSFER_PREVIEW_UNAVAILABLE'});}
+ });
+
  // Intentionally NO /cash/settle: a photo is not a verified bank credit.
  // A future treasury connector must match the bank statement amount and
  // deposit reference before recording an actual settled balance.
