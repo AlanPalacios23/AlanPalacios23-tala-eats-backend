@@ -1105,3 +1105,102 @@ model StageReferralConversion {
  @@index([referrerUserId])
  @@map("referral_conversions")
 }
+
+
+// RC8.4: per-restaurant Connect ownership, manual reviews, never automatic
+// Stripe transfers/payouts. Additive PostgreSQL migration controls statuses.
+model TalaLiveMerchantAccount {
+  restaurantId Int @id @map("restaurant_id")
+  stripeAccountId String @unique @map("stripe_account_id") @db.VarChar(120)
+  registeredByUserId Int @map("registered_by_user_id")
+  ownerApprovedAt DateTime? @map("owner_approved_at") @db.Timestamptz(6)
+  settlementPolicy String @default("manual_hold") @map("settlement_policy") @db.VarChar(24)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  @@map("tala_live_merchant_accounts")
+}
+model TalaLiveFinancialCase {
+  id BigInt @id @default(autoincrement())
+  orderId Int @map("order_id")
+  caseType String @map("case_type") @db.VarChar(30)
+  stripeObjectId String @map("stripe_object_id") @db.VarChar(120)
+  lastEventId String @map("last_event_id") @db.VarChar(120)
+  status String @default("open") @db.VarChar(20)
+  evidenceRef String? @map("evidence_ref") @db.VarChar(300)
+  reviewedByUserId Int? @map("reviewed_by_user_id")
+  resolvedByUserId Int? @map("resolved_by_user_id")
+  reviewedAt DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  @@unique([caseType,stripeObjectId],map:"live_case_unique")
+  @@index([status,orderId],map:"ix_live_cases_open")
+  @@map("tala_live_financial_cases")
+}
+model TalaLiveSettlementProposal {
+  id BigInt @id @default(autoincrement())
+  orderId Int @unique @map("order_id")
+  restaurantId Int @map("restaurant_id")
+  stripeAccountId String @map("stripe_account_id") @db.VarChar(120)
+  chargeId String @map("charge_id") @db.VarChar(120)
+  proposedAmountMinor BigInt @map("proposed_amount_minor")
+  currency String @default("MXN") @db.VarChar(3)
+  state String @default("manual_hold") @db.VarChar(24)
+  reason String @db.VarChar(120)
+  preparedByUserId Int @map("prepared_by_user_id")
+  reviewedByUserId Int? @map("reviewed_by_user_id")
+  reviewedAt DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  approvedByUserId Int? @map("approved_by_user_id")
+  approvedAt DateTime? @map("approved_at") @db.Timestamptz(6)
+  stripeTransferId String? @unique @map("stripe_transfer_id") @db.VarChar(120)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@index([state,restaurantId],map:"ix_live_proposals_review")
+  @@map("tala_live_settlement_proposals")
+}
+
+
+// RC8.5: independent beneficiary obligations and physical cash held for review.
+// NO model creates Stripe transfers or treats a cash report as actual bank funds.
+model TalaLiveDriverAccount {
+ userId Int @id @map("user_id")
+ stripeAccountId String @unique @map("stripe_account_id") @db.VarChar(120)
+ registeredByUserId Int @map("registered_by_user_id")
+ ownerApprovedAt DateTime? @map("owner_approved_at") @db.Timestamptz(6)
+ createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+ updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+ @@map("tala_live_driver_accounts")
+}
+model TalaLivePayeeAllocation {
+ id BigInt @id @default(autoincrement())
+ orderId Int @map("order_id")
+ payeeKind String @map("payee_kind") @db.VarChar(12)
+ payeeId Int @map("payee_id")
+ amountMinor BigInt @map("amount_minor")
+ tender String @db.VarChar(8)
+ fulfillment String @db.VarChar(22)
+ state String @default("held") @db.VarChar(16)
+ capturedEvidenceRef String? @map("captured_evidence_ref") @db.VarChar(180)
+ createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+ @@unique([orderId,payeeKind])
+ @@index([payeeKind,payeeId,state],map:"rc85_allocations_payee")
+ @@map("tala_live_payee_allocations")
+}
+model TalaLiveCashCustody {
+ orderId Int @id @map("order_id")
+ collectorKind String @map("collector_kind") @db.VarChar(12)
+ collectorId Int @map("collector_id")
+ collectedMinor BigInt @map("collected_minor")
+ retainedMinor BigInt @map("retained_minor")
+ duePlatformMinor BigInt @map("due_platform_minor")
+ status String @default("awaiting_evidence") @db.VarChar(20)
+ evidenceRef String? @map("evidence_ref") @db.VarChar(300)
+ submittedBy Int? @map("submitted_by")
+ reviewedBy Int? @map("reviewed_by")
+ settledBy Int? @map("settled_by")
+ submittedAt DateTime? @map("submitted_at") @db.Timestamptz(6)
+ reviewedAt DateTime? @map("reviewed_at") @db.Timestamptz(6)
+ settledAt DateTime? @map("settled_at") @db.Timestamptz(6)
+ createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+ @@index([status,createdAt],map:"rc85_cash_status_idx")
+ @@map("tala_live_cash_custody")
+}

@@ -5,7 +5,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import { db } from '../db.js';
 import { config } from '../config.js';
-import { createCashPickupOnly, isCashPickupIntent } from './checkout.js';
+import { createStagePickupOrder, isCashPickupIntent, isStripePickupIntent } from './checkout.js';
 import { previewCancelStage, cancelCashPickupStage, moveCashPickupOwnerStage } from './lifecycle.js';
 import { completeCashPickupStage } from './pickup.js';
 import { driverAvailability, driverAccept, driverStatus, driverGps,
@@ -409,12 +409,21 @@ stageOrdersRouter.get('/:orderId',async(req,res)=>{
   res.json(orderView(order,isOwner));
 });
 stageOrdersRouter.post('/',async(req,res)=>{
-  if(config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true'||!isCashPickupIntent(req.body)){
-    res.status(503).json({detail:'Checkout Node staging disponible sólo para pickup/cash sintético con feature flag explícita'});
+  const cash=isCashPickupIntent(req.body)&&
+    config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true';
+  const stageCard=isStripePickupIntent(req.body)&&
+    config.NODE_ENV==='staging'&&config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true';
+  const liveCard=isStripePickupIntent(req.body)&&
+    config.NODE_ENV==='production'&&config.STRIPE_LIVE_ENABLED==='true'&&
+    config.STRIPE_FINANCIAL_WRITES_ENABLED==='true'&&
+    config.STRIPE_LIVE_RELEASE_APPROVED==='true'&&
+    config.STRIPE_MANUAL_SETTLEMENT_APPROVED==='true';
+  if(!(cash||stageCard||liveCard)){
+    res.status(503).json({detail:'Checkout de este tipo de pedido no habilitado'});
     return;
   }
   const account=await user(req,['customer','admin']);
-  const orderId=await createCashPickupOnly(req.body,account);
+  const orderId=await createStagePickupOrder(req.body,account);
   const created=await db.marketOrder.findUnique({
     where:{id:orderId},include:orderInclude,
   });

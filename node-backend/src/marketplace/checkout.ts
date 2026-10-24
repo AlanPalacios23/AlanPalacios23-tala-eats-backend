@@ -2,6 +2,7 @@
 // NOT a public checkout: does not support delivery, online providers, wallet,
 // coupons, commercial setting overrides, scheduled menus or financial payouts.
 import { createHmac, timingSafeEqual, randomInt } from 'node:crypto';
+import {calculateDefaultCommercial,fmtCents} from '../finance/pricing.js';
 import { z } from 'zod';
 import { db } from '../db.js';
 import { config } from '../config.js';
@@ -17,7 +18,7 @@ const intentSchema=z.strictObject({
   restaurant_id:positiveId,
   address:z.string().trim().min(3).max(300),
   notes:z.string().trim().max(1000).default(''),
-  payment_method:z.literal('cash'),
+  payment_method:z.enum(['cash','stripe']),
   order_type:z.literal('pickup'),
   client_reference:z.string().regex(/^[A-Za-z0-9_-]{1,80}$/),
   items:z.array(z.strictObject({
@@ -41,6 +42,15 @@ export function isCashPickupIntent(payload:unknown):boolean {
   if(!payload || typeof payload!=='object'||Array.isArray(payload))return false;
   const p=payload as Record<string,unknown>;
   return p.payment_method==='cash'&&p.order_type==='pickup'&&
+    Object.keys(p).every(k=>k in mobilePickupSchema.shape)&&
+    (p.coupon_code===undefined||p.coupon_code==='')&&
+    (p.delivery_lat===undefined||p.delivery_lat===null)&&
+    (p.delivery_lng===undefined||p.delivery_lng===null);
+}
+export function isStripePickupIntent(payload:unknown):boolean {
+  if(!payload || typeof payload!=='object'||Array.isArray(payload))return false;
+  const p=payload as Record<string,unknown>;
+  return p.payment_method==='stripe'&&p.order_type==='pickup'&&
     Object.keys(p).every(k=>k in mobilePickupSchema.shape)&&
     (p.coupon_code===undefined||p.coupon_code==='')&&
     (p.delivery_lat===undefined||p.delivery_lat===null)&&
@@ -90,13 +100,27 @@ const safeMatch=(a:unknown,b:string):boolean=>{
   return timingSafeEqual(Buffer.from(a,'hex'),Buffer.from(b,'hex'));
 };
 
-export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promise<number> {
-  if(config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true')
-    throw new CheckoutError(503,'Checkout deshabilitado en staging');
+export async function createStagePickupOrder(raw:unknown, account:AuthUser):Promise<number> {
+  const cash=isCashPickupIntent(raw);
+  const cardStripe=isStripePickupIntent(raw);
+  const testStripe=cardStripe&&config.NODE_ENV==='staging'&&
+    config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true';
+  const liveStripe=cardStripe&&config.NODE_ENV==='production'&&
+    config.STRIPE_LIVE_ENABLED==='true'&&
+    config.STRIPE_LIVE_RELEASE_APPROVED==='true'&&
+    config.STRIPE_FINANCIAL_WRITES_ENABLED==='true'&&
+    config.STRIPE_MANUAL_SETTLEMENT_APPROVED==='true';
+  if(!((cash&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true')||
+       testStripe||liveStripe))
+    throw new CheckoutError(503,'Checkout efectivo o Stripe no autorizado');
   if(!['customer','admin'].includes(account.role))
     throw new CheckoutError(403,'No tienes permisos para crear pedidos');
-  if(!isCashPickupIntent(raw))
-    throw new CheckoutError(503,'Este checkout de staging sólo admite efectivo para recoger; demás métodos pendientes');
+  // Administrators may create synthetic CASH fixtures, but never PaymentIntents
+  // they cannot authorize as the actual cardholder.
+  if(cardStripe&&account.role!=='customer')
+    throw new CheckoutError(403,'Stripe TEST requiere comprador customer');
+  if(!cash&&!cardStripe)
+    throw new CheckoutError(503,'Este checkout sólo admite recoger con efectivo o Stripe');
   const parsed=mobilePickupSchema.safeParse(raw);
   if(!parsed.success)throw new CheckoutError(422,'Datos del pedido inválidos');
   // The metadata fields are not part of the financial signature or insert.
@@ -206,29 +230,34 @@ export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promis
           toMilli(ingredient.quantity.toString())<ingredientUsage.get(id)!)
         throw new CheckoutError(400,'Inventario de ingredientes insuficiente');
     }
-    // Python default pickup cash: 15% restaurant commission, 7% of net food
+    // Python default pickup, cash or stripe TEST: 15% commission and 7% of net food
     // to customer, 100% tip to merchant. In v1.6.2, fee is capped at MXN 25.
     // Only fixed default policies are supported here; custom overrides 503.
-    const commission=roundRate(subtotal,1500n);
-    const uncappedFee=roundRate(subtotal,700n);
-    const serviceFee=pricingV162 && uncappedFee>2500n?2500n:uncappedFee;
-    const restaurantPayout=subtotal-commission+tip;
-    const platformRevenue=commission+serviceFee;
-    const total=subtotal+serviceFee+tip;
-    // Defensively reject overflow before any monetary DB writes.
-    [subtotal,commission,serviceFee,restaurantPayout,platformRevenue,total].forEach(fromMinor);
+    const economics=calculateDefaultCommercial({
+      policy:pricingV162?'v162':'v152',
+      method:data.payment_method,fulfillment:'pickup',
+      subtotal,discount:0n,tip,
+    });
+    const commission=economics.commission;
+    const serviceFee=economics.serviceFee;
+    const restaurantPayout=economics.restaurantPayable;
+    const platformRevenue=economics.platformRevenue;
+    const total=economics.total;
+    [subtotal,commission,serviceFee,restaurantPayout,platformRevenue,total,
+      economics.gatewayProcessingEstimate].forEach(fromMinor);
     const order=await tx.marketOrder.create({
       data:{
         userId:account.id,restaurantId:restaurant.id,
         address:data.address,notes:data.notes,clientReference:data.client_reference,
         deliveryPin:String(randomInt(0,10_000)).padStart(4,'0'),
-        orderType:'pickup',paymentMethod:'cash',paymentStatus:'pending',
-        paymentProvider:'cash',status:'received',
+        orderType:'pickup',paymentMethod:data.payment_method,paymentStatus:'pending',
+        paymentProvider:data.payment_method,status:cardStripe?'awaiting_payment':'received',
         subtotal:fromMinor(subtotal),deliveryFee:'0.00',
         tip:fromMinor(tip),total:fromMinor(total),
         platformCommission:fromMinor(commission),serviceFee:fromMinor(serviceFee),
+        paymentProcessingFee:fromMinor(economics.gatewayProcessingEstimate),
         restaurantPayout:fromMinor(restaurantPayout),
-        platformRevenue:fromMinor(platformRevenue),contributionMargin:fromMinor(platformRevenue),
+        platformRevenue:fromMinor(platformRevenue),contributionMargin:fmtCents(economics.contributionMargin),
         driverEarning:'0.00',estimatedMinutes:restaurant.etaMin,
         distanceKm:0,
         inventoryReservedJson:JSON.stringify(Object.fromEntries(
@@ -263,9 +292,12 @@ export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promis
       orderId:order.id,status:'received',actorUserId:account.id,
       metadataJson:JSON.stringify({source:'checkout',checkout_intent_hmac:fingerprint}),
     }});
-    const payload={order_id:order.id,status:'received',payment_status:'pending',
-      user_id:account.id,restaurant_id:restaurant.id};
-    await tx.stageEventOutbox.create({data:{
+    // Stripe TEST is an unpaid reservation. No seller balance, GMV or
+    // order.created outbox is payable/visible until a verified PSP webhook.
+    if(!cardStripe){
+      const payload={order_id:order.id,status:'received',payment_status:'pending',
+        user_id:account.id,restaurant_id:restaurant.id};
+      await tx.stageEventOutbox.create({data:{
       eventKey:'order:'+order.id+':created',aggregateType:'order',
       aggregateId:String(order.id),eventType:'order.created',
       payloadJson:JSON.stringify(payload),
@@ -274,22 +306,25 @@ export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promis
       ['gmv',total,'GMV del pedido'],
       ['restaurant_payable',restaurantPayout,'Saldo por pagar al restaurante'],
       ['platform_revenue',platformRevenue,'Ingreso bruto Tala Eats'],
-      ['contribution_margin',platformRevenue,'Margen de contribución estimado'],
+      ['payment_processing',-economics.gatewayProcessingEstimate,'Costo pasarela estimado'],
+      ['contribution_margin',economics.contributionMargin,'Margen de contribución estimado'],
     ] as const;
     for(const [accountName,value,description] of entries){
-      if(value<=0n)continue;
+      if(value===0n)continue;
       await tx.stageFinancialLedgerEntry.create({data:{
         orderId:order.id,userId:account.id,restaurantId:restaurant.id,
-        account:accountName,direction:'credit',amount:fromMinor(value),
+        account:accountName,direction:value<0n?'debit':'credit',
+        amount:fromMinor(value<0n?-value:value),
         kind:'order_settlement',description,
         idempotencyKey:'order:'+order.id+':ledger:'+accountName,
       }});
     }
+    } // cash-only accrual; Stripe is posted atomically on confirmed charge.
     await tx.authNotification.create({data:{
-      userId:account.id,kind:'order',title:'Pedido recibido',
-      message:'Tu pedido #'+order.id+' llegó a '+restaurant.name+'.',
+      userId:account.id,kind:'order',title:cardStripe?(liveStripe?'Esperando pago':'Esperando pago TEST'):'Pedido recibido',
+      message:cardStripe?(liveStripe?'Pedido #'+order.id+' pendiente de confirmación Stripe.':'Pedido de prueba #'+order.id+' pendiente de Stripe TEST.'):'Tu pedido #'+order.id+' llegó a '+restaurant.name+'.',
     }});
-    if(restaurant.ownerId){
+    if(restaurant.ownerId&&!cardStripe){
       await tx.authNotification.create({data:{
         userId:restaurant.ownerId,kind:'restaurant_order',title:'Nuevo pedido',
         message:'Pedido #'+order.id+' recibido en '+restaurant.name+'.',
@@ -297,4 +332,10 @@ export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promis
     }
     return order.id;
   },{maxWait:10_000,timeout:20_000});
+}
+
+// Compatibility wrapper for older cash-only callers; no Stripe bypass.
+export async function createCashPickupOnly(raw:unknown, account:AuthUser):Promise<number> {
+  if(!isCashPickupIntent(raw)) throw new CheckoutError(503,'Sólo efectivo para recoger');
+  return createStagePickupOrder(raw,account);
 }

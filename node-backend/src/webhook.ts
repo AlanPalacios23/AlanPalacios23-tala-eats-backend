@@ -29,7 +29,7 @@ export async function stripeWebhook(req: Request, res: Response): Promise<void> 
   }
   try {
     const obj = event.data.object as { id?: string };
-    await db.stripeWebhookEvent.upsert({
+    const receipt = await db.stripeWebhookEvent.upsert({
       where: { id: event.id },
       create: {
         id: event.id, type: event.type,
@@ -38,8 +38,11 @@ export async function stripeWebhook(req: Request, res: Response): Promise<void> 
       },
       update: { deliveryCount: { increment: 1 } },
     });
+    // Every signed resend gets an independent bounded job. A terminal
+    // failed BullMQ job retained in Redis must not block redelivery.
+    // The PG receipt/event+financial ledger are still strictly idempotent.
     await webhookQueue.add('receipt', { eventId: event.id }, {
-      jobId: 'evt-' + event.id.replaceAll(':', '-'),
+      jobId: 'evt-' + event.id.replaceAll(':', '-') + '-delivery-' + receipt.deliveryCount,
     });
     res.status(200).json({ received: true });
   } catch {
