@@ -43,7 +43,7 @@ test('RC8.12 rollback restores worker FIRST and waits for ready heartbeat',()=>{
   const startWorker=rollback.indexOf('pm2 start ecosystem.config.cjs --only tala-node-stage-worker');
   const startApi=rollback.indexOf('pm2 start ecosystem.config.cjs --only tala-node-stage-api');
   assert.ok(startWorker>0&&startApi>startWorker);
-  assert.match(rollback,/ROLBACK_READY=no/);
+  assert.match(rollback,/ROLLBACK_READY=no/);
   assert.match(rollback,/v\.workerOnline===true/);
   assert.match(rollback,/STAGE_PM2_ROLLBACK_READY=FAIL_MANUAL_REVIEW_REQUIRED/);
 });
