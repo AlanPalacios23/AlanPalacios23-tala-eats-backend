@@ -289,6 +289,7 @@ function deliveryPayload(o:any){
   const r=o.restaurant,u=o.customer;
   return {
     id:o.id,code:'TE-'+String(o.id).padStart(4,'0'),status:o.status,
+    payment_method:o.paymentMethod,payment_status:o.paymentStatus,
     restaurant:{id:r.id,name:r.name,
       address:r.address.trim()||'Punto del restaurante · '+r.lat.toFixed(5)+', '+r.lng.toFixed(5),
       lat:r.lat,lng:r.lng},
