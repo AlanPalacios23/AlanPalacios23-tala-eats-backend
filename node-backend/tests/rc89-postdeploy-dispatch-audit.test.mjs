@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
-import {validateStageHttp,reviewReadyBacklog,main}
+import {validateStageHttp,validatePm2EnvSource,reviewReadyBacklog,main}
   from '../scripts/rc89-postdeploy-dispatch-audit.mjs';
 
 const h={status:'ok',production:false,digital_payment_provider:'stripe',
@@ -17,6 +17,29 @@ const now=Date.parse('2026-10-24T19:00:00Z');
 const good={id:11,readyAt:new Date(now-10_000)};
 const marker={orderId:11,metadataJson:JSON.stringify({
  stage_delivery_customer_v1:true,checkout_intent_hmac:'a'.repeat(64)})};
+
+test('RC89 verifies PM2 API and worker share ONE locked staging env file',()=>{
+ const path='/home/tala-node-stage/.config/talaeats-node-staging.env';
+ const base=[
+  {name:'tala-node-stage-api',pm2_env:{
+    NODE_ENV:'staging',status:'online',node_args:['--env-file='+path]}},
+  {name:'tala-node-stage-worker',pm2_env:{
+    NODE_ENV:'staging',status:'online',node_args:['--env-file='+path]}}
+ ];
+ assert.equal(validatePm2EnvSource(base,path),true);
+ assert.equal(validatePm2EnvSource(base,'/tmp/staging.env'),false);
+ for(const patch of [
+  {node_args:[]},
+  {node_args:['--env-file=/tmp/wrong.env']},
+  {node_args:['--env-file='+path,'--require=/tmp/inject.js']},
+  {status:'stopped'},
+  {NODE_ENV:'production'},
+ ]){
+  const broken=[base[0],{...base[1],pm2_env:{...base[1].pm2_env,...patch}}];
+  assert.equal(validatePm2EnvSource(broken,path),false);
+ }
+ assert.equal(validatePm2EnvSource([base[0]],path),false);
+});
 
 test('RC89 readonly HTTP validates staging without claiming LIVE writes',()=>{
  assert.equal(validateStageHttp(h,r,p,s,true),true);
