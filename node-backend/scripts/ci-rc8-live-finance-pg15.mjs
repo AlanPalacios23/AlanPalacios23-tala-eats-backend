@@ -35,7 +35,7 @@ try {
      order_type,total,subtotal,restaurant_payout,platform_revenue,
      payment_processing_fee,contribution_margin,address)
    VALUES($1,$2,'awaiting_payment','stripe','pending','stripe',
-     'pi_reserving_rc8_live','pickup',$3,10.00,10.00,2.50,0.25,2.25,'RC8 TEST')
+     'pi_reserving_rc8_live','pickup',$3,10.00,10.00,2.50,3.00,-0.50,'RC8 TEST')
    RETURNING id`,[buyer.id,restaurant.id,amount]);
  const eventId='evt_RC8FINANCE001',paymentIntentId='pi_RC8FINANCE001';
  const event={id:eventId,type:'payment_intent.succeeded',livemode:true,
@@ -76,6 +76,12 @@ try {
  assert.equal(orderResult.payment_provider_id,paymentIntentId);
  assert.equal(await count(`SELECT COUNT(*)::int n FROM financial_ledger_entries
    WHERE order_id=$1`,[order.id]),6);
+ // Stripe capture still succeeds even when estimated provider fee exceeds
+ // platform revenue. The negative margin is a debit of exactly MXN 0.50.
+ const margin=await create(`SELECT account,direction,amount::text AS amount
+   FROM financial_ledger_entries
+   WHERE order_id=$1 AND account='contribution_margin'`,[order.id]);
+ assert.deepEqual(margin,{account:'contribution_margin',direction:'debit',amount:'0.50'});
  assert.equal(await count(`SELECT COUNT(*)::int n FROM event_outbox
    WHERE aggregate_id=$1 AND event_type IN ('order.created','order.paid')`,
    [String(order.id)]),2);
