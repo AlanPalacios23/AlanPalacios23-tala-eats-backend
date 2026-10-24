@@ -74,7 +74,7 @@ def main():
         return
     red=values["REDIS_URL"]
     # URL path is guaranteed exactly /0, retain the scheme/host/credentials.
-    from urllib.parse import urlsplit, urlunsplit
+    from urllib.parse import urlunsplit
     u=urlsplit(red)
     values["REDIS_URL"]=urlunsplit((u.scheme,u.netloc,"/1",u.query,u.fragment))
     values["PORT"]="18192"
