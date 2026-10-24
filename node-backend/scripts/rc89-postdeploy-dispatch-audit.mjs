@@ -53,9 +53,11 @@ export function validateStageHttp(health,ready,payments,stripe,delivery){
     stripe?.provider==='stripe'&&stripe.environment==='staging'&&
     stripe.financial_writes_enabled===false;
   if(!stage)return false;
-  const key=payments.publishable_key??stripe.publishable_key;
-  if(key!==null&&key!==undefined&&
-     (typeof key!=='string'||!key.startsWith('pk_test_')))return false;
+  for(const key of [payments.publishable_key,stripe.publishable_key]){
+    if(key!==null&&key!==undefined&&
+       (typeof key!=='string'||!key.startsWith('pk_test_')))return false;
+  }
+  if(payments.publishable_key!==stripe.publishable_key)return false;
   if(payments.enabled!==stripe.enabled||
      payments.checkout_ready!==stripe.checkout_ready||
      (delivery&&ready.workerOnline!==true))return false;
