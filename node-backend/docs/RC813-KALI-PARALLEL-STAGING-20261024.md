@@ -123,6 +123,54 @@ curl -sS -o /dev/null -w 'BORRAR_CUENTA %{http_code} %{content_type}\n' \
 availability must remain unchanged. Do not infer financial safety of LIVE
 from the new stage test suite.
 
+## RC8.13 PM2 bootstrap hotfix (24 October 2026)
+
+Earlier candidate `257775c47ac492aa92d13bc77debba334e0c1142`
+passed `--plan`, but the PM2 CLI launched a process named
+`ecosystem.rc813-parallel` instead of the worker because that noncanonical
+filename was interpreted as a Node script; therefore no worker heartbeat
+appeared, and rollback was attempted. **Do not rerun that SHA**.
+
+Fixed:
+- Canonical PM2 file: `rc813/ecosystem.config.cjs`, with `cwd` explicitly
+  resolving to the parent `node-backend` root.
+- The old `ecosystem.rc813-parallel.cjs` was removed.
+- The installer checks PM2's real JSON process names and executable paths
+  immediately after starting each process, before accepting a heartbeat.
+- Real CLI smoke runs against PM2 **6.0.14**, under a wholly isolated
+  disposable PM2_HOME with inert worker and API scripts.
+
+### One-time cleanup of a failed stage-only PM2_HOME
+
+Do **not** delete unknown PM2 folders by hand. The failed run printed
+`RC813_NEW_STAGE_ONLY_ROLLBACK=ATTEMPTED`, which is not proof of successful
+cleanup. Use the new guarded quarantine script from the **new pinned SHA**:
+
+```bash
+bash scripts/rc813-quarantine-aborted-pm2.sh --plan
+```
+
+It checks exact stage user, owner, absence of saved process dump, absence of
+living daemon PID, absence of `God Daemon` for the isolated PM2_HOME and
+availability of loopback `18192`. It does **not** spawn a new PM2 daemon.
+
+Only if `RC813_QUARANTINE_PLAN_READ_ONLY=PASS` (and the user approves
+relocation of solely that old PM2 home), run:
+
+```bash
+bash scripts/rc813-quarantine-aborted-pm2.sh --apply I_APPROVE_QUARANTINE_FAILED_RC813_PM2
+```
+
+It **renames** `~/.pm2-tala-rc813-parallel` into a uniquely timestamped
+quarantine directory, never deleting logs. It neither stops existing LIVE
+services nor changes Redis, PostgreSQL or Cloudflared.
+
+If `RC813_FAILED_PM2_RESIDUE=ABSENT`, the cleanup is unnecessary.
+
+After that, run `--prepare` and `--plan` using the latest exact new SHA.
+The private env `~/.config/talaeats-node-rc813-parallel.env` already exists:
+**do not rerun the environment creator**.
+
 ## After deployment — staged workflow testing
 
 1. API identity and read-only catalog/restaurant, quote, auth/authorization.
