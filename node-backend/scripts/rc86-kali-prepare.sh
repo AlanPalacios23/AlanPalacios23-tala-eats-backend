@@ -28,8 +28,11 @@ if [[ "$(node -p 'process.versions.node.split(".")[0]')" != 24 ]]; then
 fi
 cd "$ROOT"
 npm ci --ignore-scripts --no-audit --no-fund
-npm run generate
-npm run db:validate
+# Prisma generate/validate are schema-only. Never feed LIVE credentials to
+# a compiler or tests; this URL points to an intentionally nonexistent port.
+SCHEMA_ONLY_DATABASE_URL='postgresql://rc86_offline:rc86_offline@127.0.0.1:65534/rc86_never_connect'
+DATABASE_URL="$SCHEMA_ONLY_DATABASE_URL" npm run generate
+DATABASE_URL="$SCHEMA_ONLY_DATABASE_URL" npm run db:validate
 npm run build
 npm test
 node scripts/rc86-kali-readonly-preflight.mjs "$SHA"
