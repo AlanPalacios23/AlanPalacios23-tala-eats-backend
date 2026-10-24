@@ -56,8 +56,14 @@ if(env.NODE_ENV!=='production'||
    console.log('WARNING_NO_RESTAURANT_CAN_ACCEPT_LIVE_PAYMENTS_YET');
   }
   console.log('LIVE_ACTIVATION_AUDIT=PASS');
- }catch{
-  fail('FINANCE_STRIPE_OR_DATABASE');
+ }catch(error){
+  // Return only a fixed diagnostic category, never credentials or SQL text.
+  const pgCode=typeof error?.code==='string'&&/^[0-9A-Z]{5}$/.test(error.code)
+    ?'POSTGRES_'+error.code:null;
+  const categories=new Set(['FINANCIAL_HOLD','PLATFORM_NOT_READY',
+    'WEBHOOK_PAGINATED','WEBHOOK_SUBSCRIPTIONS','STRIPE_GET_FAILED']);
+  const reason=pgCode??(categories.has(error?.message)?error.message:'UNKNOWN');
+  fail(reason);
  }finally{await pool.end().catch(()=>{});}
 }
 console.log('PAYMENT_INTENTS_CREATED=0');
