@@ -77,7 +77,8 @@ try{
    body:{...quoteBody,address:'Calle de prueba, Tala',notes:'',
      client_reference:'rc810-test-'+process.pid}});
  assert.equal(order.code,201,JSON.stringify(order.data));
- const id=order.data.id;
+ let id=order.data.id;
+ let finalOrder=order.data;
  assert.equal(order.data.status,'awaiting_payment');
  assert.equal(order.data.payment_status,'pending');
  assert.equal(order.data.total,quote.data.total);
@@ -107,8 +108,20 @@ try{
  const statusMismatch=await call('/payments/stripe/orders/'+id+'/status',{
     token:buyer.token});
  assert.equal(statusMismatch.data.confirmed_by_server,false);
- await db.query("UPDATE financial_ledger_entries SET amount=$1 WHERE order_id=$2 AND account='stripe_test_collected'",
-  [quote.data.total,id]);
+ // NEVER mutate the immutable ledger. The wrong-amount order stays HELD.
+ // Create a SECOND order, as if a verified signed webhook had atomically
+ // posted its own exact receipt after capture.
+ const paid=await call('/orders',{method:'POST',token:buyer.token,
+   body:{...quoteBody,address:'Calle de prueba, Tala',notes:'',
+     client_reference:'rc810-verified-'+process.pid}});
+ assert.equal(paid.code,201,JSON.stringify(paid.data));
+ id=paid.data.id;
+ finalOrder=paid.data;
+ assert.equal(paid.data.status,'awaiting_payment');
+ await db.query("UPDATE orders SET payment_status='paid',status='received' WHERE id=$1",[id]);
+ await db.query(
+   "INSERT INTO financial_ledger_entries (order_id,user_id,restaurant_id,account,direction,amount,kind,description,idempotency_key) VALUES($1,$2,$3,'stripe_test_collected','credit',$4,'stripe_test_payment','Synthetic exact amount',$5)",
+   [id,buyer.id,rest,quote.data.total,'order:'+id+':stripe-test:collected']);
  const trusted=await call('/payments/stripe/orders/'+id+'/status',{
    token:buyer.token});
  assert.equal(trusted.data.confirmed_by_server,true);
@@ -129,11 +142,11 @@ try{
       method:'PATCH',token:driver.token,body:{status:next}});
    assert.equal(moved.code,200,JSON.stringify(moved.data));
  }
- const wrongPin=order.data.delivery_pin==='0000'?'0001':'0000';
+ const wrongPin=finalOrder.delivery_pin==='0000'?'0001':'0000';
  assert.equal((await call('/driver/orders/'+id+'/complete',{method:'POST',
     token:driver.token,body:{pin:wrongPin}})).code,400);
  const prove=()=>call('/driver/orders/'+id+'/complete',{
-   method:'POST',token:driver.token,body:{pin:order.data.delivery_pin}});
+   method:'POST',token:driver.token,body:{pin:finalOrder.delivery_pin}});
  const done=await Promise.all([prove(),prove()]);
  assert.ok(done.every(v=>v.code===200&&v.data.status==='delivered'),
    JSON.stringify(done));
