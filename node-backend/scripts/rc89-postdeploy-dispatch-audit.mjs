@@ -19,6 +19,27 @@ const PUBLIC='https://talaeats.alan-palacios-dev.com/api/v1';
 const SWEEP_KEY='tala:node:stage:dispatch:sweep:ok';
 const WORKER_KEY='tala:node:stage:worker:heartbeat';
 
+/**
+ * Both PM2 processes must import the SAME private 0600 config path as this
+ * read-only audit; NODE_ENV alone does not prove feature flag consistency.
+ * The ecosystem intentionally uses Node 24's --env-file, not shell 'source'.
+ */
+export function validatePm2EnvSource(processes,envPath){
+  if(!Array.isArray(processes)||processes.length!==2||
+     envPath!=='/home/tala-node-stage/.config/talaeats-node-staging.env')
+    return false;
+  const names=processes.map(p=>p?.name).sort();
+  if(JSON.stringify(names)!==JSON.stringify(
+     ['tala-node-stage-api','tala-node-stage-worker']))return false;
+  return processes.every(p=>{
+    const e=p?.pm2_env;
+    const args=e?.node_args;
+    return e?.NODE_ENV==='staging'&&e.status==='online'&&
+      Array.isArray(args)&&args.length===1&&
+      args[0]==='--env-file='+envPath;
+  });
+}
+
 export function validateStageHttp(health,ready,payments,stripe,delivery){
   const stage=health?.status==='ok'&&health.production===false&&
     health.digital_payment_provider==='stripe'&&
@@ -109,6 +130,15 @@ export async function main(args=process.argv.slice(2)){
     if(!parent.includes('POSTDEPLOY_READ_ONLY=PASS')||
        !parent.includes('POSTDEPLOY_STAGE_CONTRACT=PASS'))
       throw Error('PARENT_SHA_AND_PM2_AUDIT');
+    // PM2's node_args must source only the exact, private staging file.
+    // Keep full jlist exclusively in memory: it can contain credentials.
+    const processSnapshot=JSON.parse(execFileSync('pm2',['jlist'],{
+      encoding:'utf8',timeout:10_000,maxBuffer:4*1024*1024,
+      env:{...process.env,PM2_HOME:join(homedir(),'.pm2')},
+    }));
+    if(!validatePm2EnvSource(processSnapshot,
+       '/home/tala-node-stage/.config/talaeats-node-staging.env'))
+      throw Error('PM2_STAGE_ENV_SOURCE_MISMATCH');
     const {config}=await import('../dist/config.js');
     const {db:client}=await import('../dist/db.js');
     const {Redis}=await import('ioredis');
