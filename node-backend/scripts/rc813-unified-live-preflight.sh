@@ -26,17 +26,17 @@ LIVE="$HOME/.config/talaeats-node-live.env"
  echo 'RC813_LIVE_ABORT=PRIVATE_LIVE_ENV_0600_REQUIRED';exit 1;
 }
 cd "$DIR"
-if [[ "$MODE" == --prepare ]];then
- npm ci --no-audit --no-fund
- # Build before loading dist/config. This is the first time the pinned
- # release is prepared on Kali, not an already running checkout.
- npm run generate
- npm run build
-fi
 run_live(){
  env -i HOME="$HOME" USER=tala-node-stage LOGNAME=tala-node-stage PATH="$PATH" \
   node --env-file="$LIVE" "$@"
 }
+if [[ "$MODE" == --prepare ]];then
+ npm ci --no-audit --no-fund
+ # Prisma 7 reads DATABASE_URL from a private env; do not shell-source it
+ # or rely on inherited operator environment variables.
+ run_live ./node_modules/prisma/build/index.js generate
+ npm run build
+fi
 # No credentials or PostgreSQL URLs are printed. No get/set of Stripe resources.
 run_live --input-type=module - <<'JS'
 import {config} from './dist/config.js';
