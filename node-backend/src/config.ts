@@ -151,6 +151,7 @@ if(config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&(
     config.AUTH_V02_ENABLED!=='true'||
     config.MARKETPLACE_B_ENABLED!=='true'||
     config.STAGE_DRIVER_DELIVERY_ENABLED!=='true'||
+    config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true'||
     config.MERCHANT_MANAGED_DELIVERY!=='false'||
     config.STRIPE_FINANCIAL_WRITES_ENABLED!=='false')){
   throw new Error('RC87_DELIVERY_CASH_REQUIRES_ISOLATED_DRIVER_STAGE');
