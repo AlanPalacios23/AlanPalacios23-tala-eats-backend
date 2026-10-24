@@ -5,6 +5,9 @@ on:
     paths:
       - 'node-backend/src/app.ts'
       - 'node-backend/src/runtime-readiness.ts'
+      - 'node-backend/src/stage-worker-gate.ts'
+      - 'node-backend/src/marketplace/routes.ts'
+      - 'node-backend/src/stage-stripe-test.ts'
       - 'node-backend/tests/rc812-runtime-readiness.test.mjs'
       - '.github/workflows/rc812-ready-worker-qa.yml'
   workflow_dispatch:
