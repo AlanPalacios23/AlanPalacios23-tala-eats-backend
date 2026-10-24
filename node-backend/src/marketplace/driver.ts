@@ -5,6 +5,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { Redis } from 'ioredis';
 import { db } from '../db.js';
 import { config } from '../config.js';
+import {stageDeliveryTenderAllowed} from './delivery-financial-proof.js';
 import type { AuthUser } from '../generated/prisma/client.js';
 
 const ACTIVE=['assigned','picked_up','on_the_way'];
@@ -114,7 +115,10 @@ async function assign(tx:any,driverId:number,forcedOrderId?:number):Promise<numb
   const lat=fresh?.lat??p.currentLat,lng=fresh?.lng??p.currentLng;
   const candidates=await tx.marketOrder.findMany({
     where:{status:'ready',driverId:null,orderType:'delivery',
-      paymentMethod:'cash',paymentStatus:'pending',
+      OR:[
+        {paymentMethod:'cash',paymentStatus:'pending'},
+        {paymentMethod:'stripe',paymentStatus:'paid'},
+      ],
       ...(forcedOrderId?{id:forcedOrderId}:{})},
     include:{restaurant:true},take:forcedOrderId?1:25,
     orderBy:[{readyAt:'asc'},{updatedAt:'asc'},{id:'asc'}],
@@ -133,6 +137,7 @@ async function assign(tx:any,driverId:number,forcedOrderId?:number):Promise<numb
     );
     if(!lock.length)continue;
     if(!await fixture(tx,row.id))continue;
+    if(!await stageDeliveryTenderAllowed(tx,row))continue;
     // Prevent dispatch to a stale online flag. Synthetic D2 fixtures retain
     // their older isolated test behavior, but real customer orders must have
     // a fresh Redis location heartbeat from the driver app.
@@ -226,7 +231,8 @@ export async function driverStatus(actor:AuthUser,orderId:number,next:string){
     if(o.driverId!==actor.id)fail(403,'Pedido no asignado');
     const allowed:{[k:string]:string}={assigned:'picked_up',picked_up:'on_the_way'};
     if(allowed[o.status]!==next)fail(409,'Transición inválida: '+o.status+' → '+next);
-    if(o.paymentMethod!=='cash'||o.orderType!=='delivery'||!await fixture(tx,orderId))
+    if(o.orderType!=='delivery'||!await fixture(tx,orderId)||
+       !await stageDeliveryTenderAllowed(tx,o))
       fail(503,'Pedido fuera de los contratos del laboratorio');
     await tx.marketOrder.update({where:{id:orderId},data:{
       status:next,...(next==='picked_up'?{pickedUpAt:new Date()}:{})
@@ -361,8 +367,8 @@ export async function driverComplete(actor:AuthUser,orderId:number,
   });
   if(!candidate)return fail(404,'Pedido no encontrado');
   if(candidate.driverId!==actor.id)fail(403,'Pedido no asignado');
-  if(candidate.paymentMethod!=='cash'||candidate.orderType!=='delivery')
-    fail(503,'Sólo entregas cash sintéticas en staging');
+  if(candidate.orderType!=='delivery'||!['cash','stripe'].includes(candidate.paymentMethod))
+    fail(503,'Modalidad de entrega no habilitada en staging');
   await throttlePin(orderId,actor.id);
   const id=await withProfileLock(actor.id,async tx=>{
     const locked=await tx.$queryRawUnsafe(
@@ -381,6 +387,8 @@ export async function driverComplete(actor:AuthUser,orderId:number,
     }
     if(o.status!=='on_the_way')fail(409,'Primero marca el pedido como en camino');
     if(!await fixture(tx,orderId))fail(503,'Entrega fuera de contrato de staging');
+    if(!await stageDeliveryTenderAllowed(tx,o))
+      fail(503,'Pago digital sin recibo Stripe TEST firmado o efectivo inválido');
     if(!/^\d{4}$/.test(o.deliveryPin)||!/^\d{4}$/.test(proof.pin)||
       !timingSafeEqual(Buffer.from(o.deliveryPin),Buffer.from(proof.pin)))
       fail(400,'PIN incorrecto');
@@ -411,17 +419,21 @@ export async function driverComplete(actor:AuthUser,orderId:number,
     const streak=gap!==null&&gap<=7?account.streakDays+1:Math.max(1,account.streakDays);
     const tier=points>=3000?'BLACK':points>=1500?'GOLD':points>=600?'SILVER':'BRONZE';
     await tx.marketOrder.update({where:{id:orderId},data:{
-      status:'delivered',deliveredAt:now,paymentStatus:'paid',cashCollected:o.total,
+      status:'delivered',deliveredAt:now,
+      ...(o.paymentMethod==='cash'?
+        {paymentStatus:'paid',cashCollected:o.total}:{}),
     }});
     // The driver physically collects cash at PIN delivery, never Stripe.
     // Atomic, idempotent and held for manual reconciliation; not withdrawable.
-    await tx.stageFinancialLedgerEntry.create({data:{
-      orderId,userId:o.userId,restaurantId:o.restaurantId,
-      account:'cash_collected_by_driver',direction:'credit',amount:o.total,
-      kind:'cash_delivery_collection',
-      description:'Efectivo recibido por repartidor en entrega; conciliación pendiente',
-      idempotencyKey:'order:'+orderId+':cash-delivery:collected',
-    }});
+    if(o.paymentMethod==='cash'){
+      await tx.stageFinancialLedgerEntry.create({data:{
+        orderId,userId:o.userId,restaurantId:o.restaurantId,
+        account:'cash_collected_by_driver',direction:'credit',amount:o.total,
+        kind:'cash_delivery_collection',
+        description:'Efectivo recibido por repartidor en entrega; conciliación pendiente',
+        idempotencyKey:'order:'+orderId+':cash-delivery:collected',
+      }});
+    }
     await tx.stageDeliveryProof.create({data:{
       orderId,driverId:actor.id,pinVerified:true,
       photoUrl:proof.photo_url??'',lat:proof.lat??null,lng:proof.lng??null,
