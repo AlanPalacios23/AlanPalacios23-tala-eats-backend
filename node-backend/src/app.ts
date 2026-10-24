@@ -55,6 +55,16 @@ if(live){
     enabled:liveChargeApproved,authSecret:config.AUTH_JWT_SECRET!,pool:live.pool,
     redis:live.redis,stripe:live.stripe,settings:live.settings,
   }));
+  // The pilot currently contains a disposable test restaurant. Standby
+  // permits read-only production API and seller onboarding, not customer
+  // orders (cash or card) that a real merchant cannot fulfill.
+  app.use('/api/v1/orders',(req,res,next)=>{
+    if(req.method==='POST'&&req.path==='/'&&!liveChargeApproved){
+      res.status(503).json({error:'PRODUCTION_STANDBY_CHECKOUT_DISABLED'});
+      return;
+    }
+    next();
+  });
   // Do not reserve customer stock when Stripe LIVE reconciliation is down.
   // This gate precedes POST /orders while preserving cash order semantics.
   app.use('/api/v1/orders',async(req,res,next)=>{
