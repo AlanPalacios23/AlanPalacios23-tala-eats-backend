@@ -1,3 +1,4 @@
+import {Pool} from 'pg';
 #!/usr/bin/env node
 /**
  * Read-only Stripe LIVE credentials probe, usable from a temporary path.
@@ -6,7 +7,6 @@
  */
 const key=process.env.STRIPE_SECRET_KEY??'';
 const platform=process.env.STRIPE_PLATFORM_ACCOUNT_ID??'';
-const connected=process.env.STRIPE_CONNECTED_ACCOUNT_ID??'';
 const publishable=process.env.STRIPE_PUBLISHABLE_KEY??'';
 const webhook=process.env.STRIPE_WEBHOOK_SECRET??'';
 const checks={
@@ -14,7 +14,6 @@ const checks={
   LIVE_PUBLISHABLE_KEY_FORMAT:/^pk_live_[A-Za-z0-9]{16,}$/.test(publishable),
   WEBHOOK_SIGNING_SECRET_FORMAT:/^whsec_[A-Za-z0-9]{16,}$/.test(webhook),
   PLATFORM_ACCOUNT_ID_FORMAT:/^acct_[A-Za-z0-9]+$/.test(platform),
-  CONNECT_ACCOUNT_ID_FORMAT:/^acct_[A-Za-z0-9]+$/.test(connected),
 };
 for(const [name,pass] of Object.entries(checks))
   console.log(name+'='+(pass?'PASS':'BLOCKED'));
@@ -38,19 +37,62 @@ if(Object.values(checks).some(x=>!x)){
     console.log('PLATFORM_ACCOUNT_MATCH='+(match?'PASS':'BLOCKED'));
     console.log('PLATFORM_CARD_PAYMENTS='+(cards?'ACTIVE':'BLOCKED'));
     console.log('PLATFORM_CHARGES_ENABLED='+(enabled?'YES':'NO'));
+    // Each seller is isolated: readiness is based on the seller's own
+    // approved Connect recipient, not a single personal account env var.
     let connectReady=false;
+    let readySellers=0;
+    let reviewedSellers=0;
+    let pool;
     try{
-      const recipient=await get('/v1/accounts/'+connected);
-      console.log('CONNECT_ACCOUNT_MATCH='+(recipient.id===connected?'PASS':'BLOCKED'));
-      console.log('CONNECT_TRANSFERS='+(recipient.capabilities?.transfers==='active'?'ACTIVE':'NOT_ACTIVE'));
-      console.log('CONNECT_PAYOUTS='+(recipient.payouts_enabled?'ENABLED':'NOT_ENABLED'));
-      connectReady=recipient.id===connected &&
-        recipient.capabilities?.transfers==='active' &&
-        recipient.payouts_enabled===true && recipient.details_submitted===true;
+      const url=new URL(process.env.DATABASE_URL??'');
+      if(!['postgres:','postgresql:'].includes(url.protocol)||
+         !url.hostname||!url.username||!url.password||
+         url.pathname==='/tala_node_stage'||url.username==='tala_node_stage')
+        throw Error('PRODUCTION_PG_REQUIRED');
+      pool=new Pool({connectionString:url.toString(),max:1,
+        connectionTimeoutMillis:5000,statement_timeout:7000});
+      const client=await pool.connect();
+      let rows;
+      try{
+        await client.query('BEGIN READ ONLY');
+        const result=await client.query(
+          "SELECT m.stripe_account_id,m.owner_approved_at,u.email "+
+          "FROM tala_live_merchant_accounts m "+
+          "JOIN restaurants r ON r.id=m.restaurant_id "+
+          "JOIN users u ON u.id=r.owner_id "+
+          "WHERE u.is_active=true AND r.owner_id IS NOT NULL "+
+          "ORDER BY m.restaurant_id LIMIT 101");
+        rows=result.rows;
+        await client.query('ROLLBACK');
+      }finally{client.release();}
+      if(rows.length>100)throw Error('MAPPING_AUDIT_LIMIT');
+      reviewedSellers=rows.length;
+      for(const seller of rows){
+        const id=seller.stripe_account_id;
+        if(typeof id!=='string'||!/^acct_[A-Za-z0-9]+$/.test(id)||
+           id===platform||!seller.owner_approved_at)continue;
+        try{
+          const connected=await get('/v1/accounts/'+id);
+          if(connected.id===id&&connected.country==='MX'&&
+             connected.email?.trim().toLowerCase()===
+               seller.email?.trim().toLowerCase()&&
+             connected.capabilities?.transfers==='active'&&
+             connected.payouts_enabled===true&&
+             connected.details_submitted===true){
+             readySellers++;
+          }
+        }catch{
+          // A seller missing access/verification is in HOLD, not passed.
+        }
+      }
+      connectReady=readySellers>=1;
+      console.log('CONNECT_REGISTERED_SELLERS='+reviewedSellers);
+      console.log('CONNECT_LIVE_READY_SELLERS='+readySellers);
       console.log('CONNECT_MARKETPLACE_READY='+(connectReady?'PASS':'BLOCKED'));
     }catch{
-      console.log('CONNECT_STATUS=UNVERIFIED_READ_PERMISSION_OR_STRIPE_ERROR');
-    }
+      console.log('CONNECT_MARKETPLACE_READY=BLOCKED');
+      console.log('CONNECT_DATABASE_OR_STRIPE_AUDIT=UNAVAILABLE');
+    }finally{if(pool)await pool.end().catch(()=>{});}
     // Verify the existing LIVE destination before an operator enables charges.
     // GET-only: no endpoint changes and no fabricated webhook deliveries.
     let webhookReady=false;
