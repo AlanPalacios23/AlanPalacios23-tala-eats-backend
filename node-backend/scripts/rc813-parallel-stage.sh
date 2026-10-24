@@ -20,7 +20,7 @@ ROOT="$HOME/tala-node-releases/$SHA"
 WORK="$ROOT/node-backend"
 ENV="$HOME/.config/talaeats-node-rc813-parallel.env"
 STAGE_PM2_HOME="$HOME/.pm2-tala-rc813-parallel"
-ECO="$WORK/ecosystem.rc813-parallel.cjs"
+ECO="$WORK/rc813/ecosystem.config.cjs"
 [[ -d "$ROOT" && -d "$WORK" && ! -L "$ROOT" && ! -L "$WORK" &&
    "$(cd "$(dirname "$0")/.." && pwd -P)" == "$WORK" &&
    "$(git -C "$ROOT" rev-parse --verify HEAD)" == "$SHA" &&
@@ -105,7 +105,7 @@ if [[ "$MODE" == '--prepare' ]]; then
   npm run build
   stage_node "$(readlink -f "$(command -v npm)")" test
   bash -n scripts/rc813-parallel-stage.sh
-  node --check ecosystem.rc813-parallel.cjs
+  node --check rc813/ecosystem.config.cjs
   echo 'RC813_COMPILED_AND_TESTED=PASS'
   echo 'RC813_PM2_LIVE_DB_UNCHANGED=YES'
   exit 0
@@ -195,6 +195,18 @@ cleanup(){
 trap cleanup EXIT
 ROLLOUT_STARTED=yes
 stage_pm2 start "$ECO" --only tala-rc813-parallel-worker --update-env
+# Check PM2's ACTUAL process identity before waiting on Redis.
+# This catches an unrecognized ecosystem file that PM2 launches as a script.
+stage_pm2 jlist | node -e '
+let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{
+ try{
+  const p=JSON.parse(s);
+  if(p.length!==1||p[0].name!=="tala-rc813-parallel-worker"||
+     !p[0].pm2_env?.pm_exec_path?.endsWith("/dist/worker.js")||
+     p[0].pm2_env?.status!=="online")process.exit(1);
+  console.log("RC813_PM2_WORKER_PROCESS_IDENTITY=PASS")
+ }catch{process.exit(1)}
+})' || { echo 'RC813_ABORT_PM2_WRONG_WORKER_IDENTITY'; exit 1; }
 # Fresh Redis DB1 had no keys before startup: heartbeat must be this worker.
 STAGE_WORKER_ONLINE=no
 for attempt in $(seq 1 25); do
@@ -210,6 +222,17 @@ JS
 done
 [[ "$STAGE_WORKER_ONLINE" == yes ]] || { echo 'RC813_NEW_WORKER_HEARTBEAT_FAIL'; exit 1; }
 stage_pm2 start "$ECO" --only tala-rc813-parallel-api --update-env
+stage_pm2 jlist | node -e '
+let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{
+ try{
+  const p=JSON.parse(s), names=p.map(x=>x.name).sort();
+  if(JSON.stringify(names)!==JSON.stringify(["tala-rc813-parallel-api","tala-rc813-parallel-worker"])||
+     p.some(x=>x.pm2_env?.status!=="online")||
+     !p.some(x=>x.name==="tala-rc813-parallel-api"&&x.pm2_env?.pm_exec_path?.endsWith("/dist/server.js"))||
+     !p.some(x=>x.name==="tala-rc813-parallel-worker"&&x.pm2_env?.pm_exec_path?.endsWith("/dist/worker.js")))process.exit(1);
+  console.log("RC813_PM2_API_WORKER_PROCESS_IDENTITIES=PASS")
+ }catch{process.exit(1)}
+})' || { echo 'RC813_ABORT_PM2_WRONG_PROCESS_IDENTITIES'; exit 1; }
 STAGE_READY=no
 for attempt in $(seq 1 25); do
   if bash scripts/rc813-parallel-stage.sh --verify "$SHA" >/dev/null 2>&1; then
