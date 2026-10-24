@@ -63,6 +63,7 @@ if [[ "$MODE" == '--prepare' ]]; then
  node --env-file="$ENV" "$(readlink -f "$(command -v npm)")" test
  node scripts/release-readiness.mjs --stage
  bash -n scripts/rc811-kali-stage-promote.sh
+ bash -n scripts/rc811-stage-schema-gate.sh
  bash -n scripts/rc811-kali-stage-candidate.sh
  echo 'RC811_CANDIDATE_BUILD_AND_TEST=PASS'
  echo 'RC811_NO_DB_PM2_STRIPE_MUTATION=PASS'
