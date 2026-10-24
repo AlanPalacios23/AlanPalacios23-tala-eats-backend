@@ -421,7 +421,8 @@ export async function dispatchStageDeliveryReady(orderId:number):Promise<boolean
     return false;
   if(!Number.isSafeInteger(orderId)||orderId<=0)return false;
   const profiles=await db.marketplaceDriverProfile.findMany({
-    where:{isVerified:true,isOnline:true},
+    where:{isVerified:true,isOnline:true,
+      user:{is:{role:'driver',isActive:true}}},
     select:{userId:true},orderBy:{userId:'asc'},take:100,
   });
   for(const p of profiles){
