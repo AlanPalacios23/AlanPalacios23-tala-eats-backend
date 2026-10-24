@@ -2,6 +2,9 @@ name: TALA EATS RC8.12 | Worker readiness, PG15 Redis8 Delivery E2E
 on:
   pull_request:
     paths:
+      - 'node-backend/scripts/kali-stage-first-pm2-promote.sh'
+      - 'node-backend/scripts/rc812-kali-stage-release.sh'
+      - 'node-backend/tests/rc812-stage-release-safety.test.mjs'
       - 'node-backend/src/**'
       - 'node-backend/tests/rc812-runtime-readiness.test.mjs'
       - '.github/workflows/rc812-worker-pg15-delivery-e2e.yml'
