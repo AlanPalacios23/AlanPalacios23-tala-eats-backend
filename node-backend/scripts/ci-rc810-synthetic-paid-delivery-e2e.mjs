@@ -101,8 +101,8 @@ try{
  const amountCents=Number(quote.data.total.replace('.',''));
  const wrong=((amountCents-1)/100).toFixed(2);
  await db.query(
-   "INSERT INTO financial_ledger_entries (order_id,user_id,restaurant_id,account,direction,amount,kind,description,idempotency_key) VALUES($1,$2,$3,'stripe_test_collected','credit',$4,'stripe_test_payment','Synthetic wrong amount','order:'||$1||':stripe-test:collected')",
-   [id,buyer.id,rest,wrong]);
+   "INSERT INTO financial_ledger_entries (order_id,user_id,restaurant_id,account,direction,amount,kind,description,idempotency_key) VALUES($1,$2,$3,'stripe_test_collected','credit',$4,'stripe_test_payment','Synthetic wrong amount',$5)",
+   [id,buyer.id,rest,wrong,'order:'+id+':stripe-test:collected']);
  assert.equal((await confirm()).code,503);
  const statusMismatch=await call('/payments/stripe/orders/'+id+'/status',{
     token:buyer.token});
