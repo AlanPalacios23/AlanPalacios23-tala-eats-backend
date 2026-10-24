@@ -21,6 +21,13 @@ import { marketplaceRouter, ownerRouter, stageOrdersRouter,
 
 export const app = express();
 const live=config.NODE_ENV==='production'?buildLiveRuntimeDependencies():null;
+// Runtime readiness and permission to charge are deliberately distinct.
+const liveChargeApproved=Boolean(live&&
+  config.STRIPE_LIVE_ENABLED==='true'&&
+  config.STRIPE_LIVE_RELEASE_APPROVED==='true'&&
+  config.STRIPE_FINANCIAL_WRITES_ENABLED==='true'&&
+  config.STRIPE_REFUNDS_ENABLED==='true'&&
+  config.STRIPE_MANUAL_SETTLEMENT_APPROVED==='true');
 export async function closeProductionResources():Promise<void>{
   if(!live)return;
   await Promise.allSettled([live.pool.end(),live.redis.quit()]);
@@ -45,7 +52,7 @@ if(live){
   app.use('/api/v1',buildLiveMerchantFinanceRouter(live.pool,live.stripe));
   app.use('/api/v1',buildPayeeFinanceRouter(live.pool,live.stripe));
   app.use('/api/v1',buildIsolatedCheckoutRouter({
-    enabled:true,authSecret:config.AUTH_JWT_SECRET!,pool:live.pool,
+    enabled:liveChargeApproved,authSecret:config.AUTH_JWT_SECRET!,pool:live.pool,
     redis:live.redis,stripe:live.stripe,settings:live.settings,
   }));
   // Do not reserve customer stock when Stripe LIVE reconciliation is down.
@@ -53,6 +60,9 @@ if(live){
   app.use('/api/v1/orders',async(req,res,next)=>{
     if(req.method!=='POST'||req.path!=='/'||
        req.body?.payment_method!=='stripe'){next();return;}
+    if(!liveChargeApproved){
+      res.status(503).json({error:'LIVE_CARD_CHECKOUT_NOT_APPROVED'});return;
+    }
     try{
       const audit=await inspectLiveFinancialData(live.pool);
       if(audit.classification!=='LIVE_FINANCIAL_DATA_PASS'){
@@ -115,7 +125,7 @@ app.get('/api/v1/health', (_req, res) => {
   res.json({status:'ok',
     version:live?'rc8.6-live-pickup-finance-review':'0.1.0-node-stripe-only-stage',
     production:Boolean(live),digital_payment_provider:'stripe',
-    online_payment_writes:Boolean(live)});
+    online_payment_writes:liveChargeApproved});
 });
 app.get('/api/v1/ready', async (_req, res) => {
   const redis = new Redis(config.REDIS_URL, {
@@ -142,11 +152,11 @@ app.get('/api/v1/ready', async (_req, res) => {
     res.setHeader('Cache-Control','no-store');
     res.status(ready?200:503).json({
       ready,database:true,redis:true,workerOnline,
-      productionReady:Boolean(live&&ready),
+      productionReady:Boolean(liveChargeApproved&&ready),
       environment:live?'production':'staging',
-      financialWrites:Boolean(live&&ready),
+      financialWrites:Boolean(liveChargeApproved&&ready),
       digitalPaymentProvider:'stripe',
-      onlinePaymentsEnabled:Boolean(live&&ready),
+      onlinePaymentsEnabled:Boolean(liveChargeApproved&&ready),
     });
   } catch {
     res.status(503).json({ ready: false });
