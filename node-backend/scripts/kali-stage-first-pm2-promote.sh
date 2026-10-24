@@ -97,7 +97,9 @@ npm ci --no-audit --no-fund
 node --env-file="$ENVFILE" ./node_modules/prisma/build/index.js generate
 node --env-file="$ENVFILE" ./node_modules/prisma/build/index.js validate
 npm run build
-npm test
+# Run tests under the same protected STAGING environment as API+worker;
+# never shell-source a secret file. The old command inherited no stage env.
+node --env-file="$ENVFILE" "$(readlink -f "$(command -v npm)")" test
 python3 scripts/kali-stage-migration-static-audit.py --check
 bash scripts/kali-stage-migrate.sh --preflight
 
