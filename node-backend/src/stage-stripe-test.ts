@@ -227,9 +227,14 @@ export async function processStripeTestReceipt(eventId:string):Promise<void>{
           ['restaurant_payable',order.restaurantPayout.toFixed(2),
             'Saldo comercio condicionado a liquidación TEST'],
           ...(order.orderType==='delivery'?[
-            ['driver_payable',(Number(order.driverEarning.toFixed(2))+
-              Number(order.tip.toFixed(2))).toFixed(2),
-              'Ganancia repartidor TEST condicionada a liquidación'] as const,
+            ['driver_payable',(()=>{
+              const cents=(s:string)=>{const [whole,part]=s.split('.');
+                return BigInt(whole!)*100n+BigInt(part!);};
+              const sum=cents(order.driverEarning.toFixed(2))+
+                cents(order.tip.toFixed(2));
+              return (sum/100n).toString()+'.'+
+                (sum%100n).toString().padStart(2,'0');
+            })(),'Ganancia repartidor TEST condicionada a liquidación'] as const,
           ]:[]),
           ['platform_revenue',order.platformRevenue.toFixed(2),
             'Ingresos de plataforma después de cobro TEST'],
