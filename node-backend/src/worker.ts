@@ -6,6 +6,7 @@ import { deliverStageMailBatch } from './email.js';
 import { processStripeTestReceipt } from './stage-stripe-test.js';
 import { webhookQueue, closeQueue } from './queues.js';
 import { cancelCashPickupStage } from './marketplace/lifecycle.js';
+import {dispatchStageDeliveryReady} from './marketplace/driver.js';
 import { STRIPE_INTENT_RESERVATION } from './stage-stripe-test.js';
 
 // Nunca cobra ni transfiere dinero; únicamente marca un evento test verificado.
@@ -119,6 +120,43 @@ async function expireAbandonedTestPickups(){
 }
 const testExpiryTimer=setInterval(()=>{void expireAbandonedTestPickups();},5*60_000);
 void expireAbandonedTestPickups();
+// RC8.8 READY repair. A commit is durable even if synchronous dispatch fails;
+// periodically retry READY customer delivery orders with idempotent row locks.
+let dispatchSweepBusy=false;
+async function sweepReadyDeliveries():Promise<void>{
+  if(dispatchSweepBusy||config.NODE_ENV!=='staging'||
+     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED!=='true'||
+     config.STAGE_DRIVER_DELIVERY_ENABLED!=='true')return;
+  dispatchSweepBusy=true;
+  try{
+    const ready=await db.marketOrder.findMany({
+      where:{orderType:'delivery',paymentMethod:'cash',
+        paymentStatus:'pending',status:'ready',driverId:null},
+      select:{id:true},orderBy:[{readyAt:'asc'},{id:'asc'}],take:10,
+    });
+    if(ready.length){
+      const events=await db.stageOrderEvent.findMany({
+        where:{orderId:{in:ready.map(x=>x.id)},status:'received'},
+        select:{orderId:true,metadataJson:true},
+      });
+      const eligible=new Set(events.filter(e=>{
+        try{
+          const v=JSON.parse(e.metadataJson);
+          return v.stage_delivery_customer_v1===true&&
+            /^[a-f0-9]{64}$/.test(v.checkout_intent_hmac??'');
+        }catch{return false;}
+      }).map(e=>e.orderId));
+      for(const item of ready)
+        if(eligible.has(item.id))await dispatchStageDeliveryReady(item.id);
+    }
+  }catch(err){
+    console.error('RC88_READY_DISPATCH_RETRY_FAILED',
+      err instanceof Error?err.name:'unknown');
+  }finally{dispatchSweepBusy=false;}
+}
+const dispatchSweepTimer=setInterval(()=>{void sweepReadyDeliveries();},15_000);
+void sweepReadyDeliveries();
+
 // A bounded Redis TTL confirms that the real PM2 worker event loop is alive;
 // an API process alone must not be presented as an operationally complete app.
 // Heartbeats never contain user identifiers, tokens or payment information.
@@ -149,6 +187,7 @@ async function shutdown() {
   clearInterval(workerHeartbeatTimer);
   clearInterval(receiptSweepTimer);
   clearInterval(testExpiryTimer);
+  clearInterval(dispatchSweepTimer);
   await worker.close();
   await closeQueue();
   connection.disconnect();
