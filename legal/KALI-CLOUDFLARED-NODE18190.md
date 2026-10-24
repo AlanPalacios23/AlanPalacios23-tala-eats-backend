@@ -10,7 +10,7 @@ Diagnóstico de Kali (24/10/2026):
 
 ```bash
 cd ~/talaeats-legal-src
-git fetch --ff-only origin feat/talaeats-public-privacy-play-20261024
+git fetch origin feat/talaeats-public-privacy-play-20261024
 git pull --ff-only origin feat/talaeats-public-privacy-play-20261024
 ```
 
