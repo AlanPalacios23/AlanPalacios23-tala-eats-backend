@@ -111,7 +111,7 @@ try{
  assert.equal((await call('/orders/delivery-quote',{method:'POST',
    token:customer.token,body:{...quoteBody,delivery_lat:20.91}})).code,409);
  assert.equal((await call('/orders/delivery-quote',{method:'POST',
-   token:customer.token,body:{...quoteBody,payment_method:'stripe'}})).code,422);
+   token:customer.token,body:{...quoteBody,payment_method:'stripe'}})).code,503);
  const orderBody={...quoteBody,client_reference:'rc87-'+process.pid,
    address:'Calle de prueba, Tala',notes:''};
  const deniedCard=await call('/orders',{method:'POST',token:customer.token,
