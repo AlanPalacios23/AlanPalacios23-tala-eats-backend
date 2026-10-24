@@ -108,6 +108,27 @@ function orderView(order:LoadedOrder, customer:boolean) {
     driver_info:driver,
     ...(customer?{delivery_pin:order.deliveryPin}:{})};
 }
+// Merchant list/KDS must not expose a manually flipped paid flag as proof.
+// Only signed-webhook settlement receipt matching exact order total is trusted.
+async function ownerProcessableOrders(orders:LoadedOrder[]):Promise<LoadedOrder[]>{
+ const card=orders.filter(o=>o.paymentMethod==='stripe'&&o.paymentStatus==='paid');
+ if(!card.length)return orders.filter(o=>o.paymentMethod==='cash');
+ const live=config.NODE_ENV==='production';
+ const receipts=await db.stageFinancialLedgerEntry.findMany({
+   where:{orderId:{in:card.map(o=>o.id)},
+     kind:live?'stripe_live_payment':'stripe_test_payment',
+     account:live?'stripe_live_collected':'stripe_test_collected'},
+   select:{orderId:true,account:true,kind:true,direction:true,
+     amount:true,idempotencyKey:true},
+ });
+ const expectedKey=(id:number)=>'order:'+id+(live?':stripe-live:collected':':stripe-test:collected');
+ const verified=new Set(card.filter(o=>receipts.some(e=>
+   e.orderId===o.id&&e.idempotencyKey===expectedKey(o.id)&&
+   e.direction==='credit'&&e.amount.toFixed(2)===o.total.toFixed(2)
+ )).map(o=>o.id));
+ return orders.filter(o=>o.paymentMethod==='cash'||
+   (o.paymentMethod==='stripe'&&verified.has(o.id)));
+}
 function idParam(req:Request, name:string) {
   const value=req.params[name];
   return posInt(Array.isArray(value)?value[0]:value);
@@ -662,7 +683,7 @@ ownerRouter.get('/orders',async(req,res)=>{
       ...(activeOnly?{status:{notIn:['delivered','cancelled']}}:{})},
     include:orderInclude,orderBy:[{createdAt:'desc'},{id:'desc'}],skip:offset,take:limit,
   });
-  res.json(rows.map(x=>orderView(x,false)));
+  res.json((await ownerProcessableOrders(rows)).map(x=>orderView(x,false)));
 });
 
 // Python owner.py KDS read-only. Delivery status changes/dispatch are NOT enabled.
@@ -683,7 +704,7 @@ ownerRouter.get('/kds',async(req,res)=>{
   });
   const result:Record<string,unknown[]>={};
   for(const lane of lanes) result[lane]=[];
-  for(const item of orders) {
+  for(const item of await ownerProcessableOrders(orders)) {
     if(item.scheduledFor!==null&&item.scheduledFor>horizon) continue;
     result[item.status]?.push(orderView(item,false));
   }
