@@ -49,6 +49,29 @@ ABORT_PG15_STAGING_IDENTITY, STOP. Migrations require an independently
 approved PG15 backup, restore rehearsal and schema migration before any
 promotion. Do not try migration on an unrelated PG18 database.
 
+## If only STAGING PG15 migrations are pending
+
+Read-only schema inspection:
+
+~~~bash
+bash scripts/rc811-stage-schema-gate.sh --plan "$SHA"
+~~~
+
+Only after reviewing the migrations and confirming compatibility with the
+currently running PM2 version, the operator may explicitly authorize this
+independent stage PG15 backup -> scratch restore -> Prisma migrate:
+
+~~~bash
+bash scripts/rc811-stage-schema-gate.sh --apply "$SHA" I_APPROVE_RC811_PG15_STAGE_SCHEMA_ONLY
+bash scripts/rc811-kali-stage-promote.sh --plan "$SHA"
+~~~
+
+This is a database-changing operation, not a harmless plan. NEVER use this
+gate against the unrelated PostgreSQL 18 LIVE service. On a migration error,
+STOP; never automatically revert a live database schema or overwrite paid
+orders with a backup. Migration status failure can also mean divergence, which
+must be investigated rather than blindly applied.
+
 ## Stage-only promotion after the above PASS
 
 The --apply argument is intentional and separate: it DOES change PM2.
