@@ -120,6 +120,16 @@ async function proof(orderId) {
   assert.equal(metric.rows[0].n,1);
 }
 await proof(first.id);
+// RC8.7: cash handoff must be financially recorded once, not counted as Stripe
+// or available platform cash. Concurrent PIN replays must not duplicate it.
+const physical=await db.query(
+  "SELECT account,direction,amount,kind,idempotency_key FROM financial_ledger_entries WHERE order_id=$1 AND kind='cash_pickup_collection'",
+  [first.id]);
+assert.equal(physical.rowCount,1);
+assert.deepEqual([physical.rows[0].account,physical.rows[0].direction,
+  physical.rows[0].amount,physical.rows[0].kind,physical.rows[0].idempotency_key],
+ ['cash_collected_by_merchant','credit',orderAfter.rows[0].total,
+  'cash_pickup_collection','order:'+first.id+':cash-pickup:collected']);
 const loyalty=async()=> (await db.query(
  'SELECT points,tier,streak_days,wallet_balance FROM loyalty_accounts WHERE user_id=$1',[customer.id])).rows[0];
 let points=await loyalty();
