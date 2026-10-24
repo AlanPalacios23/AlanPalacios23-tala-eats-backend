@@ -1,5 +1,5 @@
-import {Pool} from 'pg';
 #!/usr/bin/env node
+import {Pool} from 'pg';
 /**
  * Read-only Stripe LIVE credentials probe, usable from a temporary path.
  * Run with Node 24 --env-file=/home/tala-node-stage/.config/talaeats-node-live.env.
