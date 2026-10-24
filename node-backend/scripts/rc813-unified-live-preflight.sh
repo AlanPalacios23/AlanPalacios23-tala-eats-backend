@@ -26,6 +26,13 @@ LIVE="$HOME/.config/talaeats-node-live.env"
  echo 'RC813_LIVE_ABORT=PRIVATE_LIVE_ENV_0600_REQUIRED';exit 1;
 }
 cd "$DIR"
+if [[ "$MODE" == --prepare ]];then
+ npm ci --no-audit --no-fund
+ # Build before loading dist/config. This is the first time the pinned
+ # release is prepared on Kali, not an already running checkout.
+ npm run generate
+ npm run build
+fi
 run_live(){
  env -i HOME="$HOME" USER=tala-node-stage LOGNAME=tala-node-stage PATH="$PATH" \
   node --env-file="$LIVE" "$@"
@@ -39,7 +46,8 @@ const liveFlags=['STRIPE_LIVE_ENABLED','STRIPE_LIVE_RELEASE_APPROVED',
 if(config.NODE_ENV!=='production'||config.HOST!=='127.0.0.1'||
  config.PORT!==18190||config.STAGE_PARALLEL_ENABLED!=='false'||
  config.STRIPE_CONNECT_TRANSFERS_ENABLED!=='false'||
- config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true'||
+ // LIVE pickup code retains its existing flag. Never disable active
+ // customer pickup while replacing the binary.
  config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='false'||
  config.STAGE_DRIVER_DELIVERY_ENABLED!=='false'||
  config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED!=='false'||
@@ -51,10 +59,7 @@ console.log('RC813_CONNECT_AUTOMATIC_TRANSFERS=OFF');
 console.log('RC813_UNREVIEWED_LIVE_DELIVERY_FLAGS=OFF');
 JS
 if [[ "$MODE" == --prepare ]];then
- npm ci --no-audit --no-fund
- run_live ./node_modules/prisma/build/index.js generate
  run_live ./node_modules/prisma/build/index.js validate
- npm run build
  # Synthetic tests must not inherit STRIPE LIVE secrets from either process.
  env -i HOME="$HOME" USER=tala-node-stage LOGNAME=tala-node-stage PATH="$PATH" \
  NODE_ENV=staging HOST=127.0.0.1 PORT=18190 \
