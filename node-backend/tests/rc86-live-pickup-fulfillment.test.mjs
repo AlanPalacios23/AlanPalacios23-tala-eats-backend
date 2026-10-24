@@ -22,8 +22,8 @@ test('production pickup only advances when LIVE Stripe capture is immutable and 
 });
 test('LIVE PaymentIntent offers cards without mutually conflicting Stripe payment mode params',()=>{
  const pi=source('live/stripe-payments.ts');
- assert.match(pi,/payment_method_types:\['card'\]/);
- assert.doesNotMatch(pi,/allowed_payment_method_types:/);
+ assert.match(pi,/allowed_payment_method_types:\['card'\]/);
+ assert.doesNotMatch(pi,/^\s*payment_method_types:/m);
  assert.doesNotMatch(pi,/automatic_payment_methods:\{enabled:true/);
  assert.match(pi,/capture_method:'automatic'/);
  assert.match(pi,/idempotencyKey:'tala-live-v1-pickup-order-'/);
