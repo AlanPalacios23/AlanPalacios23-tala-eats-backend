@@ -243,9 +243,12 @@ export async function cancelCashPickupStage(
 }
 export async function moveStagePickupOwner(orderId:number,actor:AuthUser,
   next:'confirmed'|'preparing'|'ready'):Promise<number>{
+  const liveCardEnabled=config.NODE_ENV==='production'&&
+    config.STRIPE_LIVE_ENABLED==='true'&&
+    config.STRIPE_FINANCIAL_WRITES_ENABLED==='true';
   if(config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true'&&
-     config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true')
-    fail(503,'Ciclo de pedidos de staging deshabilitado');
+     config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true'&&!liveCardEnabled)
+    fail(503,'Ciclo de pedidos de recogida deshabilitado');
   if(!['restaurant','admin'].includes(actor.role))fail(403,'No autorizado');
   return db.$transaction(async tx=>{
     const locks=await tx.$queryRaw<{id:number}[]>`
@@ -261,16 +264,22 @@ export async function moveStagePickupOwner(orderId:number,actor:AuthUser,
     const cash=order.orderType==='pickup'&&order.paymentMethod==='cash'&&
       order.paymentStatus==='pending'&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true';
     const stripe=order.orderType==='pickup'&&order.paymentMethod==='stripe'&&
-      order.paymentStatus==='paid'&&config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true';
+      order.paymentStatus==='paid'&&
+      (config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'||liveCardEnabled);
     if(!cash&&!stripe)fail(503,'Pago no conciliado o método no disponible');
     if(stripe){
+      const live=liveCardEnabled;
       const verified=await tx.stageFinancialLedgerEntry.findFirst({
-        where:{orderId:order.id,kind:'stripe_test_payment',
-          account:'stripe_test_collected',
-          idempotencyKey:'order:'+order.id+':stripe-test:collected'},
+        where:{orderId:order.id,
+          kind:live?'stripe_live_payment':'stripe_test_payment',
+          account:live?'stripe_live_collected':'stripe_test_collected',
+          direction:'credit',
+          idempotencyKey:live?
+            'order:'+order.id+':stripe-live:collected':
+            'order:'+order.id+':stripe-test:collected'},
       });
       if(!verified||verified.amount.toFixed(2)!==order.total.toFixed(2))
-        fail(503,'El pedido carece de cobro Stripe TEST confirmado');
+        fail(503,'El pedido carece de cobro Stripe firmado y contabilizado');
     }
     const expected:{[key:string]:string}={
       received:'confirmed',confirmed:'preparing',preparing:'ready',
