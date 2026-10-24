@@ -27,6 +27,7 @@ const schema = z.object({
   STAGE_EMAIL_FROM: z.string().min(6).max(220).optional(),
   STAGE_EMAIL_ALLOWED_RECIPIENTS: z.string().optional(),
   STAGE_DRIVER_DELIVERY_ENABLED: z.enum(['false','true']).default('false'),
+  STAGE_DRIVER_MAX_PICKUP_KM: z.coerce.number().finite().min(1).max(30).default(8),
   STAGE_DELIVERY_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_PICKUP_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
   // Stage checkout supports default Python v1.5.2 or v1.6.2 pricing.
