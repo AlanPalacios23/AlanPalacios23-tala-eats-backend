@@ -31,7 +31,7 @@ test('Stripe TEST is buyer-authenticated, provider-idempotent and webhook-only r
  assert.match(gateway,/order\.userId!==buyerId/);
  assert.match(gateway,/idempotencyKey:requestKey/);
  assert.match(gateway,/allowed_payment_method_types:\['card'\]/);
- assert.doesNotMatch(gateway,/automatic_payment_methods:\\s*\\{enabled:true/);
+ assert.doesNotMatch(gateway,/automatic_payment_methods/);
  assert.match(gateway,/capture_method:'automatic'/);
  assert.match(gateway,/intent\.amount_received!==intent\.amount/);
  assert.match(gateway,/order\.paymentProviderId!==intent\.id/);
