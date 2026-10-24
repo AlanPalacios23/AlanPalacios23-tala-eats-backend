@@ -43,6 +43,12 @@ jobs:
           npm run build
       - name: RC813 parallel stage safety and existing regressions
         run: npm test
+      - name: Exact Kali parallel-stage environment full regression
+        env:
+          PORT: '18192'
+          STAGE_PARALLEL_ENABLED: 'true'
+          REDIS_URL: redis://:ci-only@127.0.0.1:16379/1
+        run: npm test
       - name: Stage-only shell and Python syntax
         run: |
           bash -n scripts/rc813-parallel-stage.sh
