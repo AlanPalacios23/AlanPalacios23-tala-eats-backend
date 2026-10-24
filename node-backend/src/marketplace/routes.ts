@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { db } from '../db.js';
 import { config } from '../config.js';
 import { createStagePickupOrder, isCashPickupIntent, isStripePickupIntent } from './checkout.js';
+import {calculatePickupQuoteFromCatalog,assertDefaultPickupRates,PickupQuoteError} from './quote.js';
 import { previewCancelStage, cancelCashPickupStage, moveCashPickupOwnerStage } from './lifecycle.js';
 import { completeCashPickupStage } from './pickup.js';
 import { driverAvailability, driverAccept, driverStatus, driverGps,
@@ -338,6 +339,70 @@ ownerRouter.patch('/restaurant',async(req,res)=>{
   }
   const updated=await db.marketplaceRestaurant.update({where:{id:row.id},data:changes});
   res.json(restaurantPublic(updated));
+});
+
+// Preview ONLY: user receives exact current catalog values and the same
+// default commercial formula as POST /orders. This endpoint NEVER reserves
+// products, starts Stripe, quotes delivery or implies live checkout approval.
+stageOrdersRouter.post('/quote',async(req,res)=>{
+  await user(req,['customer','admin']);
+  const schema=z.strictObject({
+    restaurant_id:z.number().int().positive().safe(),
+    order_type:z.literal('pickup'),
+    payment_method:z.enum(['cash','stripe']),
+    items:z.array(z.strictObject({
+      menu_item_id:z.number().int().positive().safe(),
+      quantity:z.number().int().min(1).max(50),
+      options:z.literal('').optional(),
+    })).min(1).max(100),
+    tip:z.union([z.string(),z.number()]).transform(String).default('0'),
+    coupon_code:z.literal('').optional(),
+    delivery_lat:z.null().optional(),
+    delivery_lng:z.null().optional(),
+  });
+  const parsed=schema.safeParse(req.body);
+  if(!parsed.success)throw new RouteError(422,'Cotización pickup inválida');
+  const body=parsed.data;
+  const restaurant=await db.marketplaceRestaurant.findUnique({
+    where:{id:body.restaurant_id},
+  });
+  if(!restaurant||restaurant.verificationStatus!=='verified')
+    throw new RouteError(404,'Restaurante no encontrado');
+  if(!restaurant.isOpen||!restaurant.pickupEnabled)
+    throw new RouteError(409,'Restaurante no disponible para recoger');
+  if(!['START','DELIVERY','PRO'].includes(restaurant.commercialPlan))
+    throw new RouteError(503,'Política comercial personalizada no admitida');
+  const ids=[...new Set(body.items.map(x=>x.menu_item_id))];
+  const [products,policies]=await Promise.all([
+    db.marketplaceMenuItem.findMany({
+      where:{id:{in:ids},restaurantId:restaurant.id},
+    }),
+    db.stageSystemSetting.findMany({where:{key:{in:[
+      'commercial_v152.restaurant_commission_rate',
+      'commercial_v152.service_fee_rate',
+      'commercial_v162.service_fee_rate',
+      'commercial_v162.service_fee_cap',
+    ]}}}),
+  ]);
+  const policy=config.COMMERCIAL_PRICING_V162_ENABLED==='true'?'v162':'v152';
+  try{
+    assertDefaultPickupRates(policies,policy);
+    const quote=calculatePickupQuoteFromCatalog({
+      restaurantId:restaurant.id,items:body.items,
+      catalog:products.map(i=>({
+        id:i.id,restaurantId:i.restaurantId,name:i.name,
+        price:i.price.toString(),stock:i.stock,isAvailable:i.isAvailable,
+        optionsJson:i.optionsJson,priceScheduleJson:i.priceScheduleJson,
+        availabilityScheduleJson:i.availabilityScheduleJson,
+      })),
+      tip:body.tip,method:body.payment_method,policy,
+    });
+    res.setHeader('Cache-Control','private, no-store');
+    res.json(quote);
+  }catch(err){
+    if(err instanceof PickupQuoteError)throw new RouteError(err.code,err.message);
+    throw err;
+  }
 });
 
 // Python orders.py: customer-specific recovery; no new order or financial writes.
