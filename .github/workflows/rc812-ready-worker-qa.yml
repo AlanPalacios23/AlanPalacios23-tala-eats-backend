@@ -1,0 +1,57 @@
+name: RC8.12 P0 | Readiness Worker Gate
+
+on:
+  pull_request:
+    paths:
+      - 'node-backend/scripts/kali-stage-first-pm2-promote.sh'
+      - 'node-backend/scripts/rc812-kali-stage-release.sh'
+      - 'node-backend/tests/rc812-stage-release-safety.test.mjs'
+      - 'node-backend/src/app.ts'
+      - 'node-backend/src/runtime-readiness.ts'
+      - 'node-backend/src/stage-worker-gate.ts'
+      - 'node-backend/src/marketplace/routes.ts'
+      - 'node-backend/src/stage-stripe-test.ts'
+      - 'node-backend/tests/rc812-runtime-readiness.test.mjs'
+      - '.github/workflows/rc812-ready-worker-qa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  node-readiness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # Existing RC8.10 contracts import config at module load: provide isolated
+    # non-live synthetic environment, never production keys or cloud secrets.
+    env:
+      NODE_ENV: staging
+      HOST: 127.0.0.1
+      PORT: '18190'
+      DATABASE_URL: postgresql://tala_node_stage:ci-only@127.0.0.1:15435/tala_node_stage
+      REDIS_URL: redis://:ci-only@127.0.0.1:16379/0
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+      STRIPE_LIVE_ENABLED: 'false'
+      STRIPE_CONNECT_TRANSFERS_ENABLED: 'false'
+    defaults:
+      run:
+        working-directory: node-backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.11.1'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Prisma client and TypeScript
+        run: |
+          npm run generate
+          npm run build
+      - name: RC8.12 worker-readiness regressions
+        run: node --test tests/rc812-runtime-readiness.test.mjs
+      - name: Full existing Node regression suite
+        run: npm test

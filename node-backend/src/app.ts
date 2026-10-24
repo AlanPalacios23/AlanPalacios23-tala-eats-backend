@@ -9,6 +9,7 @@ import {buildPayeeFinanceRouter} from './live/payee-finance-router.js';
 import {inspectLiveFinancialData} from './live/financial-readiness.js';
 import { db } from './db.js';
 import { config } from './config.js';
+import {computeRuntimeReadiness} from './runtime-readiness.js';
 import { stripeWebhook } from './webhook.js';
 import { authRouter,current } from './auth/routes.js';
 import { platformRouter, platformErrors } from './platform/routes.js';
@@ -241,10 +242,19 @@ app.get('/api/v1/ready', async (_req, res) => {
       financialPass=audit.classification==='LIVE_FINANCIAL_DATA_PASS';
     }
     const workerOnline=Boolean(heartbeat);
-    const ready=!live||(workerOnline&&financialPass);
+    // RC8.12: staging checkout and dispatch need the independent worker,
+    // too. Read-only/API-only CI remains available with these flags disabled.
+    const {ready,workerRequired}=computeRuntimeReadiness({
+      nodeEnv:config.NODE_ENV,workerOnline,financialAuditPass:financialPass,
+      stagePickupCashEnabled:config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true',
+      stageDeliveryCashEnabled:config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true',
+      stageStripeTestEnabled:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',
+      stageDeliveryStripeTestEnabled:config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true',
+      stageDriverEnabled:config.STAGE_DRIVER_DELIVERY_ENABLED==='true',
+    });
     res.setHeader('Cache-Control','no-store');
     res.status(ready?200:503).json({
-      ready,database:true,redis:true,workerOnline,
+      ready,database:true,redis:true,workerOnline,workerRequired,
       productionReady:Boolean(liveChargeApproved&&ready),
       environment:live?'production':'staging',
       financialWrites:Boolean(liveChargeApproved&&ready),

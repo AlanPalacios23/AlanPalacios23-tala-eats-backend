@@ -7,6 +7,7 @@ import type Stripe from 'stripe';
 import { db } from './db.js';
 import { config } from './config.js';
 import { stripe } from './stripe.js';
+import {requireStageCheckoutWorker} from './stage-worker-gate.js';
 
 export const STRIPE_INTENT_RESERVATION='pi_reserving_rc7';
 
@@ -35,6 +36,9 @@ const ensureTestReady=()=>{
 
 export async function createTestPaymentIntent(orderId:number,buyerId:number) {
   const provider=ensureTestReady();
+  // Do not initiate or reopen TEST card collection without a live worker
+  // able to reconcile signed webhooks. A reservation can be safely retried.
+  await requireStageCheckoutWorker();
   const order=await db.marketOrder.findUnique({where:{id:orderId}});
   // Never expose a payment client secret to an administrator or another buyer.
   if(!order||order.userId!==buyerId)
