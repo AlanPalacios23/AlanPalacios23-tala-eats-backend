@@ -51,7 +51,7 @@ export async function inspectLiveFinancialData(pool:Pool):
                  AND c.case_type=CASE
                    WHEN e.type LIKE 'charge.dispute.%' THEN 'dispute'
                    ELSE 'charge_refund' END
-                 AND c.status='resolved'))
+                 AND c.status='resolved')))
         +
         (SELECT count(*) FROM tala_live_financial_cases
           WHERE status IN ('open','reviewed'))
