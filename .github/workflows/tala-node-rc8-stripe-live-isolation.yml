@@ -59,6 +59,6 @@ jobs:
           grep -Fq 'LIVE_PRODUCTION_POSTGRES_ISOLATION_REQUIRED' src/config.ts
           grep -Fq 'LIVE_PRODUCTION_REDIS_ISOLATION_REQUIRED' src/config.ts
           grep -Fq 'LIVE_CONNECT_PAYOUTS_REQUIRE_SEPARATE_AUDIT' src/config.ts
-          grep -Fq 'app.use(\x27/api/v1/payments/stripe\x27,buildIsolatedWebhookRouter(' src/app.ts
+          grep -Fq "app.use('/api/v1/payments/stripe',buildIsolatedWebhookRouter(" src/app.ts
           grep -Fq 'STRIPE_FINANCIAL_WRITES_ENABLED' src/app.ts
           echo RC87_PRODUCTION_ISOLATION_FAIL_CLOSED=PASS
