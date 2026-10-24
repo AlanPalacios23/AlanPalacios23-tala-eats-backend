@@ -725,7 +725,14 @@ stageDriverRouter.get('/available',async(req,res)=>{
     select:{orderId:true,metadataJson:true},
   });
   const fixtureOrders=new Set(events.filter(e=>{
-    try{return JSON.parse(e.metadataJson).stage_driver_fixture===true;}catch{return false;}
+    try{
+      const proof=JSON.parse(e.metadataJson);
+      return proof.stage_driver_fixture===true||
+        (config.NODE_ENV==='staging'&&
+         config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
+         proof.stage_delivery_customer_v1===true&&
+         /^[a-f0-9]{64}$/.test(proof.checkout_intent_hmac??''));
+    }catch{return false;}
   }).map(e=>e.orderId));
   res.json(orders.filter(x=>fixtureOrders.has(x.id)).map(x=>orderView(x,false)));
 });
