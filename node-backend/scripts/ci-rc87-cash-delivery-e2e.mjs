@@ -183,6 +183,38 @@ try{
   [o.id])).rows[0].n,1);
  assert.equal((await call('/driver/orders/'+o.id+'/complete',{method:'POST',
     token:courier.token,body:{pin:wrong}})).code,409);
+ // Crash-window/driver-busy recovery: REST READY commit without online
+ // courier remains READY; PM2 worker assigns it on a bounded retry.
+ const nextBody={...orderBody,client_reference:'rc88-retry-'+process.pid};
+ const next=await call('/orders',{method:'POST',token:customer.token,body:nextBody});
+ assert.equal(next.code,201,JSON.stringify(next.data));
+ assert.equal(next.data.status,'received');
+ await db.query('UPDATE driver_profiles SET is_online=false WHERE user_id=$1',[courier.id]);
+ for(const status of ['confirmed','preparing','ready']){
+   const step=await call('/owner/orders/'+next.data.id+'/status',{
+      method:'PATCH',token:owner.token,body:{status}});
+   assert.equal(step.code,200,JSON.stringify(step.data));
+ }
+ const notAssigned=(await db.query(
+  'SELECT driver_id,status FROM orders WHERE id=$1',[next.data.id])).rows[0];
+ assert.equal(notAssigned.driver_id,null);
+ assert.equal(notAssigned.status,'ready');
+ await db.query('UPDATE driver_profiles SET is_online=true WHERE user_id=$1',[courier.id]);
+ let recovered=false;
+ for(let t=0;t<40;t++){
+   const row=(await db.query('SELECT driver_id,status FROM orders WHERE id=$1',
+      [next.data.id])).rows[0];
+   if(row.driver_id===courier.id&&row.status==='assigned'){
+     recovered=true;break;
+   }
+   await new Promise(resolve=>setTimeout(resolve,500));
+ }
+ assert.equal(recovered,true,
+   'worker must recover READY delivery without duplicate order or manual tap');
+ assert.equal((await db.query(
+    "SELECT COUNT(*)::int AS n FROM order_events WHERE order_id=$1 AND status='assigned'",
+    [next.data.id])).rows[0].n,1);
+ console.log('RC88_PERSISTED_READY_RECOVERED_BY_WORKER_EXACTLY_ONCE=PASS');
  console.log('RC87_CUSTOMER_DELIVERY_QUOTE_AND_ATOMIC_ORDER=PASS');
  console.log('RC87_GEO_RADIUS_DRIVER_AUTH_AND_INVENTORY=PASS');
  console.log('RC87_OWNER_TO_VERIFIED_DRIVER_TO_PIN=PASS');
