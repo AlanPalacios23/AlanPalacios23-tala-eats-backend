@@ -11,6 +11,7 @@ import {liveReceiptIdentity,LiveGateError,
   type ValidatedLiveSettings} from './guard.js';
 import {verifyLiveStripeEvent} from './stripe-payments.js';
 import type {LiveStripeApi} from './stripe-payments.js';
+import {liveSettlementPostings} from './ledger-posting.js';
 
 const allowed=new Set(['payment_intent.succeeded',
   'payment_intent.payment_failed','payment_intent.canceled']);
@@ -196,14 +197,17 @@ async function reconcileLiveVerifiedEvent(
           RETURNING id
         `,[orderId]);
         if(changed.rowCount!==1)throw new LiveGateError('PAYMENT_STATE_CAS_CONFLICT');
-        for(const [account,value,direction] of [
-          ['gmv',order.total,'credit'],
-          ['restaurant_payable',order.restaurant_payout,'credit'],
-          ['platform_revenue',order.platform_revenue,'credit'],
-          ['payment_processing',order.payment_processing_fee,'debit'],
-          ['contribution_margin',order.contribution_margin,'credit'],
-        ] as const){
-          if(minor(value)>0)await accountEntry(client,order,account,value,direction);
+        // RC8.7: contribution margin may legitimately be NEGATIVE.
+        // Post it as a debit instead of rejecting an otherwise valid capture.
+        // The helper also checks the internal finance equation before writes.
+        for(const posting of liveSettlementPostings({
+          total:order.total,restaurantPayout:order.restaurant_payout,
+          platformRevenue:order.platform_revenue,
+          paymentProcessingFee:order.payment_processing_fee,
+          contributionMargin:order.contribution_margin,
+        })){
+          await accountEntry(client,order,posting.account,posting.amount,
+            posting.direction);
         }
         await client.query(`
           INSERT INTO financial_ledger_entries
