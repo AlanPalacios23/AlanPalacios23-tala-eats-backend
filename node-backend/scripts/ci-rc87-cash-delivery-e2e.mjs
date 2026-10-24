@@ -130,19 +130,14 @@ try{
      token:owner.token,body:{status}});
    assert.equal(r.code,200,JSON.stringify(r.data));
  }
- const available=await call('/driver/available',{token:courier.token});
- assert.equal(available.code,200);
- assert.ok(available.data.some(x=>x.id===o.id));
- const offer=available.data.find(x=>x.id===o.id);
- for(const privateField of ['address','delivery_lat','delivery_lng',
-   'recipient_phone','user_id','delivery_pin']){
-   assert.equal(Object.hasOwn(offer,privateField),false,
-     'unassigned driver must not see private customer field: '+privateField);
- }
- const claimed=await call('/driver/orders/'+o.id+'/accept',{
-   method:'POST',token:courier.token});
- assert.equal(claimed.code,200,JSON.stringify(claimed.data));
- assert.equal(claimed.data.status,'assigned');
+ const dispatch=await call('/driver/dashboard',{token:courier.token});
+ assert.equal(dispatch.code,200,JSON.stringify(dispatch.data));
+ assert.equal(dispatch.data.active?.id,o.id,
+   'Restaurant READY must auto-assign its cash delivery to verified online driver');
+ assert.equal(dispatch.data.active?.status,'assigned');
+ // A second claim must not assign the same order again.
+ assert.equal((await call('/driver/orders/'+o.id+'/accept',{
+   method:'POST',token:courier.token})).code,409);
  for(const status of ['picked_up','on_the_way']){
    const changed=await call('/driver/orders/'+o.id+'/status',{
      method:'PATCH',token:courier.token,body:{status}});
