@@ -2,6 +2,7 @@
 // Source contracts: backend/app/routes/{orders,owner}.py, inventory.py.
 // No LIVE, no PSP, no customer wallet or driver/dispatch writes.
 import { db } from '../db.js';
+import {dispatchStageDeliveryReady} from './driver.js';
 import { config } from '../config.js';
 import {cancelUnpaidStripeTestIntent} from '../stage-stripe-test.js';
 import type { AuthUser, MarketOrder } from '../generated/prisma/client.js';
@@ -258,7 +259,7 @@ export async function moveStagePickupOwner(orderId:number,actor:AuthUser,
      config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true'&&!liveCardEnabled)
     fail(503,'Ciclo de pedidos de recogida deshabilitado');
   if(!['restaurant','admin'].includes(actor.role))fail(403,'No autorizado');
-  return db.$transaction(async tx=>{
+  const resultId=await db.$transaction(async tx=>{
     const locks=await tx.$queryRaw<{id:number}[]>`
       SELECT id FROM orders WHERE id=${orderId} FOR UPDATE
     `;
@@ -331,6 +332,11 @@ export async function moveStagePickupOwner(orderId:number,actor:AuthUser,
     }});
     return order.id;
   },{maxWait:10_000,timeout:20_000});
+  if(next==='ready'&&config.NODE_ENV==='staging'&&
+     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'){
+    await dispatchStageDeliveryReady(resultId);
+  }
+  return resultId;
 }
 
 export const moveCashPickupOwnerStage=moveStagePickupOwner;
