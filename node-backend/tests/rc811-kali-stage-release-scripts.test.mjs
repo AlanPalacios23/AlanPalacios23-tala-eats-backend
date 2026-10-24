@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 
 const root=new URL('../scripts/',import.meta.url);
-const names=['rc811-kali-stage-candidate.sh','rc811-kali-stage-promote.sh'];
+const names=['rc811-kali-stage-candidate.sh','rc811-kali-stage-promote.sh','rc811-stage-schema-gate.sh'];
 
 test('RC811 both scripts parse with bash -n and stay nonexecutable by default',()=>{
  for(const name of names){
