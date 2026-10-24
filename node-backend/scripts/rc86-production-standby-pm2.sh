@@ -159,13 +159,15 @@ for attempt in $(seq 1 35); do
  Promise.all([
  fetch("http://127.0.0.1:18190/api/v1/health",{signal:AbortSignal.timeout(2000)}),
  fetch("http://127.0.0.1:18190/api/v1/ready",{signal:AbortSignal.timeout(2000)}),
- fetch("http://127.0.0.1:18190/api/v1/payments/stripe/config",{signal:AbortSignal.timeout(2000)})
+ fetch("http://127.0.0.1:18190/api/v1/payments/stripe/config",{signal:AbortSignal.timeout(2000)}),
+ fetch("http://127.0.0.1:18190/api/v1/orders/payment-methods",{signal:AbortSignal.timeout(2000)})
  ]).then(async a=>{
-  const [h,r,c]=await Promise.all(a.map(x=>x.json()));
+  const [h,r,c,m]=await Promise.all(a.map(x=>x.json()));
   if(h.production!==true||h.online_payment_writes!==false||
      r.ready!==true||r.environment!=="production"||
      r.financialWrites!==false||r.onlinePaymentsEnabled!==false||
-     c.enabled!==false||c.publishable_key!==null)process.exit(1);
+     c.enabled!==false||c.publishable_key!==null||
+     m.cash_available!==false||m.methods?.some(x=>x.enabled))process.exit(1);
  }).catch(()=>process.exit(1))' >/dev/null 2>&1; then
   break
  fi
@@ -186,15 +188,17 @@ echo "UNSIGNED_STRIPE_WEBHOOK_REJECTION=PASS"
 node --input-type=module - <<'JS'
 const base='https://talaeats.alan-palacios-dev.com/api/v1';
 try{
- const [h,r,c]=await Promise.all([
+ const [h,r,c,m]=await Promise.all([
   fetch(base+'/health',{signal:AbortSignal.timeout(10000)}),
   fetch(base+'/ready',{signal:AbortSignal.timeout(10000)}),
-  fetch(base+'/payments/stripe/config',{signal:AbortSignal.timeout(10000)})
+  fetch(base+'/payments/stripe/config',{signal:AbortSignal.timeout(10000)}),
+  fetch(base+'/orders/payment-methods',{signal:AbortSignal.timeout(10000)})
  ]);
- const [health,ready,config]=await Promise.all([h.json(),r.json(),c.json()]);
+ const [health,ready,config,methods]=await Promise.all([h.json(),r.json(),c.json(),m.json()]);
  if(health.production!==true||health.online_payment_writes!==false||
     ready.ready!==true||ready.onlinePaymentsEnabled!==false||
-    config.enabled!==false||config.publishable_key!==null)throw Error();
+    config.enabled!==false||config.publishable_key!==null||
+    methods.cash_available!==false||methods.methods?.some(x=>x.enabled))throw Error();
  console.log('PUBLIC_STANDBY_API_AND_PAYMENTS_OFF=PASS');
 }catch{console.log('PUBLIC_STANDBY_API_AND_PAYMENTS_OFF=HOLD');process.exitCode=1;}
 JS
