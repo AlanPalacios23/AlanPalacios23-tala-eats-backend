@@ -102,11 +102,13 @@ if(config.NODE_ENV==='staging'){
      !config.STRIPE_PUBLISHABLE_KEY?.startsWith('pk_live_')||
      !config.STRIPE_WEBHOOK_SECRET)
     throw new Error('LIVE_STRIPE_SECRETS_REQUIRED');
-  if(config.STRIPE_LIVE_ENABLED!=='true'||
-     config.STRIPE_LIVE_RELEASE_APPROVED!=='true'||
-     config.STRIPE_FINANCIAL_WRITES_ENABLED!=='true'||
-     config.STRIPE_REFUNDS_ENABLED!=='true'||
-     config.STRIPE_MANUAL_SETTLEMENT_APPROVED!=='true')
+  // Production can boot in explicit standby with cards OFF. Never allow
+  // any partially enabled combination (including refunds) to start.
+  const financialFlags=[config.STRIPE_LIVE_ENABLED,
+    config.STRIPE_LIVE_RELEASE_APPROVED,config.STRIPE_FINANCIAL_WRITES_ENABLED,
+    config.STRIPE_REFUNDS_ENABLED,config.STRIPE_MANUAL_SETTLEMENT_APPROVED];
+  if(!financialFlags.every(v=>v==='true')&&
+     !financialFlags.every(v=>v==='false'))
     throw new Error('LIVE_FINANCIAL_RELEASE_NOT_APPROVED');
 }
 if (config.STRIPE_SECRET_KEY?.includes('CHANGE') ||
