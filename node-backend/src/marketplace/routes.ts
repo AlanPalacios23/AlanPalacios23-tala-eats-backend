@@ -13,7 +13,8 @@ import {calculatePickupQuoteFromCatalog,assertDefaultPickupRates,PickupQuoteErro
 import { previewCancelStage, cancelCashPickupStage, moveCashPickupOwnerStage } from './lifecycle.js';
 import { completeCashPickupStage } from './pickup.js';
 import { driverAvailability, driverAccept, driverStatus, driverGps,
-  driverDashboard, driverComplete, hasReachableStageDriver } from './driver.js';
+  driverDashboard, driverComplete, hasReachableStageDriver,
+  canDriverReachPickup } from './driver.js';
 import { current } from '../auth/routes.js';
 import type { AuthUser, MarketplaceRestaurant, MarketplaceMenuItem,
   MarketplaceDriverProfile, MarketOrder, MarketOrderItem } from '../generated/prisma/client.js';
@@ -746,8 +747,10 @@ stageDriverRouter.get('/available',async(req,res)=>{
   });
   if(active>0){res.json([]);return;}
   const orders=await db.marketOrder.findMany({
-    where:{status:'ready',driverId:null,orderType:'delivery',paymentMethod:'cash',
-      paymentStatus:'pending'},
+    where:{status:'ready',driverId:null,orderType:'delivery',
+      OR:[{paymentMethod:'cash',paymentStatus:'pending'},
+        ...(config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'?
+          [{paymentMethod:'stripe',paymentStatus:'paid'}]:[])]},
     include:orderInclude,orderBy:[{updatedAt:'asc'},{id:'asc'}],take:limit.data,
   });
   const events=await db.stageOrderEvent.findMany({
@@ -775,11 +778,36 @@ stageDriverRouter.get('/available',async(req,res)=>{
   }).map(e=>e.orderId));
   const publicMerchants=await db.marketplaceRestaurant.findMany({
     where:{id:{in:orders.filter(x=>realCustomerOrders.has(x.id)).map(x=>x.restaurantId)}},
-    select:{id:true,name:true,address:true},
+    select:{id:true,name:true,address:true,lat:true,lng:true},
   });
   const merchantMap=new Map(publicMerchants.map(x=>[x.id,x]));
+  // Drivers see only offers they can reach with FRESH Redis GPS, not a
+  // stale PostgreSQL online toggle. Stripe offers require exact TEST ledger.
+  const card=orders.filter(x=>x.paymentMethod==='stripe'&&
+    realCustomerOrders.has(x.id));
+  const cardReceipts=card.length?await db.stageFinancialLedgerEntry.findMany({
+    where:{orderId:{in:card.map(x=>x.id)},kind:'stripe_test_payment',
+      account:'stripe_test_collected'},
+    select:{orderId:true,amount:true,direction:true,idempotencyKey:true},
+  }):[];
+  const verifiedCard=new Set(card.filter(x=>cardReceipts.some(r=>
+    r.orderId===x.id&&r.direction==='credit'&&
+    r.idempotencyKey==='order:'+x.id+':stripe-test:collected'&&
+    r.amount.toFixed(2)===x.total.toFixed(2))).map(x=>x.id));
+  const eligible:number[]=[];
+  for(const order of orders){
+    if(!fixtureOrders.has(order.id))continue;
+    if(order.paymentMethod==='stripe'&&!verifiedCard.has(order.id))continue;
+    if(realCustomerOrders.has(order.id)){
+      const store=merchantMap.get(order.restaurantId);
+      if(!store||!await canDriverReachPickup(account.id,
+        {lat:store.lat,lng:store.lng}))continue;
+    }
+    eligible.push(order.id);
+  }
+  const allowed=new Set(eligible);
   res.setHeader('Cache-Control','private, no-store');
-  res.json(orders.filter(x=>fixtureOrders.has(x.id)).map(x=>
+  res.json(orders.filter(x=>allowed.has(x.id)).map(x=>
     realCustomerOrders.has(x.id)?{
       // Dispatch offer must not disclose customer's address/phone/GPS to
       // all available drivers before one accepts the order.
