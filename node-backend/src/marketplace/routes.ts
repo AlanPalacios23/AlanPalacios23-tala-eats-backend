@@ -734,7 +734,31 @@ stageDriverRouter.get('/available',async(req,res)=>{
          /^[a-f0-9]{64}$/.test(proof.checkout_intent_hmac??''));
     }catch{return false;}
   }).map(e=>e.orderId));
-  res.json(orders.filter(x=>fixtureOrders.has(x.id)).map(x=>orderView(x,false)));
+  const realCustomerOrders=new Set(events.filter(e=>{
+    try{
+      const v=JSON.parse(e.metadataJson);
+      return config.NODE_ENV==='staging'&&
+        config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
+        v.stage_delivery_customer_v1===true&&
+        /^[a-f0-9]{64}$/.test(v.checkout_intent_hmac??'');
+    }catch{return false;}
+  }).map(e=>e.orderId));
+  const publicMerchants=await db.marketplaceRestaurant.findMany({
+    where:{id:{in:orders.filter(x=>realCustomerOrders.has(x.id)).map(x=>x.restaurantId)}},
+    select:{id:true,name:true,address:true},
+  });
+  const merchantMap=new Map(publicMerchants.map(x=>[x.id,x]));
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(orders.filter(x=>fixtureOrders.has(x.id)).map(x=>
+    realCustomerOrders.has(x.id)?{
+      // Dispatch offer must not disclose customer's address/phone/GPS to
+      // all available drivers before one accepts the order.
+      id:x.id,order_type:'delivery',status:x.status,restaurant_id:x.restaurantId,
+      restaurant:merchantMap.get(x.restaurantId)??null,
+      driver_earning:x.driverEarning.toString(),
+      tip:x.tip.toString(),distance_km:x.distanceKm,
+      total:x.total.toString(),
+    }:orderView(x,false)));
 });
 stageDriverRouter.get('/profile',async(req,res)=>{
   const account=await driverAccount(req);
