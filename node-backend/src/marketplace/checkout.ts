@@ -3,6 +3,7 @@
 // coupons, commercial setting overrides, scheduled menus or financial payouts.
 import { createHmac, timingSafeEqual, randomInt } from 'node:crypto';
 import {calculateDefaultCommercial,fmtCents} from '../finance/pricing.js';
+import {deliveryDistance,assertRestaurantDeliveryOrigin} from './delivery-geography.js';
 import { z } from 'zod';
 import { db } from '../db.js';
 import { config } from '../config.js';
@@ -36,6 +37,15 @@ const mobilePickupSchema=intentSchema.extend({
   delivery_lat:z.null().optional(),
   delivery_lng:z.null().optional(),
 });
+const mobileDeliverySchema=intentSchema.omit({order_type:true}).extend({
+  order_type:z.literal('delivery'),
+  payment_method:z.literal('cash'),
+  coupon_code:z.literal('').optional(),
+  delivery_lat:z.number().finite().min(-90).max(90),
+  delivery_lng:z.number().finite().min(-180).max(180),
+});
+export const isStageCashDeliveryIntent=(payload:unknown):boolean=>
+  mobileDeliverySchema.safeParse(payload).success;
 // Unsupported money-moving or incomplete commercial features deliberately
 // return 503 rather than pretending to honor the full Python OrderCreate.
 export function isCashPickupIntent(payload:unknown):boolean {
@@ -103,6 +113,9 @@ const safeMatch=(a:unknown,b:string):boolean=>{
 export async function createStagePickupOrder(raw:unknown, account:AuthUser):Promise<number> {
   const cash=isCashPickupIntent(raw);
   const cardStripe=isStripePickupIntent(raw);
+  const stageDelivery=config.NODE_ENV==='staging'&&
+    config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
+    isStageCashDeliveryIntent(raw);
   const testStripe=cardStripe&&config.NODE_ENV==='staging'&&
     config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true';
   const liveStripe=cardStripe&&config.NODE_ENV==='production'&&
@@ -111,7 +124,7 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
     config.STRIPE_FINANCIAL_WRITES_ENABLED==='true'&&
     config.STRIPE_MANUAL_SETTLEMENT_APPROVED==='true';
   if(!((cash&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true')||
-       testStripe||liveStripe))
+       stageDelivery||testStripe||liveStripe))
     throw new CheckoutError(503,'Checkout efectivo o Stripe no autorizado');
   if(!['customer','admin'].includes(account.role))
     throw new CheckoutError(403,'No tienes permisos para crear pedidos');
@@ -119,9 +132,9 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
   // they cannot authorize as the actual cardholder.
   if(cardStripe&&account.role!=='customer')
     throw new CheckoutError(403,'Stripe TEST requiere comprador customer');
-  if(!cash&&!cardStripe)
-    throw new CheckoutError(503,'Este checkout sólo admite recoger con efectivo o Stripe');
-  const parsed=mobilePickupSchema.safeParse(raw);
+  if(!cash&&!cardStripe&&!stageDelivery)
+    throw new CheckoutError(503,'Método u opción de entrega no habilitada');
+  const parsed=stageDelivery?mobileDeliverySchema.safeParse(raw):mobilePickupSchema.safeParse(raw);
   if(!parsed.success)throw new CheckoutError(422,'Datos del pedido inválidos');
   // The metadata fields are not part of the financial signature or insert.
   // Stripe/delivery/scheduled/coupon checkout is intentionally not implied.
@@ -133,7 +146,8 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
   for(const item of data.items)totals.set(item.menu_item_id,(totals.get(item.menu_item_id)??0)+item.quantity);
   if([...totals.values()].some(x=>x>50))throw new CheckoutError(422,'Cantidad de producto fuera de límite');
   const sortedIds=[...totals.keys()].sort((a,b)=>a-b);
-  const fingerprint=signature(data);
+  const fingerprint=signature(stageDelivery?
+    {...data,delivery_lat:_lat,delivery_lng:_lng}:data);
   return db.$transaction(async tx=>{
     // Serialize retries with the same user, BEFORE testing client_reference.
     // Other customers then lock menu rows by ascending ID to avoid deadlocks.
