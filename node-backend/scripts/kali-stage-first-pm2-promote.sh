@@ -178,6 +178,21 @@ trap rollback EXIT
 ROLLOUT_STARTED=yes
 pm2 delete tala-node-stage-worker
 pm2 delete tala-node-stage-api
+# Invalidate the previous worker's 45s TTL so no stale 'online' value
+# can certify the replacement. This mutates ONLY the stage liveness key,
+# not order data, payments, retries or financial queues.
+if ! node --env-file="$ENVFILE" --input-type=module - <<'JS' >/dev/null 2>&1
+import {Redis} from 'ioredis';
+const redis=new Redis(process.env.REDIS_URL,{
+  lazyConnect:true,connectTimeout:1500,maxRetriesPerRequest:1,retryStrategy:()=>null,
+});
+try{
+  await redis.connect();
+  await redis.del('tala:node:stage:worker:heartbeat');
+}catch{process.exitCode=1;}
+finally{redis.disconnect();}
+JS
+then echo 'ABORT_STAGE_WORKER_LIVENESS_RESET'; exit 1; fi
 TALA_STAGE_ENV_FILE="$ENVFILE" pm2 start ecosystem.config.cjs --only tala-node-stage-worker --update-env
 # An actual Redis heartbeat, rather than PM2 'online', is evidence the
 # independent worker has initialized. Do not print credentials to logs.
