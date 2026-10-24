@@ -5,6 +5,7 @@ import {buildLiveRuntimeDependencies} from './live/runtime-dependencies.js';
 import {buildIsolatedWebhookRouter} from './live/webhook-router.js';
 import {buildIsolatedCheckoutRouter} from './live/checkout-router.js';
 import {buildLiveMerchantFinanceRouter} from './live/merchant-finance-router.js';
+import {buildPayeeFinanceRouter} from './live/payee-finance-router.js';
 import {inspectLiveFinancialData} from './live/financial-readiness.js';
 import { db } from './db.js';
 import { config } from './config.js';
@@ -42,6 +43,7 @@ app.use(express.json({ limit: '128kb' }));
 // only for authenticated/customer-owned persisted Stripe pickup orders.
 if(live){
   app.use('/api/v1',buildLiveMerchantFinanceRouter(live.pool,live.stripe));
+  app.use('/api/v1',buildPayeeFinanceRouter(live.pool,live.stripe));
   app.use('/api/v1',buildIsolatedCheckoutRouter({
     enabled:true,authSecret:config.AUTH_JWT_SECRET!,pool:live.pool,
     redis:live.redis,stripe:live.stripe,settings:live.settings,
