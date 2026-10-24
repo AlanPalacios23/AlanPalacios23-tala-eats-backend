@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { db } from '../db.js';
 import { config } from '../config.js';
 import { createStagePickupOrder, isCashPickupIntent, isStripePickupIntent,
-  isStageCashDeliveryIntent } from './checkout.js';
+  isStageCashDeliveryIntent,isStageStripeDeliveryIntent } from './checkout.js';
 import {deliveryDistance,assertRestaurantDeliveryOrigin,DeliveryGeoError} from './delivery-geography.js';
 import {calculateDefaultCommercial,fmtCents} from '../finance/pricing.js';
 import {calculatePickupQuoteFromCatalog,assertDefaultPickupRates,PickupQuoteError} from './quote.js';
@@ -355,7 +355,7 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
   const schema=z.strictObject({
     restaurant_id:z.number().int().positive().safe(),
     order_type:z.literal('delivery'),
-    payment_method:z.literal('cash'),
+    payment_method:z.enum(['cash','stripe']),
     delivery_lat:z.number().finite().min(-90).max(90),
     delivery_lng:z.number().finite().min(-180).max(180),
     tip:z.union([z.string(),z.number()]).transform(String).default('0'),
@@ -369,6 +369,10 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
   const parsed=schema.safeParse(req.body);
   if(!parsed.success)throw new RouteError(422,'Datos de cotización inválidos');
   const data=parsed.data;
+  if(data.payment_method==='stripe'&&
+     (config.STAGE_DELIVERY_STRIPE_TEST_ENABLED!=='true'||
+      config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true'))
+    throw new RouteError(503,'Tarjeta TEST a domicilio no habilitada');
   const restaurant=await db.marketplaceRestaurant.findUnique({
     where:{id:data.restaurant_id},
   });
@@ -405,7 +409,7 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
     }));
     const subtotalQuote=calculatePickupQuoteFromCatalog({
       restaurantId:restaurant.id,items:data.items,
-      catalog,tip:'0',method:'cash',policy,
+      catalog,tip:'0',method:data.payment_method,policy,
     });
     const amount=subtotalQuote.subtotal.split('.');
     const subtotal=BigInt(amount[0]!)*100n+BigInt(amount[1]!);
@@ -416,12 +420,12 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
       BigInt(((tipParts[1]??'')+'00').slice(0,2));
     if(tip>1_000_000n)throw new PickupQuoteError(422,'Propina fuera de límite');
     const economics=calculateDefaultCommercial({
-      policy,method:'cash',fulfillment:'delivery',
+      policy,method:data.payment_method,fulfillment:'delivery',
       subtotal,discount:0n,tip,distanceMilliKm:geo.distanceMilliKm,
     });
     res.setHeader('Cache-Control','private, no-store');
     res.json({
-      currency:'MXN',order_type:'delivery',payment_method:'cash',
+      currency:'MXN',order_type:'delivery',payment_method:data.payment_method,
       restaurant_id:restaurant.id,
       distance_method:'great_circle_rounded_up_0_001km',
       distance_km:geo.distanceKm,
@@ -582,7 +586,10 @@ stageOrdersRouter.post('/',async(req,res)=>{
     (isStageCashDeliveryIntent(req.body)&&
      config.NODE_ENV==='staging'&&
      config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true');
-  const stageCard=isStripePickupIntent(req.body)&&
+  const stageCard=(isStripePickupIntent(req.body)||
+    (isStageStripeDeliveryIntent(req.body)&&
+     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
+     config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'))&&
     config.NODE_ENV==='staging'&&config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true';
   const liveCard=isStripePickupIntent(req.body)&&
     config.NODE_ENV==='production'&&config.STRIPE_LIVE_ENABLED==='true'&&
