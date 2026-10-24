@@ -40,13 +40,19 @@ const mobilePickupSchema=intentSchema.extend({
 });
 const mobileDeliverySchema=intentSchema.omit({order_type:true}).extend({
   order_type:z.literal('delivery'),
-  payment_method:z.literal('cash'),
+  payment_method:z.enum(['cash','stripe']),
   coupon_code:z.literal('').optional(),
   delivery_lat:z.number().finite().min(-90).max(90),
   delivery_lng:z.number().finite().min(-180).max(180),
 });
-export const isStageCashDeliveryIntent=(payload:unknown):boolean=>
-  mobileDeliverySchema.safeParse(payload).success;
+export const isStageCashDeliveryIntent=(payload:unknown):boolean=>{
+  const parsed=mobileDeliverySchema.safeParse(payload);
+  return parsed.success&&parsed.data.payment_method==='cash';
+};
+export const isStageStripeDeliveryIntent=(payload:unknown):boolean=>{
+  const parsed=mobileDeliverySchema.safeParse(payload);
+  return parsed.success&&parsed.data.payment_method==='stripe';
+};
 // Unsupported money-moving or incomplete commercial features deliberately
 // return 503 rather than pretending to honor the full Python OrderCreate.
 export function isCashPickupIntent(payload:unknown):boolean {
@@ -113,13 +119,18 @@ const safeMatch=(a:unknown,b:string):boolean=>{
 
 export async function createStagePickupOrder(raw:unknown, account:AuthUser):Promise<number> {
   const cash=isCashPickupIntent(raw);
-  const cardStripe=isStripePickupIntent(raw);
+  const cardStripePickup=isStripePickupIntent(raw);
+  const cardStripeDelivery=config.NODE_ENV==='staging'&&
+    config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
+    config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'&&
+    isStageStripeDeliveryIntent(raw);
+  const cardStripe=cardStripePickup||cardStripeDelivery;
   const stageDelivery=config.NODE_ENV==='staging'&&
     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
-    isStageCashDeliveryIntent(raw);
+    (isStageCashDeliveryIntent(raw)||cardStripeDelivery);
   const testStripe=cardStripe&&config.NODE_ENV==='staging'&&
     config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true';
-  const liveStripe=cardStripe&&config.NODE_ENV==='production'&&
+  const liveStripe=cardStripePickup&&config.NODE_ENV==='production'&&
     config.STRIPE_LIVE_ENABLED==='true'&&
     config.STRIPE_LIVE_RELEASE_APPROVED==='true'&&
     config.STRIPE_FINANCIAL_WRITES_ENABLED==='true'&&
@@ -138,7 +149,7 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
   const parsed=stageDelivery?mobileDeliverySchema.safeParse(raw):mobilePickupSchema.safeParse(raw);
   if(!parsed.success)throw new CheckoutError(422,'Datos del pedido inválidos');
   // The metadata fields are not part of the financial signature or insert.
-  // Stripe/delivery/scheduled/coupon checkout is intentionally not implied.
+  // No Stripe LIVE delivery, coupons, schedules or unsupported discounts.
   const {coupon_code:_coupon,delivery_lat:_lat,delivery_lng:_lng,...data}=parsed.data;
   const tip=toMinor(data.tip);
   if(tip>1_000_000n)throw new CheckoutError(422,'Propina fuera de límite');
