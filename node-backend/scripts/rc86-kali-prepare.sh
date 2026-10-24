@@ -3,7 +3,7 @@
 # Run only as the existing service account; accepts exactly one immutable SHA.
 set -euo pipefail
 umask 077
-if [[ $# -ne 1 || ! "1" =~ ^[a-f0-9]{40}$ ]]; then
+if [[ $# -ne 1 || ! "$1" =~ ^[a-f0-9]{40}$ ]]; then
   echo "USAGE: rc86-kali-prepare.sh <EXACT_40_CHAR_SHA>" >&2
   exit 2
 fi
