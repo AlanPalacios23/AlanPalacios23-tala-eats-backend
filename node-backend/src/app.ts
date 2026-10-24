@@ -51,6 +51,53 @@ app.use(express.json({ limit: '128kb' }));
 if(live){
   app.use('/api/v1',buildLiveMerchantFinanceRouter(live.pool,live.stripe));
   app.use('/api/v1',buildPayeeFinanceRouter(live.pool,live.stripe));
+  // Check the payee again at PaymentIntent time: a previously created
+  // pending order must NEVER bypass the seller authorization gate.
+  app.post(['/api/v1/orders/:id/stripe/payment-intent',
+    '/api/v1/payments/stripe/orders/:id/payment-intent'],async(req,res,next)=>{
+    if(!liveChargeApproved){
+      res.status(503).json({error:'LIVE_CARD_CHECKOUT_NOT_APPROVED'});return;
+    }
+    try{
+      const session=await current(req);
+      if(session.user.role!=='customer'){
+        res.status(403).json({error:'CARD_BUYER_REQUIRED'});return;
+      }
+      const id=Number(req.params.id);
+      if(!Number.isSafeInteger(id)||id<=0){
+        res.status(422).json({error:'ORDER_ID_INVALID'});return;
+      }
+      const linked=await live.pool.query<{
+        user_id:number;stripe_account_id:string|null;
+        owner_approved_at:Date|null;email:string|null;is_active:boolean|null;
+      }>(`SELECT o.user_id,m.stripe_account_id,m.owner_approved_at,
+           u.email,u.is_active FROM orders o
+           JOIN restaurants r ON r.id=o.restaurant_id
+           LEFT JOIN tala_live_merchant_accounts m ON m.restaurant_id=r.id
+           LEFT JOIN users u ON u.id=r.owner_id
+           WHERE o.id=$1 LIMIT 1`,[id]);
+      const merchant=linked.rows[0];
+      if(!merchant||merchant.user_id!==session.userId){
+        res.status(404).json({error:'ORDER_NOT_FOUND'});return;
+      }
+      if(!merchant.owner_approved_at||!merchant.stripe_account_id||
+         !merchant.is_active||!merchant.email){
+        res.status(409).json({error:'SELLER_CONNECT_NOT_APPROVED'});return;
+      }
+      const account=await live.stripe.accounts.retrieve(merchant.stripe_account_id);
+      if(account.id!==merchant.stripe_account_id||
+         account.id===config.STRIPE_PLATFORM_ACCOUNT_ID||
+         account.country!=='MX'||
+         account.email?.trim().toLowerCase()!==merchant.email.trim().toLowerCase()||
+         account.details_submitted!==true||account.payouts_enabled!==true||
+         account.capabilities?.transfers!=='active'){
+        res.status(409).json({error:'SELLER_CONNECT_NOT_READY'});return;
+      }
+      next();
+    }catch{
+      res.status(503).json({error:'PAYMENT_MERCHANT_AUDIT_UNAVAILABLE'});
+    }
+  });
   app.use('/api/v1',buildIsolatedCheckoutRouter({
     enabled:liveChargeApproved,authSecret:config.AUTH_JWT_SECRET!,pool:live.pool,
     redis:live.redis,stripe:live.stripe,settings:live.settings,
