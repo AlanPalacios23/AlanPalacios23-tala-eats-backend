@@ -50,6 +50,25 @@ async function fixture(tx:{
        proof.stage_delivery_customer_v1===true);
   }catch{return false;}
 }
+/**
+ * Location heartbeat is Redis TTL-backed (120 seconds). A profile marked
+ * online in PostgreSQL is NOT proof the driver is reachable; the app may
+ * have been killed without issuing an offline request.
+ */
+export async function hasReachableStageDriver():Promise<boolean>{
+  if(config.NODE_ENV!=='staging'||
+     config.STAGE_DRIVER_DELIVERY_ENABLED!=='true'||
+     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED!=='true')return false;
+  const profiles=await db.marketplaceDriverProfile.findMany({
+    where:{isVerified:true,isOnline:true,
+      user:{is:{role:'driver',isActive:true}}},
+    select:{userId:true},take:100,orderBy:{userId:'asc'},
+  });
+  for(const item of profiles){
+    if(await redisLocation(item.userId))return true;
+  }
+  return false;
+}
 const profileByUser=async(userId:number)=>db.marketplaceDriverProfile.upsert({
   where:{userId},create:{userId,isVerified:false},update:{},
 });
@@ -96,6 +115,17 @@ async function assign(tx:any,driverId:number,forcedOrderId?:number):Promise<numb
     );
     if(!lock.length)continue;
     if(!await fixture(tx,row.id))continue;
+    // Prevent dispatch to a stale online flag. Synthetic D2 fixtures retain
+    // their older isolated test behavior, but real customer orders must have
+    // a fresh Redis location heartbeat from the driver app.
+    const received=await tx.stageOrderEvent.findFirst({
+      where:{orderId:row.id,status:'received'},orderBy:{id:'asc'},
+      select:{metadataJson:true},
+    });
+    let actualCustomerDelivery=false;
+    try{actualCustomerDelivery=JSON.parse(received?.metadataJson??'{}')
+      .stage_delivery_customer_v1===true;}catch{}
+    if(actualCustomerDelivery&&!fresh)continue;
     const changed=await tx.marketOrder.updateMany({
       where:{id:row.id,status:'ready',driverId:null,orderType:'delivery'},
       data:{driverId,status:'assigned'},
