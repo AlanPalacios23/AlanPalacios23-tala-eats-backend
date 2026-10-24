@@ -7,7 +7,7 @@ const src=new URL('../src/config.ts',import.meta.url);
 const source=readFileSync(src,'utf8');
 const sh=new URL('../scripts/rc813-parallel-stage.sh',import.meta.url);
 const installer=new URL('../scripts/rc813-create-parallel-stage-env.py',import.meta.url);
-const eco=new URL('../ecosystem.rc813-parallel.cjs',import.meta.url);
+const eco=new URL('../rc813/ecosystem.config.cjs',import.meta.url);
 const stageSh=readFileSync(sh,'utf8');
 const stageEnv=readFileSync(installer,'utf8');
 const stagePM=readFileSync(eco,'utf8');
@@ -29,6 +29,10 @@ test('RC813 launch code does not touch public PM2 or Cloudflared',()=>{
  assert.match(stageSh,/I_APPROVE_RC813_PARALLEL_STAGE_ONLY/);
  assert.match(stageSh,/STAGE_PM2_HOME="\$HOME\/\.pm2-tala-rc813-parallel"/);
  assert.match(stageSh,/ROLLOUT_STARTED=yes/);
+ assert.match(stageSh,/ECO="\$WORK\/rc813\/ecosystem\.config\.cjs"/);
+ assert.match(stageSh,/RC813_PM2_WORKER_PROCESS_IDENTITY=PASS/);
+ assert.match(stageSh,/RC813_ABORT_PM2_WRONG_WORKER_IDENTITY/);
+ assert.match(stageSh,/RC813_PM2_API_WORKER_PROCESS_IDENTITIES=PASS/);
  assert.match(stageSh,/--only tala-rc813-parallel-worker/);
  assert.match(stageSh,/--only tala-rc813-parallel-api/);
  assert.ok(stageSh.indexOf('pm2 start "$ECO" --only tala-rc813-parallel-worker') <
@@ -60,4 +64,5 @@ test('RC813 PM2 daemon and child process names are intentionally different',()=>
  assert.match(stagePM,/tala-rc813-parallel-api/);
  assert.doesNotMatch(stagePM,/name: 'tala-node-stage-api'|name: 'tala-node-stage-worker'/);
  assert.match(stagePM,/NODE_ENV:'staging'/);
+ assert.match(stagePM,/cwd:path.resolve\(__dirname,'\.\.'\)/);
 });
