@@ -173,6 +173,13 @@ export function buildPayeeFinanceRouter(pool:Pool,stripe:StripeRead){
      [orderId]);
    const check=checks.rows[0];
    if(!check||!o.delivered_at)throw Error('DELIVERY_PROOF_REQUIRED');
+   if(o.order_type==='delivery') {
+     if(o.driver_id===null)throw Error('MERCHANT_MANAGED_DELIVERY_REQUIRES_OWNED_MODE');
+     const driverReady=await client.query(
+       'SELECT user_id FROM driver_profiles WHERE user_id=$1 AND is_verified=true',
+       [o.driver_id]);
+     if(driverReady.rowCount!==1)throw Error('UNVERIFIED_DELIVERY_DRIVER');
+   }
    const plan=buildMoneyPlan({
      orderId:o.id,restaurantId:o.restaurant_id,driverUserId:o.driver_id,
      orderType:o.order_type,
