@@ -181,7 +181,7 @@ export async function processStripeTestReceipt(eventId:string):Promise<void>{
   const intent=await provider.paymentIntents.retrieve(object.id);
   const orderId=Number(intent.metadata.order_id),buyerId=Number(intent.metadata.buyer_id);
   if(!Number.isSafeInteger(orderId)||orderId<=0||!Number.isSafeInteger(buyerId)||
-     buyerId<=0||!['rc7_test_pickup','rc810_test_delivery'].includes(intent.metadata.mode)||
+     buyerId<=0||!['rc7_test_pickup','rc810_test_delivery'].includes(intent.metadata.mode??'')||
      (intent.metadata.mode==='rc810_test_delivery'&&
       (config.STAGE_DELIVERY_STRIPE_TEST_ENABLED!=='true'||
        config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED!=='true'))||intent.livemode||
