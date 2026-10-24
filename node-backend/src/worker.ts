@@ -130,8 +130,10 @@ async function sweepReadyDeliveries():Promise<void>{
   dispatchSweepBusy=true;
   try{
     const ready=await db.marketOrder.findMany({
-      where:{orderType:'delivery',paymentMethod:'cash',
-        paymentStatus:'pending',status:'ready',driverId:null},
+      where:{orderType:'delivery',status:'ready',driverId:null,
+        OR:[{paymentMethod:'cash',paymentStatus:'pending'},
+          ...(config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'?
+            [{paymentMethod:'stripe',paymentStatus:'paid'}]:[])]},
       select:{id:true},orderBy:[{readyAt:'asc'},{id:'asc'}],take:10,
     });
     if(ready.length){
