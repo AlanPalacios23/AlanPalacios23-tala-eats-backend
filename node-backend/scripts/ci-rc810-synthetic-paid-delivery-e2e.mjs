@@ -146,6 +146,8 @@ try{
  assert.equal(panel.code,200,JSON.stringify(panel.data));
  assert.equal(panel.data.active?.id,id);
  assert.equal(panel.data.active?.status,'assigned');
+ assert.equal(panel.data.active?.payment_method,'stripe');
+ assert.equal(panel.data.active?.payment_status,'paid');
  for(const next of ['picked_up','on_the_way']){
    const moved=await call('/driver/orders/'+id+'/status',{
       method:'PATCH',token:driver.token,body:{status:next}});
