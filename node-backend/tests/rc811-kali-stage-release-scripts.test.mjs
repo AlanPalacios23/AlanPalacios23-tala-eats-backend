@@ -28,6 +28,13 @@ test('RC811 preparation cannot start Stripe LIVE or run migrations',()=>{
  assert.doesNotMatch(p,/migrate deploy/);
  assert.doesNotMatch(p,/pg_dump.*--apply/);
 });
+test('RC811 legacy stage promoter runs unit tests with protected stage env',()=>{
+ const src=readFileSync(new URL('kali-stage-first-pm2-promote.sh',root),'utf8');
+ assert.match(src,/node --env-file="\$ENVFILE".*npm/);
+ assert.doesNotMatch(src,/^npm test$/m);
+ assert.match(src,/kali-stage-test-restore\.py --apply/);
+ assert.match(src,/kali-stage-backup\.py --apply/);
+});
 test('RC811 promotion must require separate exact approval and backup-restored cutover',()=>{
  const p=readFileSync(new URL(names[1],root),'utf8');
  assert.match(p,/I_APPROVE_RC811_STAGE_PM2_ONLY/);
