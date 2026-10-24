@@ -83,6 +83,12 @@ try{
     token:courier.token,body:{is_online:true}})).code,200);
  const quoteBody={restaurant_id:rest,order_type:'delivery',payment_method:'cash',
    ...coords,items:rows,tip:'5.00',coupon_code:''};
+ // A connected profile without a recent Redis GPS heartbeat is NOT
+ // operational availability. App restart/stale shift must fail closed.
+ assert.equal((await call('/orders/delivery-quote',{method:'POST',
+   token:customer.token,body:quoteBody})).code,409);
+ assert.equal((await call('/driver/location',{method:'PATCH',
+   token:courier.token,body:{lat:20.6503,lng:-103.7104}})).code,200);
  const quote=await call('/orders/delivery-quote',{method:'POST',
    token:customer.token,body:quoteBody});
  assert.equal(quote.code,200,JSON.stringify(quote.data));
