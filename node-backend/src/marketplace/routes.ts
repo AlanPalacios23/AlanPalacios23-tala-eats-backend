@@ -5,7 +5,10 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import { db } from '../db.js';
 import { config } from '../config.js';
-import { createStagePickupOrder, isCashPickupIntent, isStripePickupIntent } from './checkout.js';
+import { createStagePickupOrder, isCashPickupIntent, isStripePickupIntent,
+  isStageCashDeliveryIntent } from './checkout.js';
+import {deliveryDistance,assertRestaurantDeliveryOrigin,DeliveryGeoError} from './delivery-geography.js';
+import {calculateDefaultCommercial,fmtCents} from '../finance/pricing.js';
 import {calculatePickupQuoteFromCatalog,assertDefaultPickupRates,PickupQuoteError} from './quote.js';
 import { previewCancelStage, cancelCashPickupStage, moveCashPickupOwnerStage } from './lifecycle.js';
 import { completeCashPickupStage } from './pickup.js';
@@ -341,6 +344,108 @@ ownerRouter.patch('/restaurant',async(req,res)=>{
   res.json(restaurantPublic(updated));
 });
 
+// RC8.7 staging: cash delivery preview is a real SERVER price calculation,
+// not an estimated map-route journey. Never creates order, reserves stock,
+// charges Stripe or advertises production delivery.
+stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
+  if(config.NODE_ENV!=='staging'||
+     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED!=='true')
+    throw new RouteError(503,'Cotización a domicilio no habilitada');
+  await user(req,['customer']);
+  const schema=z.strictObject({
+    restaurant_id:z.number().int().positive().safe(),
+    order_type:z.literal('delivery'),
+    payment_method:z.literal('cash'),
+    delivery_lat:z.number().finite().min(-90).max(90),
+    delivery_lng:z.number().finite().min(-180).max(180),
+    tip:z.union([z.string(),z.number()]).transform(String).default('0'),
+    coupon_code:z.literal('').optional(),
+    items:z.array(z.strictObject({
+      menu_item_id:z.number().int().positive().safe(),
+      quantity:z.number().int().min(1).max(50),
+      options:z.literal('').optional(),
+    })).min(1).max(100),
+  });
+  const parsed=schema.safeParse(req.body);
+  if(!parsed.success)throw new RouteError(422,'Datos de cotización inválidos');
+  const data=parsed.data;
+  const restaurant=await db.marketplaceRestaurant.findUnique({
+    where:{id:data.restaurant_id},
+  });
+  if(!restaurant||restaurant.verificationStatus!=='verified')
+    throw new RouteError(404,'Restaurante no disponible');
+  if(!restaurant.isOpen)throw new RouteError(409,'Restaurante cerrado');
+  if(!['START','DELIVERY','PRO'].includes(restaurant.commercialPlan))
+    throw new RouteError(503,'Política comercial no compatible');
+  try{
+    assertRestaurantDeliveryOrigin({lat:restaurant.lat,lng:restaurant.lng},
+      restaurant.address);
+    const geo=deliveryDistance({lat:restaurant.lat,lng:restaurant.lng},
+      {lat:data.delivery_lat,lng:data.delivery_lng},restaurant.deliveryRadiusKm);
+    const active=await db.marketplaceDriverProfile.count({
+      where:{isVerified:true,isOnline:true},
+    });
+    if(!active)throw new RouteError(409,'No hay repartidores disponibles');
+    const products=await db.marketplaceMenuItem.findMany({
+      where:{id:{in:data.items.map(i=>i.menu_item_id)},restaurantId:restaurant.id},
+    });
+    const policies=await db.stageSystemSetting.findMany({
+      where:{key:{in:[
+        'commercial_v152.restaurant_commission_rate',
+        'commercial_v152.service_fee_rate',
+        'commercial_v162.service_fee_rate',
+        'commercial_v162.service_fee_cap',
+      ]}},
+    });
+    const policy=config.COMMERCIAL_PRICING_V162_ENABLED==='true'?'v162':'v152';
+    assertDefaultPickupRates(policies,policy);
+    const catalog=products.map(i=>({
+      id:i.id,restaurantId:i.restaurantId,name:i.name,
+      price:i.price.toString(),stock:i.stock,isAvailable:i.isAvailable,
+      optionsJson:i.optionsJson,priceScheduleJson:i.priceScheduleJson,
+      availabilityScheduleJson:i.availabilityScheduleJson,
+    }));
+    const subtotalQuote=calculatePickupQuoteFromCatalog({
+      restaurantId:restaurant.id,items:data.items,
+      catalog,tip:'0',method:'cash',policy,
+    });
+    const amount=subtotalQuote.subtotal.split('.');
+    const subtotal=BigInt(amount[0]!)*100n+BigInt(amount[1]!);
+    if(!/^(?:0|[1-9]\d{0,7})(?:\.\d{1,2})?$/.test(data.tip))
+      throw new PickupQuoteError(422,'Propina inválida');
+    const tipParts=data.tip.split('.');
+    const tip=BigInt(tipParts[0]!)*100n+
+      BigInt(((tipParts[1]??'')+'00').slice(0,2));
+    if(tip>1_000_000n)throw new PickupQuoteError(422,'Propina fuera de límite');
+    const economics=calculateDefaultCommercial({
+      policy,method:'cash',fulfillment:'delivery',
+      subtotal,discount:0n,tip,distanceMilliKm:geo.distanceMilliKm,
+    });
+    res.setHeader('Cache-Control','private, no-store');
+    res.json({
+      currency:'MXN',order_type:'delivery',payment_method:'cash',
+      restaurant_id:restaurant.id,
+      distance_method:'great_circle_rounded_up_0_001km',
+      distance_km:geo.distanceKm,
+      shipping_is_road_routing:false,
+      commercial_pricing_version:policy==='v162'?'1.6.2':'1.5.2',
+      subtotal:fmtCents(subtotal),discount:'0.00',
+      delivery_fee:fmtCents(economics.deliveryFee),
+      service_fee:fmtCents(economics.serviceFee),
+      tip:fmtCents(tip),total:fmtCents(economics.total),
+      driver_earning:fmtCents(economics.driverEarning),
+      quote_is_binding:false,inventory_reserved:false,
+      requires_revalidation_on_order:true,
+      delivery_checkout_supported:true,
+      driver_assignment_guaranteed:false,
+    });
+  }catch(err){
+    if(err instanceof PickupQuoteError||err instanceof DeliveryGeoError)
+      throw new RouteError(err.code,err.message);
+    throw err;
+  }
+});
+
 // Preview ONLY: user receives exact current catalog values and the same
 // default commercial formula as POST /orders. This endpoint NEVER reserves
 // products, starts Stripe, quotes delivery or implies live checkout approval.
@@ -474,8 +579,11 @@ stageOrdersRouter.get('/:orderId',async(req,res)=>{
   res.json(orderView(order,isOwner));
 });
 stageOrdersRouter.post('/',async(req,res)=>{
-  const cash=isCashPickupIntent(req.body)&&
-    config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true';
+  const cash=(isCashPickupIntent(req.body)&&
+    config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true')||
+    (isStageCashDeliveryIntent(req.body)&&
+     config.NODE_ENV==='staging'&&
+     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true');
   const stageCard=isStripePickupIntent(req.body)&&
     config.NODE_ENV==='staging'&&config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true';
   const liveCard=isStripePickupIntent(req.body)&&
