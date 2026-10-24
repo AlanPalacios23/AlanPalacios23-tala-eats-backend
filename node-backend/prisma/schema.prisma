@@ -1157,3 +1157,50 @@ model TalaLiveSettlementProposal {
   @@index([state,restaurantId],map:"ix_live_proposals_review")
   @@map("tala_live_settlement_proposals")
 }
+
+
+// RC8.5: independent beneficiary obligations and physical cash held for review.
+// NO model creates Stripe transfers or treats a cash report as actual bank funds.
+model TalaLiveDriverAccount {
+ userId Int @id @map("user_id")
+ stripeAccountId String @unique @map("stripe_account_id") @db.VarChar(120)
+ registeredByUserId Int @map("registered_by_user_id")
+ ownerApprovedAt DateTime? @map("owner_approved_at") @db.Timestamptz(6)
+ createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+ updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+ @@map("tala_live_driver_accounts")
+}
+model TalaLivePayeeAllocation {
+ id BigInt @id @default(autoincrement())
+ orderId Int @map("order_id")
+ payeeKind String @map("payee_kind") @db.VarChar(12)
+ payeeId Int @map("payee_id")
+ amountMinor BigInt @map("amount_minor")
+ tender String @db.VarChar(8)
+ fulfillment String @db.VarChar(22)
+ state String @default("held") @db.VarChar(16)
+ capturedEvidenceRef String? @map("captured_evidence_ref") @db.VarChar(180)
+ createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+ @@unique([orderId,payeeKind])
+ @@index([payeeKind,payeeId,state],map:"rc85_allocations_payee")
+ @@map("tala_live_payee_allocations")
+}
+model TalaLiveCashCustody {
+ orderId Int @id @map("order_id")
+ collectorKind String @map("collector_kind") @db.VarChar(12)
+ collectorId Int @map("collector_id")
+ collectedMinor BigInt @map("collected_minor")
+ retainedMinor BigInt @map("retained_minor")
+ duePlatformMinor BigInt @map("due_platform_minor")
+ status String @default("awaiting_evidence") @db.VarChar(20)
+ evidenceRef String? @map("evidence_ref") @db.VarChar(300)
+ submittedBy Int? @map("submitted_by")
+ reviewedBy Int? @map("reviewed_by")
+ settledBy Int? @map("settled_by")
+ submittedAt DateTime? @map("submitted_at") @db.Timestamptz(6)
+ reviewedAt DateTime? @map("reviewed_at") @db.Timestamptz(6)
+ settledAt DateTime? @map("settled_at") @db.Timestamptz(6)
+ createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+ @@index([status,createdAt],map:"rc85_cash_status_idx")
+ @@map("tala_live_cash_custody")
+}
