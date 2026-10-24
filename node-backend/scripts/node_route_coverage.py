@@ -121,6 +121,10 @@ STRIPE_TEST_STATUS_NODE_ONLY = {
 PICKUP_PRICE_PREVIEW_NODE_ONLY = {
     ("POST", "/api/v1/orders/quote"),
 }
+# RC8.7: stage-only, authenticated, cash-only and nonbinding geodistance preview.
+STAGE_DELIVERY_QUOTE_NODE_ONLY = {
+    ("POST", "/api/v1/orders/delivery-quote"),
+}
 
 def main() -> None:
     parser=argparse.ArgumentParser(description=__doc__)
@@ -131,7 +135,7 @@ def main() -> None:
     if args.check:
         observed = {canonical(x["method"], x["path"])
                     for x in data["node_routes_without_python_match"]}
-        if observed != ADMIN_NODE_ONLY | STRIPE_TEST_STATUS_NODE_ONLY | PICKUP_PRICE_PREVIEW_NODE_ONLY:
+        if observed != ADMIN_NODE_ONLY | STRIPE_TEST_STATUS_NODE_ONLY | PICKUP_PRICE_PREVIEW_NODE_ONLY | STAGE_DELIVERY_QUOTE_NODE_ONLY:
             raise ValueError("Unapproved Node-only route delta: "+
                              json.dumps(data["node_routes_without_python_match"]))
     if args.json:

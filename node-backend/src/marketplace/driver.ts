@@ -41,8 +41,14 @@ async function fixture(tx:{
   const receipt=await tx.stageOrderEvent.findFirst({
     where:{orderId,status:'received'},orderBy:{id:'asc'},
   });
-  try{return JSON.parse(receipt?.metadataJson??'{}').stage_driver_fixture===true;}
-  catch{return false;}
+  try{
+    const proof=JSON.parse(receipt?.metadataJson??'{}');
+    return proof.stage_driver_fixture===true||
+      (config.NODE_ENV==='staging'&&
+       config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
+       /^[a-f0-9]{64}$/.test(proof.checkout_intent_hmac??'')&&
+       proof.stage_delivery_customer_v1===true);
+  }catch{return false;}
 }
 const profileByUser=async(userId:number)=>db.marketplaceDriverProfile.upsert({
   where:{userId},create:{userId,isVerified:false},update:{},
@@ -318,7 +324,9 @@ export async function driverComplete(actor:AuthUser,orderId:number,
     if(o.driverId!==actor.id)fail(403,'Pedido no asignado');
     if(o.status==='delivered'){
       const existing=await tx.stageDeliveryProof.findUnique({where:{orderId}});
-      if(!existing?.pinVerified)fail(409,'Pedido sin prueba de entrega');
+      if(!existing?.pinVerified||!/^\d{4}$/.test(proof.pin)||
+         !timingSafeEqual(Buffer.from(o.deliveryPin),Buffer.from(proof.pin)))
+        fail(409,'Pedido sin prueba de entrega válida');
       return orderId;
     }
     if(o.status!=='on_the_way')fail(409,'Primero marca el pedido como en camino');
@@ -355,6 +363,15 @@ export async function driverComplete(actor:AuthUser,orderId:number,
     await tx.marketOrder.update({where:{id:orderId},data:{
       status:'delivered',deliveredAt:now,paymentStatus:'paid',cashCollected:o.total,
     }});
+    // The driver physically collects cash at PIN delivery, never Stripe.
+    // Atomic, idempotent and held for manual reconciliation; not withdrawable.
+    await tx.stageFinancialLedgerEntry.create({data:{
+      orderId,userId:o.userId,restaurantId:o.restaurantId,
+      account:'cash_collected_by_driver',direction:'credit',amount:o.total,
+      kind:'cash_delivery_collection',
+      description:'Efectivo recibido por repartidor en entrega; conciliación pendiente',
+      idempotencyKey:'order:'+orderId+':cash-delivery:collected',
+    }});
     await tx.stageDeliveryProof.create({data:{
       orderId,driverId:actor.id,pinVerified:true,
       photoUrl:proof.photo_url??'',lat:proof.lat??null,lng:proof.lng??null,
@@ -389,4 +406,33 @@ export async function driverComplete(actor:AuthUser,orderId:number,
   // delivery that has already committed if the next claim is unavailable.
   try{await withProfileLock(actor.id,async tx=>assign(tx,actor.id));}catch{/* next assignment best effort */}
   return id;
+}
+
+/**
+ * RC8.7: merchant READY event attempts immediate non-duplicating dispatch.
+ * Row locks use exactly the same claim protocol as driver availability.
+ * A missing driver leaves READY pending; future login/complete will retry.
+ * Never called for test fixtures or production while the new flag is off.
+ */
+export async function dispatchStageDeliveryReady(orderId:number):Promise<boolean>{
+  if(config.NODE_ENV!=='staging'||
+     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED!=='true'||
+     config.STAGE_DRIVER_DELIVERY_ENABLED!=='true')
+    return false;
+  if(!Number.isSafeInteger(orderId)||orderId<=0)return false;
+  const profiles=await db.marketplaceDriverProfile.findMany({
+    where:{isVerified:true,isOnline:true,
+      user:{is:{role:'driver',isActive:true}}},
+    select:{userId:true},orderBy:{userId:'asc'},take:100,
+  });
+  for(const p of profiles){
+    try{
+      const id=await withProfileLock(p.userId,tx=>assign(tx,p.userId,orderId));
+      if(id===orderId)return true;
+    }catch{
+      // Failed driver must never fail merchant READY transaction or
+      // duplicate an assignment to a second driver.
+    }
+  }
+  return false;
 }

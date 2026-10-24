@@ -2,6 +2,7 @@
 // Source contracts: backend/app/routes/{orders,owner}.py, inventory.py.
 // No LIVE, no PSP, no customer wallet or driver/dispatch writes.
 import { db } from '../db.js';
+import {dispatchStageDeliveryReady} from './driver.js';
 import { config } from '../config.js';
 import {cancelUnpaidStripeTestIntent} from '../stage-stripe-test.js';
 import type { AuthUser, MarketOrder } from '../generated/prisma/client.js';
@@ -44,8 +45,14 @@ const roundHalfEvenBasisPoints=(minor:bigint,rate:bigint):bigint=>{
 };
 const feeRates:{[key:string]:bigint}={received:0n,confirmed:1000n,preparing:3000n};
 const cashOnly=(o:MarketOrder):void=>{
-  if(o.orderType!=='pickup'||o.paymentMethod!=='cash'||o.paymentStatus!=='pending')
-    fail(503,'Este flujo de staging sólo admite pedidos cash/pickup sin pagos capturados');
+  const eligiblePickup=o.orderType==='pickup'&&
+    config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true';
+  const eligibleDelivery=o.orderType==='delivery'&&
+    config.NODE_ENV==='staging'&&
+    config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true';
+  if(!(eligiblePickup||eligibleDelivery)||
+     o.paymentMethod!=='cash'||o.paymentStatus!=='pending')
+    fail(503,'Este flujo de staging sólo admite pedidos cash sin pagos capturados');
 };
 export async function previewCancelStage(orderId:number,actor:AuthUser) {
   if(!['customer','admin'].includes(actor.role))fail(403,'No autorizado');
@@ -92,7 +99,8 @@ export async function cancelCashPickupStage(
   if(stripe&&candidate.userId!==actor.id)return notFound();
   if(stripe&&config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true')
     fail(503,'Stripe TEST deshabilitado');
-  if(!stripe&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true')
+  if(!stripe&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true'&&
+     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED!=='true')
     fail(503,'Ciclo de pedidos de staging deshabilitado');
   if(stripe&&candidate.status==='cancelled')return orderId;
   // Stripe confirms no capture BEFORE entering the stock restoration transaction.
@@ -247,10 +255,11 @@ export async function moveStagePickupOwner(orderId:number,actor:AuthUser,
     config.STRIPE_LIVE_ENABLED==='true'&&
     config.STRIPE_FINANCIAL_WRITES_ENABLED==='true';
   if(config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true'&&
+     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED!=='true'&&
      config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true'&&!liveCardEnabled)
     fail(503,'Ciclo de pedidos de recogida deshabilitado');
   if(!['restaurant','admin'].includes(actor.role))fail(403,'No autorizado');
-  return db.$transaction(async tx=>{
+  const resultId=await db.$transaction(async tx=>{
     const locks=await tx.$queryRaw<{id:number}[]>`
       SELECT id FROM orders WHERE id=${orderId} FOR UPDATE
     `;
@@ -261,8 +270,12 @@ export async function moveStagePickupOwner(orderId:number,actor:AuthUser,
     if(!order)return notFound();
     if(actor.role!=='admin'&&order.restaurant.ownerId!==actor.id)
       fail(403,'Ese pedido no pertenece a tu restaurante');
-    const cash=order.orderType==='pickup'&&order.paymentMethod==='cash'&&
-      order.paymentStatus==='pending'&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true';
+    const cash=order.paymentMethod==='cash'&&
+      order.paymentStatus==='pending'&&(
+       (order.orderType==='pickup'&&
+        config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true')||
+       (order.orderType==='delivery'&&config.NODE_ENV==='staging'&&
+        config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'));
     const stripe=order.orderType==='pickup'&&order.paymentMethod==='stripe'&&
       order.paymentStatus==='paid'&&
       (config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'||liveCardEnabled);
@@ -319,6 +332,11 @@ export async function moveStagePickupOwner(orderId:number,actor:AuthUser,
     }});
     return order.id;
   },{maxWait:10_000,timeout:20_000});
+  if(next==='ready'&&config.NODE_ENV==='staging'&&
+     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'){
+    await dispatchStageDeliveryReady(resultId);
+  }
+  return resultId;
 }
 
 export const moveCashPickupOwnerStage=moveStagePickupOwner;

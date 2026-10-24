@@ -27,6 +27,7 @@ const schema = z.object({
   STAGE_EMAIL_FROM: z.string().min(6).max(220).optional(),
   STAGE_EMAIL_ALLOWED_RECIPIENTS: z.string().optional(),
   STAGE_DRIVER_DELIVERY_ENABLED: z.enum(['false','true']).default('false'),
+  STAGE_DELIVERY_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_PICKUP_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
   // Stage checkout supports default Python v1.5.2 or v1.6.2 pricing.
   // Select v1.6.2 explicitly only after PG15 stage review; custom overrides fail closed.
@@ -93,7 +94,8 @@ if(config.NODE_ENV==='staging'){
   if(config.AUTH_V02_ENABLED!=='true'||config.MARKETPLACE_B_ENABLED!=='true'||
      !config.AUTH_JWT_SECRET||
      config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='false'||
-     config.STAGE_DRIVER_DELIVERY_ENABLED!=='false')
+     config.STAGE_DRIVER_DELIVERY_ENABLED!=='false'||
+     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED!=='false')
     throw new Error('LIVE_MARKETPLACE_AUTH_AND_TEST_ISOLATION_REQUIRED');
   if(config.STRIPE_CONNECT_TRANSFERS_ENABLED!=='false')
     throw new Error('LIVE_CONNECT_PAYOUTS_REQUIRE_SEPARATE_AUDIT');
@@ -142,4 +144,15 @@ if(config.STAGE_DRIVER_DELIVERY_ENABLED==='true' &&
   (config.MARKETPLACE_B_ENABLED!=='true'||config.AUTH_V02_ENABLED!=='true'||
    config.MERCHANT_MANAGED_DELIVERY==='true')){
   throw new Error('STAGE_DRIVER_DELIVERY_REQUIRES_ISOLATED_AUTH_AND_MARKETPLACE');
+}
+
+if(config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&(
+    config.NODE_ENV!=='staging'||
+    config.AUTH_V02_ENABLED!=='true'||
+    config.MARKETPLACE_B_ENABLED!=='true'||
+    config.STAGE_DRIVER_DELIVERY_ENABLED!=='true'||
+    config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true'||
+    config.MERCHANT_MANAGED_DELIVERY!=='false'||
+    config.STRIPE_FINANCIAL_WRITES_ENABLED!=='false')){
+  throw new Error('RC87_DELIVERY_CASH_REQUIRES_ISOLATED_DRIVER_STAGE');
 }

@@ -92,6 +92,7 @@ const publicPaymentContracts=()=>buildPublicPaymentContracts({
   manualSettlementApproved:config.STRIPE_MANUAL_SETTLEMENT_APPROVED==='true',
   publishableKey:config.STRIPE_PUBLISHABLE_KEY,
   pricingV162Enabled:config.COMMERCIAL_PRICING_V162_ENABLED==='true',
+  stagingDeliveryCashEnabled:config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true',
 });
 parityRouter.get('/orders/payment-methods',async(req,res)=>{
   await account(req);

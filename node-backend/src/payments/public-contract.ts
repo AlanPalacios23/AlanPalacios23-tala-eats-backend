@@ -17,6 +17,7 @@ export type PublicPaymentOptions = {
   manualSettlementApproved:boolean;
   publishableKey:string|undefined;
   pricingV162Enabled?:boolean;
+  stagingDeliveryCashEnabled?:boolean;
 };
 
 export function buildPublicPaymentContracts(o:PublicPaymentOptions){
@@ -45,7 +46,10 @@ export function buildPublicPaymentContracts(o:PublicPaymentOptions){
       }:{
         delivery_base_fee:'39.00',
       }),
-      delivery_checkout_supported:false,
+      delivery_checkout_supported:!live&&o.stagingDeliveryCashEnabled===true,
+      delivery_cash_supported:!live&&o.stagingDeliveryCashEnabled===true,
+      delivery_stripe_supported:false,
+      delivery_quote_supported:!live&&o.stagingDeliveryCashEnabled===true,
       pickup_checkout_supported:true,
       pickup_quote_supported:true, // POST /orders/quote, non-binding server-side price preview
       digital_provider:'stripe',
