@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {validateLiveSettings,LiveGateError,liveReceiptIdentity,
+import {validateLiveSettings,validateLiveStandbySettings,LiveGateError,liveReceiptIdentity,
   livePilotAmount} from '../dist/live/guard.js';
 import {createLivePickupPaymentIntent,verifyLiveStripeEvent,
   LIVE_PI_RESERVED} from '../dist/live/stripe-payments.js';
@@ -30,6 +30,20 @@ test('LIVE cannot inherit stage Postgres Redis or test credentials',()=>{
    assert.throws(()=>validateLiveSettings({...valid(),[key]:value}),
      error=>error instanceof LiveGateError,key);
  }
+});
+test('standby settings cannot be used as checkout release authorization',()=>{
+ const off={...valid(),explicitlyEnabled:'false',readinessApproved:'false',
+   refundsEnabled:'false',manualSettlementApproved:'false'};
+ const parsed=validateLiveStandbySettings(off);
+ assert.equal(parsed.transfersEnabled,false);
+ assert.throws(()=>validateLiveSettings(off),LiveGateError);
+ for(const patch of [
+   {explicitlyEnabled:'true'},{readinessApproved:'true'},
+   {refundsEnabled:'true'},{manualSettlementApproved:'true'},
+   {transfersEnabled:'true'},
+   {key:'sk_test_'+'X'.repeat(24)},
+   {databaseUrl:'postgresql://stage:secret@127.0.0.1:15435/tala_node_stage'},
+ ])assert.throws(()=>validateLiveStandbySettings({...off,...patch}),LiveGateError);
 });
 test('pilot amount is bounded, integer MXN cent amount',()=>{
  for(const x of [0,-1,99,5001,Infinity,100.1,NaN])
