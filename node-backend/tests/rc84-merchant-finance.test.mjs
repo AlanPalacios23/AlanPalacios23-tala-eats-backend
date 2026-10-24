@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {settlementEligibility} from '../dist/live/merchant-finance-router.js';
+import {spawnSync} from 'node:child_process';
+import {settlementEligibility} from '../dist/live/settlement-eligibility.js';
 
 const eligible={
  status:'delivered',paymentStatus:'paid',
@@ -48,4 +49,13 @@ test('database has separate merchant identity, manual finance review and proposa
   'live_proposal_no_implicit_transfer_chk'])
   assert.ok(sql.includes(part),part);
  assert.doesNotMatch(sql,/CREATE TRIGGER|CREATE FUNCTION|INSERT INTO orders|UPDATE orders/);
+});
+
+test('seller finance calculation imports without server secrets or production environment',()=>{
+ const child=spawnSync(process.execPath,['--input-type=module','-e',
+  "import('./dist/live/settlement-eligibility.js').then(m=>{if(typeof m.settlementEligibility!=='function')process.exit(2)}).catch(()=>process.exit(3))"
+ ],{cwd:process.cwd(),encoding:'utf8',timeout:6000,
+    env:{PATH:process.env.PATH??''}});
+ assert.equal(child.status,0,child.stderr);
+ assert.doesNotMatch(child.stderr,/ZodError|DATABASE_URL|REDIS_URL|NODE_ENV/);
 });
