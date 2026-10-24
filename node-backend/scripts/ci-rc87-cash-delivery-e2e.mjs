@@ -214,6 +214,9 @@ try{
  assert.equal((await db.query(
     "SELECT COUNT(*)::int AS n FROM order_events WHERE order_id=$1 AND status='assigned'",
     [next.data.id])).rows[0].n,1);
+ assert.equal(await redis.get('tala:node:stage:dispatch:sweep:ok'),'1',
+   'successful worker READY sweep must maintain separate short-lived health TTL');
+ console.log('RC89_WORKER_DISPATCH_SWEEP_HEARTBEAT=PASS');
  console.log('RC88_PERSISTED_READY_RECOVERED_BY_WORKER_EXACTLY_ONCE=PASS');
  console.log('RC87_CUSTOMER_DELIVERY_QUOTE_AND_ATOMIC_ORDER=PASS');
  console.log('RC87_GEO_RADIUS_DRIVER_AUTH_AND_INVENTORY=PASS');
