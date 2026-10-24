@@ -43,8 +43,9 @@ test('v152 service fee does not cap and card method does not change customer tot
 test('no invented quote for another restaurant or unavailable inventory',()=>{
  assert.throws(()=>quote({restaurantId:22}),/no pertenece/);
  assert.throws(()=>quote({catalog:[{...catalog[0],stock:1},catalog[1]]}),/stock/);
- assert.throws(()=>quote({items:[{menu_item_id:11,quantity:15},
-   {menu_item_id:11,quantity:6}]}),/Cantidad excedida/);
+ assert.throws(()=>quote({catalog:[{...catalog[0],stock:100},catalog[1]],
+  items:[{menu_item_id:11,quantity:40},
+   {menu_item_id:11,quantity:11}]}),/Cantidad excedida/);
 });
 test('dynamic options and malicious line values fail closed',()=>{
  assert.throws(()=>quote({catalog:[{...catalog[0],optionsJson:'[{}]'},catalog[1]]}),
