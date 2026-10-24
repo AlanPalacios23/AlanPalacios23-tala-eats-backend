@@ -1,0 +1,95 @@
+name: TALA EATS RC8.11 | Deployment Candidate Synthetic Paid Delivery E2E
+on:
+  push:
+    branches: [feat/rc811-kali-stage-release-pipeline-20261024]
+permissions:
+  contents: read
+jobs:
+  synthetic-card-boundary:
+    name: RC811 exact SHA synthetic Stripe TEST receipt and driver NO CASH
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: tala_node_stage
+          POSTGRES_PASSWORD: stage-ci-pass
+          POSTGRES_DB: tala_node_stage
+        ports: ['15435:5432']
+        options: >-
+          --health-cmd "pg_isready -U tala_node_stage -d tala_node_stage"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+      redis:
+        image: redis:8
+        ports: ['16379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      NODE_ENV: staging
+      HOST: 127.0.0.1
+      PORT: '18190'
+      DATABASE_URL: postgresql://tala_node_stage:stage-ci-pass@127.0.0.1:15435/tala_node_stage
+      REDIS_URL: redis://:stage-ci-redis@127.0.0.1:16379/0
+      STRIPE_SECRET_KEY: sk_test_rc810fakeciisolated
+      STRIPE_WEBHOOK_SECRET: whsec_rc810disposableci
+      STRIPE_PUBLISHABLE_KEY: pk_test_rc810fakeciisolated
+      STRIPE_LIVE_ENABLED: 'false'
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+      STRIPE_CONNECT_TRANSFERS_ENABLED: 'false'
+      STAGE_STRIPE_TEST_CHECKOUT_ENABLED: 'true'
+      AUTH_V02_ENABLED: 'true'
+      MARKETPLACE_B_ENABLED: 'true'
+      STAGE_PICKUP_CASH_CHECKOUT_ENABLED: 'true'
+      STAGE_DRIVER_DELIVERY_ENABLED: 'true'
+      STAGE_DELIVERY_CASH_CHECKOUT_ENABLED: 'true'
+      STAGE_DELIVERY_STRIPE_TEST_ENABLED: 'true'
+      COMMERCIAL_PRICING_V162_ENABLED: 'true'
+      AUTH_JWT_SECRET: ci-only-rc810-stage-secret-xxxxxxxxxxxxxxxxxxxxxxxx
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Frozen deps, migrations and TS
+        run: |
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:validate
+          npm run db:migrate:deploy
+          npm run build
+      - name: Make disposable Redis password protected
+        run: |
+          node --input-type=module -e '
+            import {Redis} from "ioredis";
+            const r=new Redis("redis://127.0.0.1:16379");
+            await r.config("SET","requirepass","stage-ci-redis");
+            r.disconnect();
+            const secured=new Redis(process.env.REDIS_URL);
+            if(await secured.ping()!=="PONG")process.exitCode=1;
+            secured.disconnect();
+          '
+      - name: Simulate POST-signed-provider ledger state, never actual Stripe charge
+        run: |
+          set -euo pipefail
+          node dist/server.js > /tmp/tala-rc810-api.log 2>&1 &
+          api=$!
+          node dist/worker.js > /tmp/tala-rc810-worker.log 2>&1 &
+          worker=$!
+          trap 'kill "$api" "$worker" 2>/dev/null || true' EXIT
+          node scripts/ci-rc810-synthetic-paid-delivery-e2e.mjs || {
+            tail -n 120 /tmp/tala-rc810-api.log | sed -E 's/(sk|rk|pk)_(test|live)_[A-Za-z0-9]+/[REDACTED]/g'
+            tail -n 70 /tmp/tala-rc810-worker.log | sed -E 's/(sk|rk|pk)_(test|live)_[A-Za-z0-9]+/[REDACTED]/g'
+            exit 1
+          }
+      - name: Assert no LIVE keys or transfer toggles
+        run: |
+          node -e "import('./dist/config.js').then(x=>{if(x.config.NODE_ENV!=='staging'||x.config.STRIPE_LIVE_ENABLED!=='false'||x.config.STRIPE_FINANCIAL_WRITES_ENABLED!=='false'||x.config.STRIPE_CONNECT_TRANSFERS_ENABLED!=='false')process.exit(1)})"
