@@ -19,6 +19,7 @@ const required=[
   'dist/live/transfer-planning.js',
   'prisma/migrations/20261023_rc84_merchant_finance_controls/migration.sql',
   'prisma/migrations/20261024_rc85_restaurant_driver_cash/migration.sql',
+  'prisma/migrations/20261024_rc86_exclusive_connect_recipients/migration.sql',
   'ecosystem.production.config.cjs',
   'scripts/rc8-postdeploy-audit.mjs',
 ];
