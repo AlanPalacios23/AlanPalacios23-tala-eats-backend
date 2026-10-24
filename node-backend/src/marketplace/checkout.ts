@@ -186,7 +186,8 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
       deliveryDistanceMilli=geo.distanceMilliKm;
       // Prevent creating a normal delivery without any verified online driver.
       const online=await tx.marketplaceDriverProfile.count({
-        where:{isVerified:true,isOnline:true},
+        where:{isVerified:true,isOnline:true,
+      user:{is:{role:'driver',isActive:true}}},
       });
       if(!online)throw new CheckoutError(409,'No hay repartidores disponibles por ahora');
     }
