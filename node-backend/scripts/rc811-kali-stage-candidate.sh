@@ -58,7 +58,9 @@ if [[ "$MODE" == '--prepare' ]]; then
  node --env-file="$ENV" ./node_modules/prisma/build/index.js generate
  node --env-file="$ENV" ./node_modules/prisma/build/index.js validate
  npm run build
- npm test
+ # Start npm CLI through node --env-file, so unit tests inherit the guarded
+ # private STAGING environment without unsafe shell 'source' of credentials.
+ node --env-file="$ENV" "$(readlink -f "$(command -v npm)")" test
  node scripts/release-readiness.mjs --stage
  bash -n scripts/rc811-kali-stage-promote.sh
  bash -n scripts/rc811-kali-stage-candidate.sh
