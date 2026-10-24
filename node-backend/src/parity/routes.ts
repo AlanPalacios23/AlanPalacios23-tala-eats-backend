@@ -93,6 +93,7 @@ const publicPaymentContracts=()=>buildPublicPaymentContracts({
   publishableKey:config.STRIPE_PUBLISHABLE_KEY,
   pricingV162Enabled:config.COMMERCIAL_PRICING_V162_ENABLED==='true',
   stagingDeliveryCashEnabled:config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true',
+  stagingDeliveryStripeTestEnabled:config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true',
 });
 parityRouter.get('/orders/payment-methods',async(req,res)=>{
   await account(req);
@@ -257,7 +258,11 @@ parityRouter.get('/payments/stripe/orders/:orderId/status',async(req,res)=>{
    inventoryRestoredAt:true},
  });
  if(!order||order.userId!==who.id||
-    order.orderType!=='pickup'||order.paymentMethod!=='stripe'||
+    !(order.orderType==='pickup'||(
+      config.NODE_ENV==='staging'&&
+      config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'&&
+      order.orderType==='delivery'))||
+    order.paymentMethod!=='stripe'||
     order.paymentProvider!=='stripe')return bad(404,'Pago no encontrado');
  // Flutter Users calls the SAME order status endpoint in both modes.
  // A LIVE confirmation is based on the verified, immutable receipt posted

@@ -58,7 +58,10 @@ export async function previewCancelStage(orderId:number,actor:AuthUser) {
   if(!['customer','admin'].includes(actor.role))fail(403,'No autorizado');
   const order=await db.marketOrder.findUnique({where:{id:orderId}});
   if(!order||(actor.role!=='admin'&&order.userId!==actor.id))return notFound();
-  if(order.paymentMethod==='stripe'&&order.orderType==='pickup'&&
+  if(order.paymentMethod==='stripe'&&
+     (order.orderType==='pickup'||(order.orderType==='delivery'&&
+       config.NODE_ENV==='staging'&&
+       config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'))&&
      config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'){
     if(order.status==='awaiting_payment'&&order.paymentStatus==='pending'&&
        order.paymentProviderId!=='pi_reserving_rc7'){
@@ -93,7 +96,11 @@ export async function cancelCashPickupStage(
   const candidate=await db.marketOrder.findUnique({where:{id:orderId},
     select:{userId:true,orderType:true,paymentMethod:true,status:true}});
   if(!candidate)return notFound();
-  const stripe=candidate.orderType==='pickup'&&candidate.paymentMethod==='stripe';
+  const stripe=candidate.paymentMethod==='stripe'&&(
+    candidate.orderType==='pickup'||(
+    candidate.orderType==='delivery'&&
+    config.NODE_ENV==='staging'&&
+    config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'));
   if(stripe&&actor.role!=='customer')
     fail(403,'Solo el comprador puede cancelar un Stripe TEST sin cargo');
   if(stripe&&candidate.userId!==actor.id)return notFound();
@@ -122,7 +129,10 @@ export async function cancelCashPickupStage(
     if(!['customer','restaurant','admin'].includes(actor.role))
       fail(403,'No autorizado');
     if(stripe){
-      if(order.orderType!=='pickup'||order.paymentMethod!=='stripe'||
+      if(!(order.orderType==='pickup'||(order.orderType==='delivery'&&
+            config.NODE_ENV==='staging'&&
+            config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'))||
+         order.paymentMethod!=='stripe'||
          order.status!=='awaiting_payment'||order.paymentStatus!=='pending'||
          order.paymentProviderId!==canceledIntent)
         fail(409,'El intento Stripe cambió: inventario retenido para conciliación');
@@ -276,7 +286,11 @@ export async function moveStagePickupOwner(orderId:number,actor:AuthUser,
         config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true')||
        (order.orderType==='delivery'&&config.NODE_ENV==='staging'&&
         config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'));
-    const stripe=order.orderType==='pickup'&&order.paymentMethod==='stripe'&&
+    const stripe=(order.orderType==='pickup'||
+      (order.orderType==='delivery'&&
+       config.NODE_ENV==='staging'&&
+       config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'))&&
+      order.paymentMethod==='stripe'&&
       order.paymentStatus==='paid'&&
       (config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'||liveCardEnabled);
     if(!cash&&!stripe)fail(503,'Pago no conciliado o método no disponible');

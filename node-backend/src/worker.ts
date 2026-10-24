@@ -96,7 +96,10 @@ async function expireAbandonedTestPickups(){
   testExpiryBusy=true;
   try{
     const candidates=await db.marketOrder.findMany({
-      where:{orderType:'pickup',paymentMethod:'stripe',
+      where:{orderType:{in:[
+         'pickup',
+         ...(config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'?['delivery']:[]),
+        ]},paymentMethod:'stripe',
         paymentStatus:'pending',status:'awaiting_payment',
         paymentProviderId:{not:STRIPE_INTENT_RESERVATION},
         createdAt:{lt:new Date(Date.now()-35*60_000)}},
@@ -130,8 +133,10 @@ async function sweepReadyDeliveries():Promise<void>{
   dispatchSweepBusy=true;
   try{
     const ready=await db.marketOrder.findMany({
-      where:{orderType:'delivery',paymentMethod:'cash',
-        paymentStatus:'pending',status:'ready',driverId:null},
+      where:{orderType:'delivery',status:'ready',driverId:null,
+        OR:[{paymentMethod:'cash',paymentStatus:'pending'},
+          ...(config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'?
+            [{paymentMethod:'stripe',paymentStatus:'paid'}]:[])]},
       select:{id:true},orderBy:[{readyAt:'asc'},{id:'asc'}],take:10,
     });
     if(ready.length){

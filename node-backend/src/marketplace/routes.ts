@@ -6,14 +6,15 @@ import { z } from 'zod';
 import { db } from '../db.js';
 import { config } from '../config.js';
 import { createStagePickupOrder, isCashPickupIntent, isStripePickupIntent,
-  isStageCashDeliveryIntent } from './checkout.js';
+  isStageCashDeliveryIntent,isStageStripeDeliveryIntent } from './checkout.js';
 import {deliveryDistance,assertRestaurantDeliveryOrigin,DeliveryGeoError} from './delivery-geography.js';
 import {calculateDefaultCommercial,fmtCents} from '../finance/pricing.js';
 import {calculatePickupQuoteFromCatalog,assertDefaultPickupRates,PickupQuoteError} from './quote.js';
 import { previewCancelStage, cancelCashPickupStage, moveCashPickupOwnerStage } from './lifecycle.js';
 import { completeCashPickupStage } from './pickup.js';
 import { driverAvailability, driverAccept, driverStatus, driverGps,
-  driverDashboard, driverComplete, hasReachableStageDriver } from './driver.js';
+  driverDashboard, driverComplete, hasReachableStageDriver,
+  canDriverReachPickup } from './driver.js';
 import { current } from '../auth/routes.js';
 import type { AuthUser, MarketplaceRestaurant, MarketplaceMenuItem,
   MarketplaceDriverProfile, MarketOrder, MarketOrderItem } from '../generated/prisma/client.js';
@@ -107,6 +108,27 @@ function orderView(order:LoadedOrder, customer:boolean) {
     items:order.items.map(i=>jsonFields(i,itemFields)),
     driver_info:driver,
     ...(customer?{delivery_pin:order.deliveryPin}:{})};
+}
+// Merchant list/KDS must not expose a manually flipped paid flag as proof.
+// Only signed-webhook settlement receipt matching exact order total is trusted.
+async function ownerProcessableOrders(orders:LoadedOrder[]):Promise<LoadedOrder[]>{
+ const card=orders.filter(o=>o.paymentMethod==='stripe'&&o.paymentStatus==='paid');
+ if(!card.length)return orders.filter(o=>o.paymentMethod==='cash');
+ const live=config.NODE_ENV==='production';
+ const receipts=await db.stageFinancialLedgerEntry.findMany({
+   where:{orderId:{in:card.map(o=>o.id)},
+     kind:live?'stripe_live_payment':'stripe_test_payment',
+     account:live?'stripe_live_collected':'stripe_test_collected'},
+   select:{orderId:true,account:true,kind:true,direction:true,
+     amount:true,idempotencyKey:true},
+ });
+ const expectedKey=(id:number)=>'order:'+id+(live?':stripe-live:collected':':stripe-test:collected');
+ const verified=new Set(card.filter(o=>receipts.some(e=>
+   e.orderId===o.id&&e.idempotencyKey===expectedKey(o.id)&&
+   e.direction==='credit'&&e.amount.toFixed(2)===o.total.toFixed(2)
+ )).map(o=>o.id));
+ return orders.filter(o=>o.paymentMethod==='cash'||
+   (o.paymentMethod==='stripe'&&verified.has(o.id)));
 }
 function idParam(req:Request, name:string) {
   const value=req.params[name];
@@ -355,7 +377,7 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
   const schema=z.strictObject({
     restaurant_id:z.number().int().positive().safe(),
     order_type:z.literal('delivery'),
-    payment_method:z.literal('cash'),
+    payment_method:z.enum(['cash','stripe']),
     delivery_lat:z.number().finite().min(-90).max(90),
     delivery_lng:z.number().finite().min(-180).max(180),
     tip:z.union([z.string(),z.number()]).transform(String).default('0'),
@@ -369,6 +391,10 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
   const parsed=schema.safeParse(req.body);
   if(!parsed.success)throw new RouteError(422,'Datos de cotización inválidos');
   const data=parsed.data;
+  if(data.payment_method==='stripe'&&
+     (config.STAGE_DELIVERY_STRIPE_TEST_ENABLED!=='true'||
+      config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true'))
+    throw new RouteError(503,'Tarjeta TEST a domicilio no habilitada');
   const restaurant=await db.marketplaceRestaurant.findUnique({
     where:{id:data.restaurant_id},
   });
@@ -405,7 +431,7 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
     }));
     const subtotalQuote=calculatePickupQuoteFromCatalog({
       restaurantId:restaurant.id,items:data.items,
-      catalog,tip:'0',method:'cash',policy,
+      catalog,tip:'0',method:data.payment_method,policy,
     });
     const amount=subtotalQuote.subtotal.split('.');
     const subtotal=BigInt(amount[0]!)*100n+BigInt(amount[1]!);
@@ -416,12 +442,12 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
       BigInt(((tipParts[1]??'')+'00').slice(0,2));
     if(tip>1_000_000n)throw new PickupQuoteError(422,'Propina fuera de límite');
     const economics=calculateDefaultCommercial({
-      policy,method:'cash',fulfillment:'delivery',
+      policy,method:data.payment_method,fulfillment:'delivery',
       subtotal,discount:0n,tip,distanceMilliKm:geo.distanceMilliKm,
     });
     res.setHeader('Cache-Control','private, no-store');
     res.json({
-      currency:'MXN',order_type:'delivery',payment_method:'cash',
+      currency:'MXN',order_type:'delivery',payment_method:data.payment_method,
       restaurant_id:restaurant.id,
       distance_method:'great_circle_rounded_up_0_001km',
       distance_km:geo.distanceKm,
@@ -582,7 +608,10 @@ stageOrdersRouter.post('/',async(req,res)=>{
     (isStageCashDeliveryIntent(req.body)&&
      config.NODE_ENV==='staging'&&
      config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true');
-  const stageCard=isStripePickupIntent(req.body)&&
+  const stageCard=(isStripePickupIntent(req.body)||
+    (isStageStripeDeliveryIntent(req.body)&&
+     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
+     config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'))&&
     config.NODE_ENV==='staging'&&config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true';
   const liveCard=isStripePickupIntent(req.body)&&
     config.NODE_ENV==='production'&&config.STRIPE_LIVE_ENABLED==='true'&&
@@ -648,10 +677,14 @@ ownerRouter.get('/orders',async(req,res)=>{
     (await db.marketplaceRestaurant.findMany({select:{id:true}})).map(x=>x.id):[];
   if(!ids.length){res.json([]);return;}
   const rows=await db.marketOrder.findMany({
-    where:{restaurantId:{in:ids},...(activeOnly?{status:{notIn:['delivered','cancelled']}}:{})},
+    where:{restaurantId:{in:ids},
+      // Never show a pending Stripe reservation to the merchant as food to
+      // prepare. Signed webhook is the only path to paymentStatus='paid'.
+      OR:[{paymentMethod:'cash'},{paymentStatus:'paid'}],
+      ...(activeOnly?{status:{notIn:['delivered','cancelled']}}:{})},
     include:orderInclude,orderBy:[{createdAt:'desc'},{id:'desc'}],skip:offset,take:limit,
   });
-  res.json(rows.map(x=>orderView(x,false)));
+  res.json((await ownerProcessableOrders(rows)).map(x=>orderView(x,false)));
 });
 
 // Python owner.py KDS read-only. Delivery status changes/dispatch are NOT enabled.
@@ -672,7 +705,7 @@ ownerRouter.get('/kds',async(req,res)=>{
   });
   const result:Record<string,unknown[]>={};
   for(const lane of lanes) result[lane]=[];
-  for(const item of orders) {
+  for(const item of await ownerProcessableOrders(orders)) {
     if(item.scheduledFor!==null&&item.scheduledFor>horizon) continue;
     result[item.status]?.push(orderView(item,false));
   }
@@ -714,8 +747,10 @@ stageDriverRouter.get('/available',async(req,res)=>{
   });
   if(active>0){res.json([]);return;}
   const orders=await db.marketOrder.findMany({
-    where:{status:'ready',driverId:null,orderType:'delivery',paymentMethod:'cash',
-      paymentStatus:'pending'},
+    where:{status:'ready',driverId:null,orderType:'delivery',
+      OR:[{paymentMethod:'cash',paymentStatus:'pending'},
+        ...(config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'?
+          [{paymentMethod:'stripe',paymentStatus:'paid'}]:[])]},
     include:orderInclude,orderBy:[{updatedAt:'asc'},{id:'asc'}],take:limit.data,
   });
   const events=await db.stageOrderEvent.findMany({
@@ -743,11 +778,36 @@ stageDriverRouter.get('/available',async(req,res)=>{
   }).map(e=>e.orderId));
   const publicMerchants=await db.marketplaceRestaurant.findMany({
     where:{id:{in:orders.filter(x=>realCustomerOrders.has(x.id)).map(x=>x.restaurantId)}},
-    select:{id:true,name:true,address:true},
+    select:{id:true,name:true,address:true,lat:true,lng:true},
   });
   const merchantMap=new Map(publicMerchants.map(x=>[x.id,x]));
+  // Drivers see only offers they can reach with FRESH Redis GPS, not a
+  // stale PostgreSQL online toggle. Stripe offers require exact TEST ledger.
+  const card=orders.filter(x=>x.paymentMethod==='stripe'&&
+    realCustomerOrders.has(x.id));
+  const cardReceipts=card.length?await db.stageFinancialLedgerEntry.findMany({
+    where:{orderId:{in:card.map(x=>x.id)},kind:'stripe_test_payment',
+      account:'stripe_test_collected'},
+    select:{orderId:true,amount:true,direction:true,idempotencyKey:true},
+  }):[];
+  const verifiedCard=new Set(card.filter(x=>cardReceipts.some(r=>
+    r.orderId===x.id&&r.direction==='credit'&&
+    r.idempotencyKey==='order:'+x.id+':stripe-test:collected'&&
+    r.amount.toFixed(2)===x.total.toFixed(2))).map(x=>x.id));
+  const eligible:number[]=[];
+  for(const order of orders){
+    if(!fixtureOrders.has(order.id))continue;
+    if(order.paymentMethod==='stripe'&&!verifiedCard.has(order.id))continue;
+    if(realCustomerOrders.has(order.id)){
+      const store=merchantMap.get(order.restaurantId);
+      if(!store||!await canDriverReachPickup(account.id,
+        {lat:store.lat,lng:store.lng}))continue;
+    }
+    eligible.push(order.id);
+  }
+  const allowed=new Set(eligible);
   res.setHeader('Cache-Control','private, no-store');
-  res.json(orders.filter(x=>fixtureOrders.has(x.id)).map(x=>
+  res.json(orders.filter(x=>allowed.has(x.id)).map(x=>
     realCustomerOrders.has(x.id)?{
       // Dispatch offer must not disclose customer's address/phone/GPS to
       // all available drivers before one accepts the order.

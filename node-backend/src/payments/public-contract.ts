@@ -18,6 +18,7 @@ export type PublicPaymentOptions = {
   publishableKey:string|undefined;
   pricingV162Enabled?:boolean;
   stagingDeliveryCashEnabled?:boolean;
+  stagingDeliveryStripeTestEnabled?:boolean;
 };
 
 export function buildPublicPaymentContracts(o:PublicPaymentOptions){
@@ -48,7 +49,8 @@ export function buildPublicPaymentContracts(o:PublicPaymentOptions){
       }),
       delivery_checkout_supported:!live&&o.stagingDeliveryCashEnabled===true,
       delivery_cash_supported:!live&&o.stagingDeliveryCashEnabled===true,
-      delivery_stripe_supported:false,
+      delivery_stripe_supported:!live&&o.stagingDeliveryCashEnabled===true&&
+        o.stagingDeliveryStripeTestEnabled===true&&enabled,
       delivery_quote_supported:!live&&o.stagingDeliveryCashEnabled===true,
       pickup_checkout_supported:true,
       pickup_quote_supported:true, // POST /orders/quote, non-binding server-side price preview
