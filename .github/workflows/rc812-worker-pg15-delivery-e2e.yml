@@ -1,0 +1,128 @@
+name: TALA EATS RC8.12 | Worker readiness, PG15 Redis8 Delivery E2E
+on:
+  pull_request:
+    paths:
+      - 'node-backend/src/**'
+      - 'node-backend/tests/rc812-runtime-readiness.test.mjs'
+      - '.github/workflows/rc812-worker-pg15-delivery-e2e.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cash-delivery:
+    name: RC812 negative-ready + cash order -> merchant -> driver -> PIN
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: tala_node_stage
+          POSTGRES_PASSWORD: stage-ci-pass
+          POSTGRES_DB: tala_node_stage
+        ports: ['15435:5432']
+        options: >-
+          --health-cmd "pg_isready -U tala_node_stage -d tala_node_stage"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+      redis:
+        image: redis:8
+        ports: ['16379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      NODE_ENV: staging
+      HOST: 127.0.0.1
+      PORT: '18190'
+      DATABASE_URL: postgresql://tala_node_stage:stage-ci-pass@127.0.0.1:15435/tala_node_stage
+      REDIS_URL: redis://:stage-ci-redis@127.0.0.1:16379/0
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+      STRIPE_LIVE_ENABLED: 'false'
+      STRIPE_CONNECT_TRANSFERS_ENABLED: 'false'
+      AUTH_V02_ENABLED: 'true'
+      MARKETPLACE_B_ENABLED: 'true'
+      STAGE_PICKUP_CASH_CHECKOUT_ENABLED: 'true'
+      STAGE_DRIVER_DELIVERY_ENABLED: 'true'
+      STAGE_DELIVERY_CASH_CHECKOUT_ENABLED: 'true'
+      COMMERCIAL_PRICING_V162_ENABLED: 'true'
+      AUTH_JWT_SECRET: ci-only-auth-secret-not-shared-with-prod-xxxxxxxxxxxxxxxxxxxxxxxxxx
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Strict route inventory unchanged
+        run: |
+          python3 scripts/python_route_inventory.py --check
+          python3 scripts/node_route_coverage.py --check
+      - name: Frozen dependencies and isolated migrations
+        run: |
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:validate
+          npm run db:migrate:deploy
+      - name: Validate candidate and promotion script syntax
+        run: |
+          bash -n scripts/rc811-kali-stage-candidate.sh
+          bash -n scripts/rc811-kali-stage-promote.sh
+          bash -n scripts/rc811-stage-schema-gate.sh
+      - name: Validate read-only postdeploy shell syntax
+        run: |
+          bash -n scripts/rc89-stage-postdeploy-check.sh
+          node --check scripts/rc89-postdeploy-dispatch-audit.mjs
+      - name: Compile and test without Stripe real credentials
+        env:
+          # Production-isolation tests must not inherit an enabled stage-only checkout.
+          STAGE_DELIVERY_CASH_CHECKOUT_ENABLED: 'false'
+        run: |
+          npm run build
+          npm test
+      - name: Protect disposable Redis with password
+        run: |
+          node --input-type=module -e '
+            import {Redis} from "ioredis";
+            const r=new Redis("redis://127.0.0.1:16379");
+            await r.config("SET","requirepass","stage-ci-redis");
+            r.disconnect();
+            const secured=new Redis(process.env.REDIS_URL);
+            if(await secured.ping()!=="PONG")process.exitCode=1;
+            secured.disconnect();
+          '
+      - name: Negative readiness, then full stage delivery cash E2E
+        run: |
+          set -euo pipefail
+          node dist/server.js > /tmp/tala-rc88-delivery-api.log 2>&1 &
+          api_pid=$!
+          worker_pid=""
+          trap 'kill "$api_pid" ${worker_pid:-} 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 1 http://127.0.0.1:18190/api/v1/health >/dev/null; then break; fi
+            sleep 1
+          done
+          node --input-type=module <<'JS'
+          const response=await fetch('http://127.0.0.1:18190/api/v1/ready');
+          const state=await response.json();
+          if(response.status!==503||state.ready!==false||
+             state.workerRequired!==true||state.workerOnline!==false) {
+             console.error('RC812_WORKER_DOWN_READY_MUST_FAIL');
+             process.exit(1);
+          }
+          console.log('RC812_WORKER_DOWN_READY_503_PASS');
+          JS
+          node dist/worker.js > /tmp/tala-rc88-delivery-worker.log 2>&1 &
+          worker_pid=$!
+          node scripts/ci-rc87-cash-delivery-e2e.mjs || {
+            tail -n 130 /tmp/tala-rc88-delivery-api.log | sed -E 's/(sk|rk|pk)_(test|live)_[A-Za-z0-9]+/[KEY REDACTED]/g'
+            tail -n 90 /tmp/tala-rc88-delivery-worker.log | sed -E 's/(sk|rk|pk)_(test|live)_[A-Za-z0-9]+/[KEY REDACTED]/g'
+            exit 1
+          }
+      - name: Fail closed if any production payment flag entered staging
+        run: |
+          node -e "import('./dist/config.js').then(x=>{if(x.config.STRIPE_LIVE_ENABLED!=='false'||x.config.STRIPE_FINANCIAL_WRITES_ENABLED!=='false'||x.config.STRIPE_CONNECT_TRANSFERS_ENABLED!=='false')process.exit(1)})"
