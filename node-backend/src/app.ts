@@ -58,12 +58,48 @@ if(live){
   // The pilot currently contains a disposable test restaurant. Standby
   // permits read-only production API and seller onboarding, not customer
   // orders (cash or card) that a real merchant cannot fulfill.
-  app.use('/api/v1/orders',(req,res,next)=>{
-    if(req.method==='POST'&&req.path==='/'&&!liveChargeApproved){
+  // LIVE pilot requires an actually approved merchant before ANY customer
+  // order (cash or card). A disposable test restaurant cannot accidentally
+  // collect real orders merely because the platform Stripe switch is ON.
+  app.use('/api/v1/orders',async(req,res,next)=>{
+    if(req.method!=='POST'||req.path!=='/'){next();return;}
+    if(!liveChargeApproved){
       res.status(503).json({error:'PRODUCTION_STANDBY_CHECKOUT_DISABLED'});
       return;
     }
-    next();
+    if(!['cash','stripe'].includes(req.body?.payment_method)){
+      next();return; // the strict order validator returns 422
+    }
+    const rid=req.body?.restaurant_id;
+    if(!Number.isSafeInteger(rid)||rid<=0){
+      res.status(422).json({error:'RESTAURANT_ID_INVALID'});return;
+    }
+    try{
+      const found=await live.pool.query<{
+        stripe_account_id:string;owner_approved_at:Date|null;
+        email:string;is_active:boolean;
+      }>(`SELECT m.stripe_account_id,m.owner_approved_at,u.email,u.is_active
+         FROM tala_live_merchant_accounts m
+         JOIN restaurants r ON r.id=m.restaurant_id
+         JOIN users u ON u.id=r.owner_id
+         WHERE r.id=$1 LIMIT 1`,[rid]);
+      const merchant=found.rows[0];
+      if(!merchant?.owner_approved_at||!merchant.is_active){
+        res.status(409).json({error:'SELLER_CONNECT_NOT_APPROVED'});return;
+      }
+      const remote=await live.stripe.accounts.retrieve(merchant.stripe_account_id);
+      if(remote.id!==merchant.stripe_account_id||
+         remote.id===config.STRIPE_PLATFORM_ACCOUNT_ID||
+         remote.country!=='MX'||
+         remote.email?.trim().toLowerCase()!==merchant.email.trim().toLowerCase()||
+         remote.capabilities?.transfers!=='active'||
+         remote.payouts_enabled!==true||remote.details_submitted!==true){
+        res.status(409).json({error:'SELLER_CONNECT_NOT_READY'});return;
+      }
+      next();
+    }catch{
+      res.status(503).json({error:'SELLER_CONNECT_VERIFICATION_UNAVAILABLE'});
+    }
   });
   // Do not reserve customer stock when Stripe LIVE reconciliation is down.
   // This gate precedes POST /orders while preserving cash order semantics.
