@@ -5,6 +5,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import { db } from '../db.js';
 import { config } from '../config.js';
+import {requireStageCheckoutWorker} from '../stage-worker-gate.js';
 import { createStagePickupOrder, isCashPickupIntent, isStripePickupIntent,
   isStageCashDeliveryIntent,isStageStripeDeliveryIntent } from './checkout.js';
 import {deliveryDistance,assertRestaurantDeliveryOrigin,DeliveryGeoError} from './delivery-geography.js';
@@ -623,6 +624,10 @@ stageOrdersRouter.post('/',async(req,res)=>{
     return;
   }
   const account=await user(req,['customer','admin']);
+  // RC8.12: do not accept new staging orders if the separate outbox,
+  // Stripe TEST reconciliation or dispatch worker has stopped heartbeating.
+  // Reading /ready alone does NOT prevent an app from posting an order.
+  if(config.NODE_ENV==='staging')await requireStageCheckoutWorker();
   const orderId=await createStagePickupOrder(req.body,account);
   const created=await db.marketOrder.findUnique({
     where:{id:orderId},include:orderInclude,
