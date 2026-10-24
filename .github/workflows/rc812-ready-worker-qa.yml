@@ -3,6 +3,9 @@ name: RC8.12 P0 | Readiness Worker Gate
 on:
   pull_request:
     paths:
+      - 'node-backend/scripts/kali-stage-first-pm2-promote.sh'
+      - 'node-backend/scripts/rc812-kali-stage-release.sh'
+      - 'node-backend/tests/rc812-stage-release-safety.test.mjs'
       - 'node-backend/src/app.ts'
       - 'node-backend/src/runtime-readiness.ts'
       - 'node-backend/src/stage-worker-gate.ts'
