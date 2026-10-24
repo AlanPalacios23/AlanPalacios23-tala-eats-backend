@@ -176,7 +176,20 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
     if(!restaurant||restaurant.verificationStatus!=='verified')
       throw new CheckoutError(404,'Restaurante no disponible');
     if(!restaurant.isOpen)throw new CheckoutError(400,'El restaurante está cerrado');
-    if(!restaurant.pickupEnabled)throw new CheckoutError(400,'Este restaurante no permite recoger');
+    if(!stageDelivery&&!restaurant.pickupEnabled)
+      throw new CheckoutError(400,'Este restaurante no permite recoger');
+    let deliveryDistanceMilli=0n;
+    if(stageDelivery){
+      assertRestaurantDeliveryOrigin({lat:restaurant.lat,lng:restaurant.lng},restaurant.address);
+      const geo=deliveryDistance({lat:restaurant.lat,lng:restaurant.lng},
+        {lat:_lat!,lng:_lng!},restaurant.deliveryRadiusKm);
+      deliveryDistanceMilli=geo.distanceMilliKm;
+      // Prevent creating a normal delivery without any verified online driver.
+      const online=await tx.marketplaceDriverProfile.count({
+        where:{isVerified:true,isOnline:true},
+      });
+      if(!online)throw new CheckoutError(409,'No hay repartidores disponibles por ahora');
+    }
     const pricingV162=config.COMMERCIAL_PRICING_V162_ENABLED==='true';
     // Python uses v152 commission in both modes. In v162 the fee rate and
     // cap use separate settings; unrelated legacy settings must not override.
@@ -249,8 +262,9 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
     // Only fixed default policies are supported here; custom overrides 503.
     const economics=calculateDefaultCommercial({
       policy:pricingV162?'v162':'v152',
-      method:data.payment_method,fulfillment:'pickup',
+      method:data.payment_method,fulfillment:stageDelivery?'delivery':'pickup',
       subtotal,discount:0n,tip,
+      ...(stageDelivery?{distanceMilliKm:deliveryDistanceMilli}:{}),
     });
     const commission=economics.commission;
     const serviceFee=economics.serviceFee;
@@ -258,22 +272,26 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
     const platformRevenue=economics.platformRevenue;
     const total=economics.total;
     [subtotal,commission,serviceFee,restaurantPayout,platformRevenue,total,
+      economics.deliveryFee,economics.driverEarning,
       economics.gatewayProcessingEstimate].forEach(fromMinor);
     const order=await tx.marketOrder.create({
       data:{
         userId:account.id,restaurantId:restaurant.id,
         address:data.address,notes:data.notes,clientReference:data.client_reference,
         deliveryPin:String(randomInt(0,10_000)).padStart(4,'0'),
-        orderType:'pickup',paymentMethod:data.payment_method,paymentStatus:'pending',
+        orderType:stageDelivery?'delivery':'pickup',
+        paymentMethod:data.payment_method,paymentStatus:'pending',
         paymentProvider:data.payment_method,status:cardStripe?'awaiting_payment':'received',
-        subtotal:fromMinor(subtotal),deliveryFee:'0.00',
+        subtotal:fromMinor(subtotal),deliveryFee:fromMinor(economics.deliveryFee),
         tip:fromMinor(tip),total:fromMinor(total),
         platformCommission:fromMinor(commission),serviceFee:fromMinor(serviceFee),
         paymentProcessingFee:fromMinor(economics.gatewayProcessingEstimate),
         restaurantPayout:fromMinor(restaurantPayout),
         platformRevenue:fromMinor(platformRevenue),contributionMargin:fmtCents(economics.contributionMargin),
-        driverEarning:'0.00',estimatedMinutes:restaurant.etaMin,
-        distanceKm:0,
+        driverEarning:fromMinor(economics.driverEarning),
+        estimatedMinutes:restaurant.etaMin+(stageDelivery?15:0),
+        distanceKm:Number(deliveryDistanceMilli)/1000,
+        deliveryLat:stageDelivery?_lat:null,deliveryLng:stageDelivery?_lng:null,
         inventoryReservedJson:JSON.stringify(Object.fromEntries(
           [...ingredientUsage.entries()].map(([id,needed])=>[String(id),fromMilli(needed)]))),
       },
@@ -304,7 +322,9 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
     }))});
     await tx.stageOrderEvent.create({data:{
       orderId:order.id,status:'received',actorUserId:account.id,
-      metadataJson:JSON.stringify({source:'checkout',checkout_intent_hmac:fingerprint}),
+      metadataJson:JSON.stringify({source:'checkout',checkout_intent_hmac:fingerprint,
+        ...(stageDelivery?{stage_delivery_customer_v1:true}:{}),
+      }),
     }});
     // Stripe TEST is an unpaid reservation. No seller balance, GMV or
     // order.created outbox is payable/visible until a verified PSP webhook.
@@ -319,6 +339,7 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
     const entries=[
       ['gmv',total,'GMV del pedido'],
       ['restaurant_payable',restaurantPayout,'Saldo por pagar al restaurante'],
+      ['driver_payable',economics.driverPayable,'Ganancia estimada del repartidor no liquidada'],
       ['platform_revenue',platformRevenue,'Ingreso bruto Tala Eats'],
       ['payment_processing',-economics.gatewayProcessingEstimate,'Costo pasarela estimado'],
       ['contribution_margin',economics.contributionMargin,'Margen de contribución estimado'],
