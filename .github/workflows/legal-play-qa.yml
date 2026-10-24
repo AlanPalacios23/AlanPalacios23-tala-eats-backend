@@ -1,0 +1,44 @@
+name: Tala Eats Legal | Play Console QA
+
+on:
+  pull_request:
+    paths:
+      - 'legal/**'
+      - '.github/workflows/legal-play-qa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  legal-static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Python syntax, local HTTP legal origin checks
+        run: |
+          python3 -m py_compile legal/server.py legal/install-local-origin.py legal/prepare-cloudflared-routes.py legal/kali-stage.py legal/kali-preflight.py
+          python3 legal/test-server.py
+      - name: HTML validation and account deletion checks
+        run: |
+          python3 legal/validar_legal.py
+          python3 - <<'PY'
+          from pathlib import Path
+          privacy = Path('legal/site/privacidad/index.html').read_text(encoding='utf-8')
+          deletion = Path('legal/site/eliminar-cuenta/index.html').read_text(encoding='utf-8')
+          assert 'https://talaeats.alan-palacios-dev.com/privacidad' in privacy
+          assert 'https://talaeats.alan-palacios-dev.com/eliminar-cuenta' in deletion
+          assert 'mailto:alanpalacios284@gmail.com' in privacy
+          assert 'mailto:alanpalacios284@gmail.com' in deletion
+          assert 'Solicitar por correo' in deletion
+          assert 'cinco años' in deletion and 'diez años' in deletion
+          assert 'talaeats' in deletion.lower()
+          assert 'colonia San Javier' in deletion and 'colonia San Javier' in privacy
+          print('PLAY_LEGAL_CONTENT_QA_PASS')
+          PY

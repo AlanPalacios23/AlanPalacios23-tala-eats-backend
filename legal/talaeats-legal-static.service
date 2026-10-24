@@ -1,0 +1,21 @@
+[Unit]
+Description=Tala Eats legal HTML pages (loopback only, no API or payments)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+ExecStart=/usr/bin/python3 -I /usr/local/lib/talaeats-legal/server.py
+WorkingDirectory=/
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictSUIDSGID=yes
+UMask=027
+
+[Install]
+WantedBy=multi-user.target
