@@ -21,10 +21,16 @@ export type ValidatedLiveSettings = {
 function assert(condition:unknown,reason:string):asserts condition {
   if(!condition)throw new LiveGateError(reason);
 }
-export function validateLiveSettings(raw:LiveSettings):ValidatedLiveSettings {
+function validateLiveSettingsMode(raw:LiveSettings,standby:boolean):ValidatedLiveSettings {
   assert(raw.nodeEnv==='production','NODE_ENV_NOT_PRODUCTION');
-  assert(raw.explicitlyEnabled==='true','LIVE_EXPLICIT_OPT_IN_REQUIRED');
-  assert(raw.readinessApproved==='true','RELEASE_SIGNOFF_REQUIRED');
+  if(standby){
+    assert(raw.explicitlyEnabled==='false'&&raw.readinessApproved==='false'&&
+      raw.refundsEnabled==='false'&&raw.manualSettlementApproved==='false'&&
+      raw.transfersEnabled==='false','STANDBY_REQUIRES_ALL_MONEY_FLAGS_OFF');
+  }else{
+    assert(raw.explicitlyEnabled==='true','LIVE_EXPLICIT_OPT_IN_REQUIRED');
+    assert(raw.readinessApproved==='true','RELEASE_SIGNOFF_REQUIRED');
+  }
   const prefix=['sk_','rk_'].find(p=>raw.key.startsWith(p+'live_'));
   const suffix=prefix?raw.key.slice((prefix+'live_').length):'';
   assert(Boolean(prefix)&&suffix.length>=16&&/^[A-Za-z0-9]+$/.test(suffix),
@@ -65,6 +71,14 @@ export function validateLiveSettings(raw:LiveSettings):ValidatedLiveSettings {
     databaseUrl:raw.databaseUrl,redisUrl:raw.redisUrl,
     refundsEnabled:raw.refundsEnabled==='true',transfersEnabled:false};
 }
+/** Prepare the existing PM2 production API without exposing LIVE checkout. */
+export function validateLiveStandbySettings(raw:LiveSettings):ValidatedLiveSettings {
+  return validateLiveSettingsMode(raw,true);
+}
+export function validateLiveSettings(raw:LiveSettings):ValidatedLiveSettings {
+  return validateLiveSettingsMode(raw,false);
+}
+
 export function livePilotAmount(amount:number,maxAmountMinor:number):number {
   assert(Number.isSafeInteger(amount)&&amount>=100&&amount<=maxAmountMinor,
     'ORDER_AMOUNT_OUTSIDE_PILOT_LIMIT');

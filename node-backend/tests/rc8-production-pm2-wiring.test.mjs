@@ -53,6 +53,19 @@ test('production fails closed for missing approval, Stripe TEST, staging PG Redi
    assert.doesNotMatch(result.stdout,/CONFIG_OK/,key);
  }
 });
+test('production standby starts only with ALL financial flags OFF',()=>{
+ const standby={STRIPE_LIVE_ENABLED:'false',STRIPE_LIVE_RELEASE_APPROVED:'false',
+  STRIPE_FINANCIAL_WRITES_ENABLED:'false',STRIPE_REFUNDS_ENABLED:'false',
+  STRIPE_MANUAL_SETTLEMENT_APPROVED:'false'};
+ const run=check(standby);
+ assert.equal(run.status,0,run.stderr);
+ assert.match(run.stdout,/CONFIG_OK/);
+ // A single true flag in standby must never activate a partial release.
+ for(const name of Object.keys(standby)){
+  const partial=check({...standby,[name]:'true'});
+  assert.notEqual(partial.status,0,name);
+ }
+});
 test('existing Flutter payment routes now have signed LIVE API with same user/worker names',()=>{
  const app=source('src/app.ts');
  const order=source('src/marketplace/checkout.ts');
@@ -61,7 +74,7 @@ test('existing Flutter payment routes now have signed LIVE API with same user/wo
  const pm2=source('ecosystem.production.config.cjs');
  assert.match(app,/config.NODE_ENV==='production'\?buildLiveRuntimeDependencies\(\):null/);
  assert.match(app,/app\.use\('\/api\/v1\/payments\/stripe',buildIsolatedWebhookRouter/);
- assert.match(app,/enabled:true,authSecret:config.AUTH_JWT_SECRET!/);
+ assert.match(app,/enabled:liveChargeApproved,authSecret:config.AUTH_JWT_SECRET!/);
  assert.match(app,/LIVE_FINANCIAL_RECONCILIATION_HOLD/);
  assert.match(order,/status:cardStripe\?'awaiting_payment':'received'/);
  assert.match(order,/if\(!cardStripe\)\{/);

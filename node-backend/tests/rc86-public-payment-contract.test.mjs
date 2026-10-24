@@ -52,6 +52,18 @@ test('production Flutter API exposes LIVE card checkout with only public key',()
   assert.doesNotMatch(JSON.stringify(r),/sk_live_|rk_live_|whsec_/);
 });
 
+test('production standby does not advertise cash or Stripe for disposable test merchants',()=>{
+ const r=buildPublicPaymentContracts({...opts,environment:'production',
+   cashEnabled:true,stripeTestEnabled:false,releaseApproved:false,
+   stripeLiveEnabled:false,financialWritesEnabled:false,
+   refundsEnabled:false,manualSettlementApproved:false,
+   publishableKey:'pk_live_public1234567890123456789012'});
+ assert.equal(cash(r).enabled,false);
+ assert.equal(stripe(r).enabled,false);
+ assert.equal(r.methods.cash_available,false);
+ assert.equal(r.methods.methods.every(m=>m.enabled===false),true);
+ assert.equal(r.stripeConfig.publishable_key,null);
+});
 test('production stays fail-closed without manual release and correct LIVE key',()=>{
   const base={...opts,environment:'production',
     stripeLiveEnabled:true,financialWritesEnabled:true,

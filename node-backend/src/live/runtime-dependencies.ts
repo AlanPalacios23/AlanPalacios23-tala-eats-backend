@@ -6,13 +6,15 @@
 import Stripe from 'stripe';
 import {Redis} from 'ioredis';
 import {config} from '../config.js';
-import {validateLiveSettings,type ValidatedLiveSettings} from './guard.js';
+import {validateLiveSettings,validateLiveStandbySettings,type ValidatedLiveSettings} from './guard.js';
 import {productionPool} from './postgres-store.js';
 
 export function liveSettingsFromProduction():ValidatedLiveSettings{
  if(config.NODE_ENV!=='production')
   throw Error('LIVE_MODE_REQUIRES_PRODUCTION');
- return validateLiveSettings({
+ const validate=config.STRIPE_LIVE_ENABLED==='false'
+  ?validateLiveStandbySettings:validateLiveSettings;
+ return validate({
   nodeEnv:config.NODE_ENV,explicitlyEnabled:config.STRIPE_LIVE_ENABLED,
   readinessApproved:config.STRIPE_LIVE_RELEASE_APPROVED,
   key:config.STRIPE_SECRET_KEY??'',
