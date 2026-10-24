@@ -50,6 +50,11 @@ export function buildLiveMerchantFinanceRouter(pool:Pool,stripe:Provider){
       remote.email.trim().toLowerCase()!==owners.rows[0]!.email.trim().toLowerCase()){
     res.status(409).json({error:'SELLER_STRIPE_EMAIL_MISMATCH'});return;
    }
+   const driverAccount=await pool.query(
+    'SELECT user_id FROM tala_live_driver_accounts WHERE stripe_account_id=$1',[account]);
+   if(driverAccount.rowCount){
+    res.status(409).json({error:'CONNECT_ACCOUNT_ALREADY_BELONGS_TO_DRIVER'});return;
+   }
    const created=await pool.query(
     'INSERT INTO tala_live_merchant_accounts(restaurant_id,stripe_account_id,registered_by_user_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING restaurant_id',
     [rid,account,actor]);
