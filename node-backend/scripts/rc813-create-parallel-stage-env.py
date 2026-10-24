@@ -30,6 +30,67 @@ def parse(data):
         rows[key]=val.strip().strip('"').strip("'")
     return rows
 
+PAYMENT_FLAGS_OFF = (
+    "STRIPE_FINANCIAL_WRITES_ENABLED",
+    "STRIPE_LIVE_ENABLED",
+    "STRIPE_CONNECT_TRANSFERS_ENABLED",
+    "STRIPE_REFUNDS_ENABLED",
+    "STRIPE_MANUAL_SETTLEMENT_APPROVED",
+    "STRIPE_LIVE_RELEASE_APPROVED",
+    "STAGE_STRIPE_TEST_CHECKOUT_ENABLED",
+    "STAGE_DELIVERY_STRIPE_TEST_ENABLED",
+)
+
+def check_source(values: dict[str, str]) -> list[str]:
+    """Pure fail-closed checks. Return only key names/categories, not values."""
+    issues = []
+    for name, wanted in (
+        ("NODE_ENV", "staging"),
+        ("HOST", "127.0.0.1"),
+        ("PORT", "18190"),
+        ("STAGE_PARALLEL_ENABLED", "false"),
+    ):
+        if values.get(name, "false" if name=="STAGE_PARALLEL_ENABLED" else "") != wanted:
+            issues.append(name)
+    for name in PAYMENT_FLAGS_OFF:
+        # Omitted flags are explicitly false by the Node schema, and will
+        # be written as false in the NEW private env. Explicit true/unknown
+        # is never accepted.
+        if values.get(name,"false") != "false":
+            issues.append(name)
+    try:
+        pg = urlsplit(values.get("DATABASE_URL", ""))
+        if (pg.scheme not in ("postgresql", "postgres")
+            or pg.hostname != "127.0.0.1"
+            or pg.port != 15435
+            or pg.username != "tala_node_stage"
+            or pg.path != "/tala_node_stage"
+            or not pg.password):
+            issues.append("STAGE_POSTGRES_IDENTITY")
+    except (ValueError, TypeError):
+        issues.append("STAGE_POSTGRES_IDENTITY")
+    try:
+        rd = urlsplit(values.get("REDIS_URL",""))
+        if (rd.scheme not in ("redis", "rediss")
+            or rd.hostname != "127.0.0.1"
+            or rd.port != 16379
+            or rd.path != "/0"
+            or not rd.password):
+            issues.append("STAGE_REDIS_IDENTITY")
+    except (ValueError, TypeError):
+        issues.append("STAGE_REDIS_IDENTITY")
+    secret=values.get("STRIPE_SECRET_KEY","")
+    publishable=values.get("STRIPE_PUBLISHABLE_KEY","")
+    if secret and not secret.startswith(("sk_test_", "rk_test_")):
+        issues.append("STRIPE_TEST_SECRET_ONLY")
+    if publishable and not publishable.startswith("pk_test_"):
+        issues.append("STRIPE_TEST_PUBLISHABLE_ONLY")
+    if any(k.upper().startswith("MERCADOPAGO_") or k.upper() in
+        ("MP_ACCESS_TOKEN","MP_PUBLIC_KEY","MP_WEBHOOK_SECRET")
+        for k in values):
+        issues.append("MERCADOPAGO_NOT_ALLOWED")
+    return issues
+
 def main():
     if len(sys.argv)!=2 or sys.argv[1] not in ("--plan","--create"):
         die("USAGE_PLAN_OR_CREATE")
@@ -42,31 +103,14 @@ def main():
         die("TARGET_EXISTS_NEVER_OVERWRITE")
     data=SOURCE.read_text(encoding="utf-8")
     values=parse(data)
-    pg=urlsplit(values.get("DATABASE_URL",""))
-    rd=urlsplit(values.get("REDIS_URL",""))
-    if not (values.get("NODE_ENV")=="staging"
-        and values.get("HOST")=="127.0.0.1"
-        and values.get("PORT")=="18190"
-        and values.get("STRIPE_FINANCIAL_WRITES_ENABLED")=="false"
-        and values.get("STRIPE_LIVE_ENABLED")=="false"
-        and values.get("STRIPE_CONNECT_TRANSFERS_ENABLED")=="false"
-        and pg.hostname=="127.0.0.1" and pg.port==15435
-        and pg.username=="tala_node_stage" and pg.path=="/tala_node_stage"
-        and rd.hostname=="127.0.0.1" and rd.port==16379
-        and rd.path=="/0" and bool(rd.password)
-        and values.get("STAGE_PARALLEL_ENABLED","false")=="false"):
+    # Only report safe field NAMES for failed checks, never the source values.
+    # Earlier RC8.11 stage allowed omitted financial flags because Node's
+    # config schema defaults to false. Missing is safe only when the child
+    # env explicitly writes all these flags as false.
+    failures = check_source(values)
+    if failures:
+        print("RC813_ENV_FAILED_CHECKS="+",".join(failures))
         die("STAGING_SOURCE_IDENTITY_MISMATCH")
-    for flag in ["STRIPE_REFUNDS_ENABLED","STRIPE_MANUAL_SETTLEMENT_APPROVED",
-                 "STRIPE_LIVE_RELEASE_APPROVED","STAGE_STRIPE_TEST_CHECKOUT_ENABLED",
-                 "STAGE_DELIVERY_STRIPE_TEST_ENABLED"]:
-        if values.get(flag,"false")!="false":
-            die("REQUIRE_PAYMENT_FLAGS_OFF")
-    if not (values.get("STRIPE_SECRET_KEY","").startswith(("sk_test_","rk_test_"))
-            or not values.get("STRIPE_SECRET_KEY","")):
-        die("TEST_KEYS_ONLY")
-    if not (values.get("STRIPE_PUBLISHABLE_KEY","").startswith("pk_test_")
-            or not values.get("STRIPE_PUBLISHABLE_KEY","")):
-        die("TEST_PUBLISHABLE_ONLY")
     print("RC813_STAGE_ENV_SOURCE_VALID=PASS")
     print("RC813_STAGE_ENV_TARGET=18192_PG15_REDIS_DB1")
     if sys.argv[1]=="--plan":
@@ -80,9 +124,11 @@ def main():
     values["PORT"]="18192"
     values["STAGE_PARALLEL_ENABLED"]="true"
     # Copy untouched source lines, except validated overrides, to preserve quoting.
-    overrides=("PORT","REDIS_URL","STAGE_PARALLEL_ENABLED")
+    overrides=("PORT","REDIS_URL","STAGE_PARALLEL_ENABLED",*PAYMENT_FLAGS_OFF)
     output=[line for line in data.splitlines() if line.split("=",1)[0].strip() not in overrides]
-    output.extend([f"PORT=18192",f"REDIS_URL={values['REDIS_URL']}", "STAGE_PARALLEL_ENABLED=true"])
+    output.extend(["PORT=18192",f"REDIS_URL={values['REDIS_URL']}",
+        "STAGE_PARALLEL_ENABLED=true",
+        *(f"{key}=false" for key in PAYMENT_FLAGS_OFF)])
     fd=os.open(TARGET,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
     with os.fdopen(fd,"w",encoding="utf-8") as file:
         file.write("\n".join(output)+"\n")
