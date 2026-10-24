@@ -172,6 +172,16 @@ for attempt in $(seq 1 35); do
  if [[ "$attempt" -eq 35 ]]; then echo "STANDBY_HEALTH_FAILED"; false; fi
  sleep 2
 done
+# A missing Stripe-Signature must NEVER be accepted as a paid event.
+UNSIGNED_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  --max-time 8 --header 'Content-Type: application/json' \
+  --data '{}' http://127.0.0.1:18190/api/v1/payments/stripe/webhook)"
+if [[ "$UNSIGNED_STATUS" != 400 && "$UNSIGNED_STATUS" != 401 &&
+      "$UNSIGNED_STATUS" != 403 ]]; then
+  echo "UNSIGNED_STRIPE_WEBHOOK_REJECTION=HOLD"
+  false
+fi
+echo "UNSIGNED_STRIPE_WEBHOOK_REJECTION=PASS"
 # Verify the PUBLIC Cloudflare URL routes to the same safe production API.
 node --input-type=module - <<'JS'
 const base='https://talaeats.alan-palacios-dev.com/api/v1';
