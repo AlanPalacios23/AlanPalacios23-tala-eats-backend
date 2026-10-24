@@ -6,13 +6,12 @@ Preparadas para la aplicación Tala Eats Usuarios. Este PR NO modifica producci�
 - https://talaeats.alan-palacios-dev.com/privacidad
 - https://talaeats.alan-palacios-dev.com/eliminar-cuenta
 
-## Requisitos legales BLOQUEANTES
-Se requiere reemplazar las siguientes cadenas en AMBOS archivos HTML:
-- __RESPONSABLE_LEGAL__: nombre personal legal o razón social real del responsable del tratamiento.
-- __DOMICILIO_LEGAL__: domicilio verdadero de contacto del responsable, publicable para aviso de privacidad.
-- __CORREO_PRIVACIDAD__: buzón funcional y monitoreado para solicitudes ARCO y eliminación.
+## Estado actual de datos legales (24/10/2026)
+- Nombre indicado por el usuario como responsable: **TALA EATS**. Validar antes de publicar si este nombre corresponde a una entidad legalmente identificable o si el responsable es una persona física con nombre completo.
+- Correo de privacidad indicado por el usuario: **alanpalacios284@gmail.com** (ya agregado a ambas páginas). Comprobar que efectivamente recibe y atiende solicitudes ARCO y eliminación.
+- **BLOQUEO PENDIENTE: __DOMICILIO_LEGAL__**. Sustituirlo por un domicilio verdadero de contacto publicable apropiado para el responsable; no inventar ni colocar una dirección particular sin consentimiento expreso.
 
-El frontend Flutter tiene un email de soporte predeterminado, pero no está acreditado que ese buzón funcione. No usar datos de ejemplo. Se recomienda revisión legal mexicana de la LFPDPPP antes de publicar.
+No publicar páginas mientras falte este domicilio o sin verificar la identidad legal y el canal de contacto. Se recomienda revisión legal mexicana de la LFPDPPP antes de publicar.
 
 ## Preparación y montaje en el Kali actual
 1. Confirmar si la URL pública pasa por Nginx del host, Caddy o un contenedor Cloudflared. Revisar configuración real, respaldo y existencia de rutas /privacidad, /eliminar-cuenta.
