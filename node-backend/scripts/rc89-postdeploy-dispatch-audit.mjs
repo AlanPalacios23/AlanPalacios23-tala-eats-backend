@@ -179,8 +179,10 @@ export async function main(args=process.argv.slice(2)){
         throw Error('READY_SWEEP_NOT_PROVEN');
       // Bound scanning work and avoid printing IDs, addresses or geodata.
       const orders=await db.marketOrder.findMany({
-        where:{orderType:'delivery',paymentMethod:'cash',
-          paymentStatus:'pending',status:'ready',driverId:null},
+        where:{orderType:'delivery',status:'ready',driverId:null,
+          OR:[{paymentMethod:'cash',paymentStatus:'pending'},
+            ...(config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'?
+               [{paymentMethod:'stripe',paymentStatus:'paid'}]:[])]},
         select:{id:true,readyAt:true},
         orderBy:[{readyAt:'asc'},{id:'asc'}],take:200,
       });
