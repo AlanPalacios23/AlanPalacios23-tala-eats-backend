@@ -86,6 +86,24 @@ export function buildLiveMerchantFinanceRouter(pool:Pool,stripe:Provider){
     transfer_automation_enabled:false});
   }catch{res.status(503).json({error:'CONNECT_STATUS_UNAVAILABLE'});}
  });
+ r.get('/owner/finance/connect/:rid/status',async(req,res)=>{
+  try{
+   const s=await current(req),rid=id(req.params.rid);
+   const rows=await pool.query<{owner_id:number;stripe_account_id:string;owner_approved_at:Date|null}>(
+    'SELECT r.owner_id,m.stripe_account_id,m.owner_approved_at FROM restaurants r JOIN tala_live_merchant_accounts m ON m.restaurant_id=r.id WHERE r.id=$1',
+    [rid]);
+   const x=rows.rows[0];
+   if(!x||x.owner_id!==s.userId){
+    res.status(403).json({error:'OWNER_CONNECT_NOT_REGISTERED'});return;
+   }
+   const stripeAccount=await stripe.accounts.retrieve(x.stripe_account_id);
+   res.json({owner_approved:Boolean(x.owner_approved_at),
+    transfers_active:stripeAccount.capabilities?.transfers==='active',
+    payouts_enabled:stripeAccount.payouts_enabled===true,
+    details_submitted:stripeAccount.details_submitted===true,
+    bank_payout_executed:false});
+  }catch{res.status(503).json({error:'OWNER_CONNECT_STATUS_UNAVAILABLE'});}
+ });
  r.post('/owner/finance/connect/:rid/onboarding-link',async(req,res)=>{
   try{
    const s=await current(req),rid=id(req.params.rid);
