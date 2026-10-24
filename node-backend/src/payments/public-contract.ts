@@ -47,6 +47,7 @@ export function buildPublicPaymentContracts(o:PublicPaymentOptions){
       }),
       delivery_checkout_supported:false,
       pickup_checkout_supported:true,
+      pickup_quote_supported:true, // POST /orders/quote, non-binding server-side price preview
       digital_provider:'stripe',
       cash_available_in_staging:!live&&cashEnabled,
       cash_available:cashEnabled,
