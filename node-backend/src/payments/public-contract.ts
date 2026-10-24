@@ -16,6 +16,7 @@ export type PublicPaymentOptions = {
   refundsEnabled:boolean;
   manualSettlementApproved:boolean;
   publishableKey:string|undefined;
+  pricingV162Enabled?:boolean;
 };
 
 export function buildPublicPaymentContracts(o:PublicPaymentOptions){
@@ -31,6 +32,21 @@ export function buildPublicPaymentContracts(o:PublicPaymentOptions){
   const key=enabled?o.publishableKey??null:null;
   return {
     methods:{
+      // Informacion comercial informativa. SOLO pickup es cobrable en Node RC8:
+      // no se expone una cotizacion de delivery sin coordenadas y un motor
+      // servidor de distancias. La creación del pedido recalcula y valida.
+      commercial_pricing_version:o.pricingV162Enabled?'1.6.2':'1.5.2',
+      service_fee_rate:'0.07',
+      ...(o.pricingV162Enabled?{
+        service_fee_cap:'25.00',
+        delivery_base_fee:'35.00',
+        delivery_included_km:'2',
+        delivery_additional_per_km:'5.00',
+      }:{
+        delivery_base_fee:'39.00',
+      }),
+      delivery_checkout_supported:false,
+      pickup_checkout_supported:true,
       digital_provider:'stripe',
       cash_available_in_staging:!live&&cashEnabled,
       cash_available:cashEnabled,
