@@ -25,18 +25,20 @@ export function buildPublicPaymentContracts(o:PublicPaymentOptions){
       o.refundsEnabled&&o.manualSettlementApproved&&
       Boolean(o.publishableKey?.startsWith('pk_live_'))
     : o.stripeTestEnabled&&Boolean(o.publishableKey?.startsWith('pk_test_'));
+  // No checkout whatsoever in production standby with only test merchants.
+  const cashEnabled=o.cashEnabled&&(!live||enabled);
   const mode=live?'live-pickup-only':'test-pickup-only';
   const key=enabled?o.publishableKey??null:null;
   return {
     methods:{
       digital_provider:'stripe',
-      cash_available_in_staging:!live&&o.cashEnabled,
-      cash_available:o.cashEnabled,
+      cash_available_in_staging:!live&&cashEnabled,
+      cash_available:cashEnabled,
       methods:[
         {
-          id:'cash',label:'Efectivo',enabled:o.cashEnabled,
+          id:'cash',label:'Efectivo',enabled:cashEnabled,
           mode:live?'live-cash-pickup':'stage-cash-pickup',
-          ...(o.cashEnabled?{}:{reason:'cash-pickup-disabled'}),
+          ...(cashEnabled?{}:{reason:'cash-pickup-disabled'}),
         },
         {
           id:'stripe',label:live?'Tarjeta (Stripe)':'Tarjeta (Stripe TEST)',
