@@ -14,7 +14,7 @@ Antes, `/api/v1/ready` calculaba `ready = !live || (workerOnline && financialPas
 - Heartbeat de `src/worker.ts`: `tala:node:stage:worker:heartbeat`, renovado cada 15 s, vence en 45 s. Puede tardar hasta 45 s en detectar la caída; no es una supervisión inmediata.
 - En ausencia de DB, Redis o excepción, el endpoint sigue devolviendo HTTP 503, `ready=false` sin filtrar secretos.
 
-La respuesta añade el campo informativo `workerRequired`, sin modificar rutas de checkout, pagos, estados, Flutter o Stripe.
+La respuesta añade el campo `workerRequired`. Además se instaló un control en la admisión `POST /api/v1/orders` y en la creación de PaymentIntent **Stripe TEST**, que exige un heartbeat `online` en Redis antes de iniciar nuevas operaciones de staging. Si el worker no está disponible o Redis falla, la operación se rechaza HTTP 503 antes de crear un pedido o solicitar un PaymentIntent. Nunca modifica cobros LIVE, pagos, asignación o contabilidad existente.
 
 ## Verificación stage tras promover un release, no en producción LIVE
 
@@ -24,4 +24,4 @@ La respuesta añade el campo informativo `workerRequired`, sin modificar rutas d
 4. Verificar que `GET /api/v1/health` siga respondiendo HTTP 200 sin declarar cobros LIVE autorizados.
 5. Volver a ejecutar los gates RC8.11: backend -> restaurante -> conductor -> PIN -> contabilidad, y auditor RC8.9 READY backlog.
 
-**IMPORTANTE:** La respuesta /ready protege señales de despliegue; no impide por sí sola que un cliente envíe POST /orders si ignora el healthcheck. El endurecimiento de entrada de checkout/Stripe y la validación de FCM todavía requieren trabajos dedicados. No confundir CI en GitHub con despliegue real ni permitir cobros LIVE sin la reconciliación y los permisos correctos.
+**IMPORTANTE:** la protección en `/ready`, `/orders` y Stripe TEST depende del heartbeat con TTL de 45 s, no de una garantía de disponibilidad de extremo a extremo. Si el worker falla después del control puede quedar una solicitud en trámite y debe recuperarse mediante el journal/idempotencia y conciliación. FCM, payouts y habilitación comercial LIVE siguen fuera de alcance. No confundir CI en GitHub con despliegue real.
