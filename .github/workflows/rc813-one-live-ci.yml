@@ -1,0 +1,52 @@
+name: RC8.13 | ONE LIVE Consolidation Gates
+on:
+  push:
+    branches: [release/rc813-unified-live-20261024]
+  pull_request:
+    paths:
+      - 'node-backend/src/**'
+      - 'node-backend/scripts/rc813-unified-live-*'
+      - 'node-backend/scripts/rc813-retire-parallel-stage.sh'
+      - 'node-backend/rc813-live/**'
+      - 'node-backend/tests/rc813-unified-live-release-safety.test.mjs'
+      - '.github/workflows/rc813-one-live-ci.yml'
+permissions:
+  contents: read
+jobs:
+  single-live:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      NODE_ENV: staging
+      HOST: 127.0.0.1
+      PORT: '18190'
+      DATABASE_URL: postgresql://tala_node_stage:ci-only@127.0.0.1:15435/tala_node_stage
+      REDIS_URL: redis://:ci-only@127.0.0.1:16379/0
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+      STRIPE_LIVE_ENABLED: 'false'
+      STRIPE_CONNECT_TRANSFERS_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.11.1'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Build candidate
+        run: |
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run build
+      - name: Full Node tests including existing LIVE configuration regression
+        run: npm test
+      - name: Live plan, guarded cutover and stage-retire script syntax
+        run: |
+          bash -n scripts/rc813-unified-live-preflight.sh
+          bash -n scripts/rc813-unified-live-cutover.sh
+          bash -n scripts/rc813-retire-parallel-stage.sh
+          node --check rc813-live/ecosystem.config.cjs
