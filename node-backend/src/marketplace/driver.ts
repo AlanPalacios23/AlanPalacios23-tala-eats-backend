@@ -91,6 +91,14 @@ export async function hasReachableStageDriver(
 const profileByUser=async(userId:number)=>db.marketplaceDriverProfile.upsert({
   where:{userId},create:{userId,isVerified:false},update:{},
 });
+export async function canDriverReachPickup(
+ driverId:number,origin:{lat:number;lng:number}):Promise<boolean>{
+ if(config.NODE_ENV!=='staging'||!Number.isSafeInteger(driverId)||driverId<1||
+    !Number.isFinite(origin.lat)||!Number.isFinite(origin.lng))return false;
+ const gps=await redisLocation(driverId);
+ return Boolean(gps&&haversine(gps!.lat,gps!.lng,origin.lat,origin.lng)<=
+    config.STAGE_DRIVER_MAX_PICKUP_KM);
+}
 async function redisLocation(driverId:number):Promise<{lat:number;lng:number}|null>{
   const redis=redisClient();
   try{
