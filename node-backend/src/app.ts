@@ -217,7 +217,7 @@ if (config.MARKETPLACE_B_ENABLED === 'true') {
 app.get('/api/v1/health', (_req, res) => {
   res.setHeader('Cache-Control','no-store');
   res.json({status:'ok',
-    version:live?'rc8.7-live-pickup-finance-review':'0.1.0-node-stripe-only-stage',
+    version:live?'rc8.13-unified-live':'rc8.13-staging',
     production:Boolean(live),digital_payment_provider:'stripe',
     online_payment_writes:liveChargeApproved});
 });
