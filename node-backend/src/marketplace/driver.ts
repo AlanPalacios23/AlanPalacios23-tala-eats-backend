@@ -41,8 +41,14 @@ async function fixture(tx:{
   const receipt=await tx.stageOrderEvent.findFirst({
     where:{orderId,status:'received'},orderBy:{id:'asc'},
   });
-  try{return JSON.parse(receipt?.metadataJson??'{}').stage_driver_fixture===true;}
-  catch{return false;}
+  try{
+    const proof=JSON.parse(receipt?.metadataJson??'{}');
+    return proof.stage_driver_fixture===true||
+      (config.NODE_ENV==='staging'&&
+       config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
+       /^[a-f0-9]{64}$/.test(proof.checkout_intent_hmac??'')&&
+       proof.stage_delivery_customer_v1===true);
+  }catch{return false;}
 }
 const profileByUser=async(userId:number)=>db.marketplaceDriverProfile.upsert({
   where:{userId},create:{userId,isVerified:false},update:{},
@@ -318,7 +324,9 @@ export async function driverComplete(actor:AuthUser,orderId:number,
     if(o.driverId!==actor.id)fail(403,'Pedido no asignado');
     if(o.status==='delivered'){
       const existing=await tx.stageDeliveryProof.findUnique({where:{orderId}});
-      if(!existing?.pinVerified)fail(409,'Pedido sin prueba de entrega');
+      if(!existing?.pinVerified||!/^\d{4}$/.test(proof.pin)||
+         !timingSafeEqual(Buffer.from(o.deliveryPin),Buffer.from(proof.pin)))
+        fail(409,'Pedido sin prueba de entrega válida');
       return orderId;
     }
     if(o.status!=='on_the_way')fail(409,'Primero marca el pedido como en camino');
@@ -354,6 +362,15 @@ export async function driverComplete(actor:AuthUser,orderId:number,
     const tier=points>=3000?'BLACK':points>=1500?'GOLD':points>=600?'SILVER':'BRONZE';
     await tx.marketOrder.update({where:{id:orderId},data:{
       status:'delivered',deliveredAt:now,paymentStatus:'paid',cashCollected:o.total,
+    }});
+    // The driver physically collects cash at PIN delivery, never Stripe.
+    // Atomic, idempotent and held for manual reconciliation; not withdrawable.
+    await tx.stageFinancialLedgerEntry.create({data:{
+      orderId,userId:o.userId,restaurantId:o.restaurantId,
+      account:'cash_collected_by_driver',direction:'credit',amount:o.total,
+      kind:'cash_delivery_collection',
+      description:'Efectivo recibido por repartidor en entrega; conciliación pendiente',
+      idempotencyKey:'order:'+orderId+':cash-delivery:collected',
     }});
     await tx.stageDeliveryProof.create({data:{
       orderId,driverId:actor.id,pinVerified:true,
