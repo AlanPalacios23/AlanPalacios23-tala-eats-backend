@@ -24,7 +24,7 @@ export function buildPublicPaymentContracts(o:PublicPaymentOptions){
     ? o.stripeLiveEnabled&&o.financialWritesEnabled&&o.releaseApproved&&
       o.refundsEnabled&&o.manualSettlementApproved&&
       Boolean(o.publishableKey?.startsWith('pk_live_'))
-    : o.stripeTestEnabled;
+    : o.stripeTestEnabled&&Boolean(o.publishableKey?.startsWith('pk_test_'));
   const mode=live?'live-pickup-only':'test-pickup-only';
   const key=enabled?o.publishableKey??null:null;
   return {
