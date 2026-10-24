@@ -20,6 +20,7 @@ test('tarifas de referencia respetan motor Node v1.6.2 y no habilitan delivery',
   assert.equal(v162.methods.delivery_included_km,'2');
   assert.equal(v162.methods.delivery_additional_per_km,'5.00');
   assert.equal(v162.methods.delivery_checkout_supported,false);
+  assert.equal(v162.methods.pickup_quote_supported,true);
   const legacy=buildPublicPaymentContracts({...opts,pricingV162Enabled:false});
   assert.equal(legacy.methods.commercial_pricing_version,'1.5.2');
   assert.equal(legacy.methods.delivery_base_fee,'39.00');

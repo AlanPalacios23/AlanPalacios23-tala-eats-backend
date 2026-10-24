@@ -43,7 +43,22 @@ jobs:
           if bash scripts/rc8-kali-live-activation-gate.sh --activate; then exit 1; fi
       - name: Entire unit suite including RC8 LIVE (all synthetic)
         run: npm test
-      - name: Critical RC7 live separation unchanged
+      - name: RC8.7 staging and LIVE isolation regression (single public runtime)
         run: |
+          set -euo pipefail
+          # Previously this workflow prohibited ANY live import in app.ts.
+          # That check is obsolete now that RC8.6 mounts production-only
+          # signed webhooks while NODE_ENV=staging stays completely isolated.
+          # Enforce the runtime guard rather than banning imports.
           node scripts/release-readiness.mjs --stage
-          ! grep -R -E "from ['\"](\./|\.\./)live/" src/app.ts src/worker.ts src/webhook.ts src/config.ts src/stripe.ts
+          node --test tests/rc8-locked-runtime.test.mjs tests/rc8-production-pm2-wiring.test.mjs tests/rc8-public-pm2-upgrade.test.mjs
+          grep -Fq "config.NODE_ENV==='production'?buildLiveRuntimeDependencies():null" src/app.ts
+          grep -Fq 'STAGING_MONEY_WRITES_FORBIDDEN' src/config.ts
+          grep -Fq 'STAGING_REQUIRES_STRIPE_TEST_KEY' src/config.ts
+          grep -Fq 'STAGING_REQUIRES_STRIPE_TEST_PUBLISHABLE' src/config.ts
+          grep -Fq 'LIVE_PRODUCTION_POSTGRES_ISOLATION_REQUIRED' src/config.ts
+          grep -Fq 'LIVE_PRODUCTION_REDIS_ISOLATION_REQUIRED' src/config.ts
+          grep -Fq 'LIVE_CONNECT_PAYOUTS_REQUIRE_SEPARATE_AUDIT' src/config.ts
+          grep -Fq "app.use('/api/v1/payments/stripe',buildIsolatedWebhookRouter(" src/app.ts
+          grep -Fq 'STRIPE_FINANCIAL_WRITES_ENABLED' src/app.ts
+          echo RC87_PRODUCTION_ISOLATION_FAIL_CLOSED=PASS
