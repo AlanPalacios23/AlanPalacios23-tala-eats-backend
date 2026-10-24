@@ -407,3 +407,31 @@ export async function driverComplete(actor:AuthUser,orderId:number,
   try{await withProfileLock(actor.id,async tx=>assign(tx,actor.id));}catch{/* next assignment best effort */}
   return id;
 }
+
+/**
+ * RC8.7: merchant READY event attempts immediate non-duplicating dispatch.
+ * Row locks use exactly the same claim protocol as driver availability.
+ * A missing driver leaves READY pending; future login/complete will retry.
+ * Never called for test fixtures or production while the new flag is off.
+ */
+export async function dispatchStageDeliveryReady(orderId:number):Promise<boolean>{
+  if(config.NODE_ENV!=='staging'||
+     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED!=='true'||
+     config.STAGE_DRIVER_DELIVERY_ENABLED!=='true')
+    return false;
+  if(!Number.isSafeInteger(orderId)||orderId<=0)return false;
+  const profiles=await db.marketplaceDriverProfile.findMany({
+    where:{isVerified:true,isOnline:true},
+    select:{userId:true},orderBy:{userId:'asc'},take:100,
+  });
+  for(const p of profiles){
+    try{
+      const id=await withProfileLock(p.userId,tx=>assign(tx,p.userId,orderId));
+      if(id===orderId)return true;
+    }catch{
+      // Failed driver must never fail merchant READY transaction or
+      // duplicate an assignment to a second driver.
+    }
+  }
+  return false;
+}
