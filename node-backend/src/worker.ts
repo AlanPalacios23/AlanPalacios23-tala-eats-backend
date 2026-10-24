@@ -96,7 +96,10 @@ async function expireAbandonedTestPickups(){
   testExpiryBusy=true;
   try{
     const candidates=await db.marketOrder.findMany({
-      where:{orderType:'pickup',paymentMethod:'stripe',
+      where:{orderType:{in:[
+         'pickup',
+         ...(config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'?['delivery']:[]),
+        ]},paymentMethod:'stripe',
         paymentStatus:'pending',status:'awaiting_payment',
         paymentProviderId:{not:STRIPE_INTENT_RESERVATION},
         createdAt:{lt:new Date(Date.now()-35*60_000)}},
