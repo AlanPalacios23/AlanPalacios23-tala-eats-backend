@@ -200,16 +200,16 @@ try{
  assert.equal(notAssigned.driver_id,null);
  assert.equal(notAssigned.status,'ready');
  await db.query('UPDATE driver_profiles SET is_online=true WHERE user_id=$1',[courier.id]);
- let recovered=false;
+ let dispatchedBySweep=false;
  for(let t=0;t<40;t++){
    const row=(await db.query('SELECT driver_id,status FROM orders WHERE id=$1',
       [next.data.id])).rows[0];
    if(row.driver_id===courier.id&&row.status==='assigned'){
-     recovered=true;break;
+     dispatchedBySweep=true;break;
    }
    await new Promise(resolve=>setTimeout(resolve,500));
  }
- assert.equal(recovered,true,
+ assert.equal(dispatchedBySweep,true,
    'worker must recover READY delivery without duplicate order or manual tap');
  assert.equal((await db.query(
     "SELECT COUNT(*)::int AS n FROM order_events WHERE order_id=$1 AND status='assigned'",
