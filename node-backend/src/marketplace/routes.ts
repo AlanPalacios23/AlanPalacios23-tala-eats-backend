@@ -383,7 +383,8 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
     const geo=deliveryDistance({lat:restaurant.lat,lng:restaurant.lng},
       {lat:data.delivery_lat,lng:data.delivery_lng},restaurant.deliveryRadiusKm);
     const active=await db.marketplaceDriverProfile.count({
-      where:{isVerified:true,isOnline:true},
+      where:{isVerified:true,isOnline:true,
+      user:{is:{role:'driver',isActive:true}}},
     });
     if(!active)throw new RouteError(409,'No hay repartidores disponibles');
     const products=await db.marketplaceMenuItem.findMany({
