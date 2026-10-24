@@ -21,7 +21,7 @@ export function deliveryDistance(origin:GeoPoint,destination:GeoPoint,
   const a=Math.min(1,Math.sin(dlat/2)**2+
     Math.cos(origin.lat*rad)*Math.cos(destination.lat*rad)*Math.sin(dlng/2)**2);
   const distance=6371.0088*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
-  const millimetric=Math.ceil(distance*1000-1e-10);
+  const millimetric=Math.max(0,Math.ceil(distance*1000-1e-10));
   if(!Number.isSafeInteger(millimetric)||millimetric<0||
      millimetric>Math.floor(radiusKm*1000+1e-8))
     throw new DeliveryGeoError(409,'Dirección fuera del radio de reparto');
