@@ -43,8 +43,12 @@ stage_node(){
     node --env-file="$ENV" "$@"
 }
 
-# Check exact localhost DB/Redis identity and isolated flags; never print secrets.
+# Bootstrap dependencies only inside this NEW pinned release. No PM2/DB change.
 cd "$WORK"
+if [[ "$MODE" == '--prepare' ]]; then
+  npm ci --no-audit --no-fund
+fi
+# Check exact localhost DB/Redis identity and isolated flags; never print secrets.
 stage_node --input-type=module - <<'JS'
 import {Redis} from 'ioredis';
 import pg from 'pg';
@@ -96,7 +100,6 @@ console.log('RC813_EXISTING_LIVE_PORT_18190_PRESENT=PASS');
 JS
 
 if [[ "$MODE" == '--prepare' ]]; then
-  npm ci --no-audit --no-fund
   stage_node ./node_modules/prisma/build/index.js generate
   stage_node ./node_modules/prisma/build/index.js validate
   npm run build
