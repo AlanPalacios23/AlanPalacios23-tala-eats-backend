@@ -655,7 +655,11 @@ ownerRouter.get('/orders',async(req,res)=>{
     (await db.marketplaceRestaurant.findMany({select:{id:true}})).map(x=>x.id):[];
   if(!ids.length){res.json([]);return;}
   const rows=await db.marketOrder.findMany({
-    where:{restaurantId:{in:ids},...(activeOnly?{status:{notIn:['delivered','cancelled']}}:{})},
+    where:{restaurantId:{in:ids},
+      // Never show a pending Stripe reservation to the merchant as food to
+      // prepare. Signed webhook is the only path to paymentStatus='paid'.
+      OR:[{paymentMethod:'cash'},{paymentStatus:'paid'}],
+      ...(activeOnly?{status:{notIn:['delivered','cancelled']}}:{})},
     include:orderInclude,orderBy:[{createdAt:'desc'},{id:'desc'}],skip:offset,take:limit,
   });
   res.json(rows.map(x=>orderView(x,false)));
