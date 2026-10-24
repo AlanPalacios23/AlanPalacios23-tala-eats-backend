@@ -173,7 +173,7 @@ for attempt in $(seq 1 35); do
  sleep 2
 done
 # Verify the PUBLIC Cloudflare URL routes to the same safe production API.
-node - <<'JS'
+node --input-type=module - <<'JS'
 const base='https://talaeats.alan-palacios-dev.com/api/v1';
 try{
  const [h,r,c]=await Promise.all([
