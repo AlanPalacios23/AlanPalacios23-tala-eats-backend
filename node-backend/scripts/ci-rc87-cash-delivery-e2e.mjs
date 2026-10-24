@@ -133,6 +133,12 @@ try{
  const available=await call('/driver/available',{token:courier.token});
  assert.equal(available.code,200);
  assert.ok(available.data.some(x=>x.id===o.id));
+ const offer=available.data.find(x=>x.id===o.id);
+ for(const privateField of ['address','delivery_lat','delivery_lng',
+   'recipient_phone','user_id','delivery_pin']){
+   assert.equal(Object.hasOwn(offer,privateField),false,
+     'unassigned driver must not see private customer field: '+privateField);
+ }
  const claimed=await call('/driver/orders/'+o.id+'/accept',{
    method:'POST',token:courier.token});
  assert.equal(claimed.code,200,JSON.stringify(claimed.data));
