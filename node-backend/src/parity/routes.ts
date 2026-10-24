@@ -9,6 +9,7 @@ import {Redis} from 'ioredis';
 import {db} from '../db.js';
 import {account,bad,param} from '../operational/routes.js';
 import {config} from '../config.js';
+import {buildPublicPaymentContracts} from '../payments/public-contract.js';
 import {createTestPaymentIntent} from '../stage-stripe-test.js';
 import {previewRecipientOrders} from '../finance/recipient-readiness.js';
 
@@ -77,32 +78,32 @@ parityRouter.get('/platform/features',(_req,res)=>{
   {id:7,name:'Retiros y conciliación',area:'finance',mode:'disabled',description:'Sin transferencias financieras reales'},
   {id:8,name:'Media',area:'uploads',mode:'staging',description:'Almacenamiento restringido a laboratorio'}]});
 });
+// The same Flutter Users endpoints must advertise LIVE when RC8.6 runs in
+// production. No payment is authorized here: merchant Connect and the
+// immutable Stripe ledger are checked again at order/payment-intent time.
+const publicPaymentContracts=()=>buildPublicPaymentContracts({
+  environment:config.NODE_ENV,
+  cashEnabled:config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true',
+  stripeTestEnabled:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',
+  stripeLiveEnabled:config.STRIPE_LIVE_ENABLED==='true',
+  financialWritesEnabled:config.STRIPE_FINANCIAL_WRITES_ENABLED==='true',
+  releaseApproved:config.STRIPE_LIVE_RELEASE_APPROVED==='true',
+  refundsEnabled:config.STRIPE_REFUNDS_ENABLED==='true',
+  manualSettlementApproved:config.STRIPE_MANUAL_SETTLEMENT_APPROVED==='true',
+  publishableKey:config.STRIPE_PUBLISHABLE_KEY,
+});
 parityRouter.get('/orders/payment-methods',async(req,res)=>{
- await account(req);
- const cashEnabled=config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true';
- res.setHeader('Cache-Control','private, no-store');
- res.json({digital_provider:'stripe',cash_available_in_staging:cashEnabled,methods:[
-  {id:'cash',label:'Efectivo',enabled:cashEnabled,mode:'stage-cash-pickup',
-   ...(cashEnabled?{}:{reason:'staging-cash-pickup-disabled'})},
-  {id:'stripe',label:'Tarjeta (Stripe TEST)',enabled:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',mode:'stage-stripe-test-pickup',
-   ...(config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'?{}:{reason:'stripe-test-payments-disabled'})},
-  {id:'wallet',label:'Wallet',enabled:false,reason:'wallet-not-reconciled'}],
-  production_ready:false});
+  await account(req);
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(publicPaymentContracts().methods);
 });
 parityRouter.get('/payments/config',(_req,res)=>{
- res.setHeader('Cache-Control','no-store');
- res.json({provider:'stripe',digital_providers:['stripe'],
-  enabled:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',
-  publishable_key:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'?config.STRIPE_PUBLISHABLE_KEY:null,
-  checkout_ready:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',
-  financial_writes_enabled:false,environment:'staging',mode:'test-pickup-only'});
+  res.setHeader('Cache-Control','no-store');
+  res.json(publicPaymentContracts().paymentsConfig);
 });
 parityRouter.get('/payments/stripe/config',(_req,res)=>{
- res.setHeader('Cache-Control','no-store');
- res.json({provider:'stripe',enabled:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',
-  publishable_key:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'?config.STRIPE_PUBLISHABLE_KEY:null,
-  checkout_ready:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',
-  financial_writes_enabled:false,environment:'staging',mode:'test-pickup-only'});
+  res.setHeader('Cache-Control','no-store');
+  res.json(publicPaymentContracts().stripeConfig);
 });
 parityRouter.get('/operations/admin/commercial-pricing',async(req,res)=>{
  await account(req,['admin']);
