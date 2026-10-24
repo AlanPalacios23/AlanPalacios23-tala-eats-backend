@@ -6,8 +6,9 @@ on:
     paths:
       - 'node-backend/src/config.ts'
       - 'node-backend/scripts/rc813-*'
-      - 'node-backend/ecosystem.rc813-parallel.cjs'
+      - 'node-backend/rc813/ecosystem.config.cjs'
       - 'node-backend/tests/rc813-parallel-stage-safety.test.mjs'
+      - 'node-backend/tests/rc813-pm2-cli-smoke.mjs'
       - '.github/workflows/rc813-parallel-stage-ci.yml'
 permissions:
   contents: read
@@ -53,7 +54,12 @@ jobs:
         run: |
           bash -n scripts/rc813-parallel-stage.sh
           python3 -m py_compile scripts/rc813-create-parallel-stage-env.py
-          node --check ecosystem.rc813-parallel.cjs
+          bash -n scripts/rc813-quarantine-aborted-pm2.sh
+          node --check rc813/ecosystem.config.cjs
+      - name: Real PM2 6.0.14 CLI parses canonical ecosystem and --only
+        run: |
+          npm install --prefix "$RUNNER_TEMP/rc813-pm2-cli" --no-save --ignore-scripts --no-audit --no-fund pm2@6.0.14
+          node tests/rc813-pm2-cli-smoke.mjs "$RUNNER_TEMP/rc813-pm2-cli/node_modules/pm2/bin/pm2"
       - name: Parallel stage opt-in config isolation
         run: |
           env NODE_ENV=staging PORT=18192 STAGE_PARALLEL_ENABLED=true \
