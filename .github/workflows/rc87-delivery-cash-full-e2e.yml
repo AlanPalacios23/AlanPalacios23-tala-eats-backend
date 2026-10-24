@@ -65,6 +65,9 @@ jobs:
           npm run db:validate
           npm run db:migrate:deploy
       - name: Compile and test without Stripe real credentials
+        env:
+          # Production-isolation tests must not inherit an enabled stage-only checkout.
+          STAGE_DELIVERY_CASH_CHECKOUT_ENABLED: 'false'
         run: |
           npm run build
           npm test
