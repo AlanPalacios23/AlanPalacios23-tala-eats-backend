@@ -8,7 +8,10 @@ import path from 'node:path';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const source=p=>readFileSync(path.join(root,p),'utf8');
 const production={
+ // This fixture models production independently of the caller's staging
+ // flags. RC8.13's parallel stage uses true; production must use false.
  NODE_ENV:'production',HOST:'127.0.0.1',PORT:'18190',
+ STAGE_PARALLEL_ENABLED:'false',
  DATABASE_URL:'postgresql://tala_live:longsecret@127.0.0.1:15445/tala_node_live',
  REDIS_URL:'redis://:longsecret@127.0.0.1:16389/1',
  STRIPE_PLATFORM_ACCOUNT_ID:'acct_'+'Z'.repeat(20),
@@ -47,6 +50,7 @@ test('production fails closed for missing approval, Stripe TEST, staging PG Redi
   ['REDIS_URL','redis://:password@127.0.0.1:16379/0'],
   ['AUTH_V02_ENABLED','false'],['MARKETPLACE_B_ENABLED','false'],
   ['STAGE_STRIPE_TEST_CHECKOUT_ENABLED','true'],
+  ['STAGE_PARALLEL_ENABLED','true'],
  ]){
    const result=check({[key]:value});
    assert.notEqual(result.status,0,key);

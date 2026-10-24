@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""Create a separate private STAGING env, never rewrite the existing LIVE or stage env."""
+from __future__ import annotations
+import os
+from pathlib import Path
+from urllib.parse import urlsplit
+import pwd
+import stat
+import sys
+
+ROOT=Path("/home/tala-node-stage/.config")
+SOURCE=ROOT/"talaeats-node-staging.env"
+TARGET=ROOT/"talaeats-node-rc813-parallel.env"
+
+def die(message):
+    raise SystemExit("RC813_ENV_ABORT="+message)
+
+def parse(data):
+    rows={}
+    for line in data.splitlines():
+        stripped=line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "=" not in line:
+            die("INVALID_LINE")
+        key,val=line.split("=",1)
+        key=key.strip()
+        if not key.isidentifier() or key in rows:
+            die("DUPLICATE_OR_INVALID_KEY")
+        rows[key]=val.strip().strip('"').strip("'")
+    return rows
+
+PAYMENT_FLAGS_OFF = (
+    "STRIPE_FINANCIAL_WRITES_ENABLED",
+    "STRIPE_LIVE_ENABLED",
+    "STRIPE_CONNECT_TRANSFERS_ENABLED",
+    "STRIPE_REFUNDS_ENABLED",
+    "STRIPE_MANUAL_SETTLEMENT_APPROVED",
+    "STRIPE_LIVE_RELEASE_APPROVED",
+    "STAGE_STRIPE_TEST_CHECKOUT_ENABLED",
+    "STAGE_DELIVERY_STRIPE_TEST_ENABLED",
+)
+
+def check_source(values: dict[str, str]) -> list[str]:
+    """Pure fail-closed checks. Return only key names/categories, not values."""
+    issues = []
+    for name, wanted in (
+        ("NODE_ENV", "staging"),
+        ("HOST", "127.0.0.1"),
+        ("PORT", "18190"),
+        ("STAGE_PARALLEL_ENABLED", "false"),
+    ):
+        if values.get(name, "false" if name=="STAGE_PARALLEL_ENABLED" else "") != wanted:
+            issues.append(name)
+    for name in PAYMENT_FLAGS_OFF:
+        # Omitted flags are explicitly false by the Node schema, and will
+        # be written as false in the NEW private env. Explicit true/unknown
+        # is never accepted.
+        if values.get(name,"false") != "false":
+            issues.append(name)
+    try:
+        pg = urlsplit(values.get("DATABASE_URL", ""))
+        if (pg.scheme not in ("postgresql", "postgres")
+            or pg.hostname != "127.0.0.1"
+            or pg.port != 15435
+            or pg.username != "tala_node_stage"
+            or pg.path != "/tala_node_stage"
+            or not pg.password):
+            issues.append("STAGE_POSTGRES_IDENTITY")
+    except (ValueError, TypeError):
+        issues.append("STAGE_POSTGRES_IDENTITY")
+    try:
+        rd = urlsplit(values.get("REDIS_URL",""))
+        if (rd.scheme not in ("redis", "rediss")
+            or rd.hostname != "127.0.0.1"
+            or rd.port != 16379
+            or rd.path != "/0"
+            or not rd.password):
+            issues.append("STAGE_REDIS_IDENTITY")
+    except (ValueError, TypeError):
+        issues.append("STAGE_REDIS_IDENTITY")
+    secret=values.get("STRIPE_SECRET_KEY","")
+    publishable=values.get("STRIPE_PUBLISHABLE_KEY","")
+    if secret and not secret.startswith(("sk_test_", "rk_test_")):
+        issues.append("STRIPE_TEST_SECRET_ONLY")
+    if publishable and not publishable.startswith("pk_test_"):
+        issues.append("STRIPE_TEST_PUBLISHABLE_ONLY")
+    if any(k.upper().startswith("MERCADOPAGO_") or k.upper() in
+        ("MP_ACCESS_TOKEN","MP_PUBLIC_KEY","MP_WEBHOOK_SECRET")
+        for k in values):
+        issues.append("MERCADOPAGO_NOT_ALLOWED")
+    return issues
+
+def main():
+    if len(sys.argv)!=2 or sys.argv[1] not in ("--plan","--create"):
+        die("USAGE_PLAN_OR_CREATE")
+    if os.geteuid()==0 or pwd.getpwuid(os.geteuid()).pw_name!="tala-node-stage":
+        die("STAGE_USER_ONLY")
+    if (not SOURCE.is_file() or SOURCE.is_symlink() or
+        stat.S_IMODE(SOURCE.stat().st_mode)!=0o600 or SOURCE.stat().st_uid!=os.geteuid()):
+        die("PRIVATE_STAGE_SOURCE_REQUIRED")
+    if TARGET.exists() or TARGET.is_symlink():
+        die("TARGET_EXISTS_NEVER_OVERWRITE")
+    data=SOURCE.read_text(encoding="utf-8")
+    values=parse(data)
+    # Only report safe field NAMES for failed checks, never the source values.
+    # Earlier RC8.11 stage allowed omitted financial flags because Node's
+    # config schema defaults to false. Missing is safe only when the child
+    # env explicitly writes all these flags as false.
+    failures = check_source(values)
+    if failures:
+        print("RC813_ENV_FAILED_CHECKS="+",".join(failures))
+        die("STAGING_SOURCE_IDENTITY_MISMATCH")
+    print("RC813_STAGE_ENV_SOURCE_VALID=PASS")
+    print("RC813_STAGE_ENV_TARGET=18192_PG15_REDIS_DB1")
+    if sys.argv[1]=="--plan":
+        print("RC813_STAGE_ENV_PLAN_ONLY=PASS")
+        return
+    red=values["REDIS_URL"]
+    # URL path is guaranteed exactly /0, retain the scheme/host/credentials.
+    from urllib.parse import urlunsplit
+    u=urlsplit(red)
+    values["REDIS_URL"]=urlunsplit((u.scheme,u.netloc,"/1",u.query,u.fragment))
+    values["PORT"]="18192"
+    values["STAGE_PARALLEL_ENABLED"]="true"
+    # Copy untouched source lines, except validated overrides, to preserve quoting.
+    overrides=("PORT","REDIS_URL","STAGE_PARALLEL_ENABLED",*PAYMENT_FLAGS_OFF)
+    output=[line for line in data.splitlines() if line.split("=",1)[0].strip() not in overrides]
+    output.extend(["PORT=18192",f"REDIS_URL={values['REDIS_URL']}",
+        "STAGE_PARALLEL_ENABLED=true",
+        *(f"{key}=false" for key in PAYMENT_FLAGS_OFF)])
+    fd=os.open(TARGET,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+    with os.fdopen(fd,"w",encoding="utf-8") as file:
+        file.write("\n".join(output)+"\n")
+    print("RC813_PRIVATE_STAGE_ENV_CREATED=PASS")
+    print("RC813_NO_EXISTING_FILE_OR_RUNTIME_CHANGED=YES")
+
+if __name__=="__main__":
+    main()
