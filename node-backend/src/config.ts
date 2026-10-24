@@ -67,7 +67,7 @@ if(config.NODE_ENV==='staging'){
     throw new Error('STAGING_POSTGRES_ISOLATION_REQUIRED');
   if(!['redis:','rediss:'].includes(redis.protocol)||
      redis.hostname!=='127.0.0.1'||redis.port!=='16379'||
-     redis.pathname!=='/0'||!redis.password||
+     redis.pathname!==(config.STAGE_PARALLEL_ENABLED==='true'?'/1':'/0')||!redis.password||
      /REPLACE|CHANGE/i.test(redis.password))
     throw new Error('STAGING_REDIS_ISOLATION_REQUIRED');
   if(config.STRIPE_FINANCIAL_WRITES_ENABLED!=='false'||
