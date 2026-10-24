@@ -4,6 +4,7 @@ import type Stripe from 'stripe';
 import type {Pool} from 'pg';
 import {current} from '../auth/routes.js';
 import {config} from '../config.js';
+import {settlementEligibility} from './settlement-eligibility.js';
 type Provider=Pick<Stripe,'accounts'|'accountLinks'|'refunds'|'disputes'>;
 const id=(raw:unknown)=>{const s=String(raw??'');if(!/^[1-9][0-9]{0,9}$/.test(s))throw Error('ID_INVALID');return Number(s);};
 const money=(s:string)=>{if(!/^(?:0|[1-9]\d{0,7})\.\d{2}$/.test(s))throw Error('MONEY_INVALID');const [a,b]=s.split('.');return Number(a)*100+Number(b);};
@@ -11,23 +12,6 @@ async function admin(req:Request){
  const s=await current(req);
  if(s.user.role!=='admin'||!s.user.twoFactorEnabled||!s.mfaVerified)throw Error('MFA_REQUIRED');
  return s.userId;
-}
-export function settlementEligibility(o:{
- status:string;paymentStatus:string;total:number;payout:number;refunded:number;
- captured:boolean;cases:number;approved:boolean;transfers:boolean;
- payouts:boolean;details:boolean;transferRecorded:boolean
-}):{eligible:boolean;reasons:string[]}{
- const reasons:string[]=[];
- if(o.status!=='delivered')reasons.push('DELIVERY_NOT_CONFIRMED');
- if(o.paymentStatus!=='paid'||o.refunded!==0)reasons.push('REFUND_OR_UNPAID');
- if(!Number.isSafeInteger(o.total)||!Number.isSafeInteger(o.payout)||
-    o.payout<1||o.payout>o.total)reasons.push('INVALID_PAYOUT_AMOUNT');
- if(!o.captured)reasons.push('SIGNED_CAPTURE_NOT_POSTED');
- if(o.cases!==0)reasons.push('OPEN_REFUND_OR_DISPUTE');
- if(!o.approved||!o.transfers||!o.payouts||!o.details)
-  reasons.push('SELLER_CONNECT_INCOMPLETE');
- if(o.transferRecorded)reasons.push('SETTLEMENT_ALREADY_APPROVED');
- return {eligible:reasons.length===0,reasons};
 }
 export function buildLiveMerchantFinanceRouter(pool:Pool,stripe:Provider){
  const r=Router();
