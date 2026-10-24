@@ -169,22 +169,29 @@ fi
 export PM2_HOME="$STAGE_PM2_HOME"
 export TALA_RC813_ENV_FILE="$ENV"
 export NODE_ENV=staging
+# PM2 must inherit NO user shell secrets/config, only the private env-file path.
+# Prevent accidental NODE_ENV=production or inherited DATABASE_URL/Stripe keys.
+stage_pm2(){
+  env -i HOME="$HOME" USER=tala-node-stage LOGNAME=tala-node-stage \
+    PATH="$PATH" PM2_HOME="$STAGE_PM2_HOME" TALA_RC813_ENV_FILE="$ENV" \
+    NODE_ENV=staging pm2 "$@"
+}
 ROLLOUT_STARTED=no
 COMMITTED=no
 cleanup(){
   result=$?
   trap - EXIT
   if [[ "$ROLLOUT_STARTED" == yes && "$COMMITTED" != yes ]]; then
-    pm2 delete tala-rc813-parallel-api >/dev/null 2>&1 || true
-    pm2 delete tala-rc813-parallel-worker >/dev/null 2>&1 || true
-    pm2 kill >/dev/null 2>&1 || true
+    stage_pm2 delete tala-rc813-parallel-api >/dev/null 2>&1 || true
+    stage_pm2 delete tala-rc813-parallel-worker >/dev/null 2>&1 || true
+    stage_pm2 kill >/dev/null 2>&1 || true
     echo 'RC813_NEW_STAGE_ONLY_ROLLBACK=ATTEMPTED'
   fi
   exit "$result"
 }
 trap cleanup EXIT
 ROLLOUT_STARTED=yes
-pm2 start "$ECO" --only tala-rc813-parallel-worker --update-env
+stage_pm2 start "$ECO" --only tala-rc813-parallel-worker --update-env
 # Fresh Redis DB1 had no keys before startup: heartbeat must be this worker.
 STAGE_WORKER_ONLINE=no
 for attempt in $(seq 1 25); do
@@ -199,7 +206,7 @@ JS
   sleep 2
 done
 [[ "$STAGE_WORKER_ONLINE" == yes ]] || { echo 'RC813_NEW_WORKER_HEARTBEAT_FAIL'; exit 1; }
-pm2 start "$ECO" --only tala-rc813-parallel-api --update-env
+stage_pm2 start "$ECO" --only tala-rc813-parallel-api --update-env
 STAGE_READY=no
 for attempt in $(seq 1 25); do
   if bash scripts/rc813-parallel-stage.sh --verify "$SHA" >/dev/null 2>&1; then
@@ -209,7 +216,7 @@ for attempt in $(seq 1 25); do
   sleep 2
 done
 [[ "$STAGE_READY" == yes ]] || { echo 'RC813_NEW_STAGE_API_NOT_READY'; exit 1; }
-pm2 save
+stage_pm2 save
 COMMITTED=yes
 trap - EXIT
 echo 'RC813_PARALLEL_STAGE_DEPLOYED=PASS'
