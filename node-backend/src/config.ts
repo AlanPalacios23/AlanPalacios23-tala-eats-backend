@@ -4,6 +4,8 @@ const schema = z.object({
   NODE_ENV: z.enum(['staging','production']),
   HOST: z.literal('127.0.0.1'),
   PORT: z.coerce.number().int().min(1024).max(65535),
+  // RC8.13: opt-in parallel stage; never reuse the currently LIVE port 18190.
+  STAGE_PARALLEL_ENABLED: z.enum(['false','true']).default('false'),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
   STRIPE_SECRET_KEY: z.string().regex(/^(?:sk_test_|rk_test_|(?:sk|rk)_live_)[A-Za-z0-9]+$/).optional(),
@@ -57,7 +59,7 @@ if(config.STAGE_EMAIL_DELIVERY_MODE==='resend') {
 const pg = new URL(config.DATABASE_URL);
 const redis = new URL(config.REDIS_URL);
 if(config.NODE_ENV==='staging'){
-  if(config.PORT!==18190||
+  if(config.PORT!==(config.STAGE_PARALLEL_ENABLED==='true'?18192:18190)||
      !['postgres:','postgresql:'].includes(pg.protocol)||
      pg.hostname!=='127.0.0.1'||pg.port!=='15435'||
      pg.pathname!=='/tala_node_stage'||pg.username!=='tala_node_stage'||
@@ -82,6 +84,8 @@ if(config.NODE_ENV==='staging'){
 }else{
   // Same public PM2 port/domain. Separate authenticated production data,
   // new customer auth and signed Stripe LIVE only. All settings fail closed.
+  if(config.STAGE_PARALLEL_ENABLED==='true')
+    throw new Error('PARALLEL_STAGE_MODE_FORBIDDEN_IN_LIVE');
   if(config.HOST!=='127.0.0.1'||config.PORT!==18190||
      !['postgres:','postgresql:'].includes(pg.protocol)||
      !pg.username||!pg.password||!pg.hostname||
