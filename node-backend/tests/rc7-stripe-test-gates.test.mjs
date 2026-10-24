@@ -68,7 +68,9 @@ test('RC7 Stripe pickup requires verified ledger and must not collect card as ca
  const pickup=read('src/marketplace/pickup.ts');
  assert.match(lifecycle,/order.paymentStatus==='paid'/);
  assert.match(lifecycle,/stripe_test_collected/);
- assert.match(pickup,/kind:'stripe_test_payment'/);
+ assert.match(pickup,/kind:live\?'stripe_live_payment':'stripe_test_payment'/);
+ assert.match(pickup,/config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'/);
+ assert.match(pickup,/liveCardEnabled/);
  assert.match(pickup,/cashCollected:cash\?order.total:'0.00'/);
  assert.match(pickup,/order.paymentStatus==='paid'/);
 });
