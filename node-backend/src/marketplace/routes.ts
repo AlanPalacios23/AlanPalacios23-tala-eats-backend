@@ -382,7 +382,7 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
       restaurant.address);
     const geo=deliveryDistance({lat:restaurant.lat,lng:restaurant.lng},
       {lat:data.delivery_lat,lng:data.delivery_lng},restaurant.deliveryRadiusKm);
-    if(!await hasReachableStageDriver())
+    if(!await hasReachableStageDriver({lat:restaurant.lat,lng:restaurant.lng}))
       throw new RouteError(409,'No hay repartidores disponibles con ubicación actual');
     const products=await db.marketplaceMenuItem.findMany({
       where:{id:{in:data.items.map(i=>i.menu_item_id)},restaurantId:restaurant.id},
