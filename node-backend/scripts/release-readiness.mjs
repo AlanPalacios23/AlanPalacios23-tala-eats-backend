@@ -45,9 +45,15 @@ const stageChecks=[
   detail:'En staging se rechazan claves LIVE y escrituras financieras'},
  {id:'explicit-stage-ready',ok:app.includes("const live=config.NODE_ENV==='production'?")&&
      app.includes("environment:live?'production':'staging'")&&
-     app.includes('financialWrites:Boolean(live&&ready)')&&
-     app.includes('online_payment_writes:Boolean(live)'),
-  detail:'Readiness de staging separado de la aptitud financiera LIVE'},
+     // Since RC8.6 the LIVE financial capability is distinct from the
+     // runtime mode: production STANDBY must never claim payment readiness.
+     app.includes('const liveChargeApproved=Boolean(live&&')&&
+     app.includes('financialWrites:Boolean(liveChargeApproved&&ready)')&&
+     app.includes('online_payment_writes:liveChargeApproved')&&
+     app.includes('enabled:liveChargeApproved,authSecret:config.AUTH_JWT_SECRET!')&&
+     app.includes('LIVE_CARD_CHECKOUT_NOT_APPROVED')&&
+     app.includes('PRODUCTION_STANDBY_CHECKOUT_DISABLED'),
+  detail:'Staging sigue aislado y la API LIVE en standby no anuncia cobros'},
  {id:'worker-heartbeat',ok:app.includes('workerHeartbeat')===false &&
      app.includes("tala:node:stage:worker:heartbeat") &&
      worker.includes("workerHeartbeatTimer"),
