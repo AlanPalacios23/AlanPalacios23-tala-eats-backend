@@ -4,6 +4,7 @@
 import { createHmac, timingSafeEqual, randomInt } from 'node:crypto';
 import {calculateDefaultCommercial,fmtCents} from '../finance/pricing.js';
 import {deliveryDistance,assertRestaurantDeliveryOrigin} from './delivery-geography.js';
+import {hasReachableStageDriver} from './driver.js';
 import { z } from 'zod';
 import { db } from '../db.js';
 import { config } from '../config.js';
@@ -185,11 +186,8 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
         {lat:_lat!,lng:_lng!},restaurant.deliveryRadiusKm);
       deliveryDistanceMilli=geo.distanceMilliKm;
       // Prevent creating a normal delivery without any verified online driver.
-      const online=await tx.marketplaceDriverProfile.count({
-        where:{isVerified:true,isOnline:true,
-      user:{is:{role:'driver',isActive:true}}},
-      });
-      if(!online)throw new CheckoutError(409,'No hay repartidores disponibles por ahora');
+      if(!await hasReachableStageDriver({lat:restaurant.lat,lng:restaurant.lng}))
+        throw new CheckoutError(409,'No hay repartidores disponibles con ubicación actual');
     }
     const pricingV162=config.COMMERCIAL_PRICING_V162_ENABLED==='true';
     // Python uses v152 commission in both modes. In v162 the fee rate and

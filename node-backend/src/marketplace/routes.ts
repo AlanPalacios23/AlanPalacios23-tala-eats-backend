@@ -13,7 +13,7 @@ import {calculatePickupQuoteFromCatalog,assertDefaultPickupRates,PickupQuoteErro
 import { previewCancelStage, cancelCashPickupStage, moveCashPickupOwnerStage } from './lifecycle.js';
 import { completeCashPickupStage } from './pickup.js';
 import { driverAvailability, driverAccept, driverStatus, driverGps,
-  driverDashboard, driverComplete } from './driver.js';
+  driverDashboard, driverComplete, hasReachableStageDriver } from './driver.js';
 import { current } from '../auth/routes.js';
 import type { AuthUser, MarketplaceRestaurant, MarketplaceMenuItem,
   MarketplaceDriverProfile, MarketOrder, MarketOrderItem } from '../generated/prisma/client.js';
@@ -382,11 +382,8 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
       restaurant.address);
     const geo=deliveryDistance({lat:restaurant.lat,lng:restaurant.lng},
       {lat:data.delivery_lat,lng:data.delivery_lng},restaurant.deliveryRadiusKm);
-    const active=await db.marketplaceDriverProfile.count({
-      where:{isVerified:true,isOnline:true,
-      user:{is:{role:'driver',isActive:true}}},
-    });
-    if(!active)throw new RouteError(409,'No hay repartidores disponibles');
+    if(!await hasReachableStageDriver({lat:restaurant.lat,lng:restaurant.lng}))
+      throw new RouteError(409,'No hay repartidores disponibles con ubicación actual');
     const products=await db.marketplaceMenuItem.findMany({
       where:{id:{in:data.items.map(i=>i.menu_item_id)},restaurantId:restaurant.id},
     });
