@@ -87,6 +87,12 @@ try{
  // operational availability. App restart/stale shift must fail closed.
  assert.equal((await call('/orders/delivery-quote',{method:'POST',
    token:customer.token,body:quoteBody})).code,409);
+ // An otherwise approved rider far outside the pickup zone must not
+ // authorize a checkout or receive the order.
+ assert.equal((await call('/driver/location',{method:'PATCH',
+   token:courier.token,body:{lat:21.01,lng:-103.7104}})).code,200);
+ assert.equal((await call('/orders/delivery-quote',{method:'POST',
+   token:customer.token,body:quoteBody})).code,409);
  assert.equal((await call('/driver/location',{method:'PATCH',
    token:courier.token,body:{lat:20.6503,lng:-103.7104}})).code,200);
  const quote=await call('/orders/delivery-quote',{method:'POST',
