@@ -68,6 +68,7 @@ jobs:
         run: |
           bash -n scripts/rc811-kali-stage-candidate.sh
           bash -n scripts/rc811-kali-stage-promote.sh
+          bash -n scripts/rc811-stage-schema-gate.sh
       - name: Validate read-only postdeploy shell syntax
         run: |
           bash -n scripts/rc89-stage-postdeploy-check.sh
