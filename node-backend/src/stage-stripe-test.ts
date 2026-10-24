@@ -39,7 +39,11 @@ export async function createTestPaymentIntent(orderId:number,buyerId:number) {
   // Never expose a payment client secret to an administrator or another buyer.
   if(!order||order.userId!==buyerId)
     throw new TestPaymentError(404,'Pedido no encontrado');
-  if(order.orderType!=='pickup'||order.paymentMethod!=='stripe'||
+  const allowedOrderType=order.orderType==='pickup'||
+    (order.orderType==='delivery'&&
+     config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'&&
+     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true');
+  if(!allowedOrderType||order.paymentMethod!=='stripe'||
      order.paymentProvider!=='stripe'||order.paymentStatus!=='pending'||
      order.status!=='awaiting_payment'||order.cancelledReason||
      order.refundedAmount.toString()!=='0')
@@ -49,7 +53,8 @@ export async function createTestPaymentIntent(orderId:number,buyerId:number) {
   if(Date.now()-order.createdAt.getTime()>30*60*1000)
     throw new TestPaymentError(409,'Pedido de tarjeta vencido; requiere revisión');
   const amount=moneyMinor(order.total.toFixed(2));
-  const metadata={order_id:String(order.id),buyer_id:String(buyerId),mode:'rc7_test_pickup'};
+  const mode=order.orderType==='delivery'?'rc810_test_delivery':'rc7_test_pickup';
+  const metadata={order_id:String(order.id),buyer_id:String(buyerId),mode};
   const requestKey='tala-node-stage-payment-intent-'+order.id+'-v1';
   let pointer=order.paymentProviderId;
   if(!pointer){
@@ -89,7 +94,7 @@ export async function createTestPaymentIntent(orderId:number,buyerId:number) {
   if(intent.livemode||intent.amount!==amount||intent.currency!=='mxn'||
      intent.metadata.order_id!==String(order.id)||
      intent.metadata.buyer_id!==String(buyerId)||
-     intent.metadata.mode!=='rc7_test_pickup'||
+     intent.metadata.mode!==mode||
      !intent.client_secret||intent.status==='canceled')
     throw new TestPaymentError(503,'Stripe TEST devolvió un intento inconsistente');
 
@@ -124,7 +129,11 @@ Promise<string>{
   const order=await db.marketOrder.findUnique({where:{id:orderId}});
   if(!order||order.userId!==actorId)
     throw new TestPaymentError(404,'Pedido no encontrado');
-  if(order.orderType!=='pickup'||order.paymentMethod!=='stripe'||
+  const allowedOrderType=order.orderType==='pickup'||
+    (order.orderType==='delivery'&&
+     config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'&&
+     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true');
+  if(!allowedOrderType||order.paymentMethod!=='stripe'||
      order.paymentStatus!=='pending'||order.status!=='awaiting_payment')
     throw new TestPaymentError(409,'Pago ya confirmado o pedido no cancelable');
   const pointer=order.paymentProviderId;
@@ -138,7 +147,7 @@ Promise<string>{
   if(intent.livemode||intent.amount!==moneyMinor(order.total.toFixed(2))||
      intent.currency!=='mxn'||intent.metadata.order_id!==String(orderId)||
      intent.metadata.buyer_id!==String(actorId)||
-     intent.metadata.mode!=='rc7_test_pickup')
+     intent.metadata.mode!==(order.orderType==='delivery'?'rc810_test_delivery':'rc7_test_pickup'))
     throw new TestPaymentError(503,'Pago Stripe TEST no coincide con el pedido');
   if(intent.status!=='canceled'){
     // Fail closed if the card was captured or is in an ambiguous state.
@@ -172,7 +181,10 @@ export async function processStripeTestReceipt(eventId:string):Promise<void>{
   const intent=await provider.paymentIntents.retrieve(object.id);
   const orderId=Number(intent.metadata.order_id),buyerId=Number(intent.metadata.buyer_id);
   if(!Number.isSafeInteger(orderId)||orderId<=0||!Number.isSafeInteger(buyerId)||
-     buyerId<=0||intent.metadata.mode!=='rc7_test_pickup'||intent.livemode||
+     buyerId<=0||!['rc7_test_pickup','rc810_test_delivery'].includes(intent.metadata.mode)||
+     (intent.metadata.mode==='rc810_test_delivery'&&
+      (config.STAGE_DELIVERY_STRIPE_TEST_ENABLED!=='true'||
+       config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED!=='true'))||intent.livemode||
      intent.currency!=='mxn')
     throw new TestPaymentError(503,'Evento sin referencia de pedido TEST válida');
 
@@ -184,7 +196,8 @@ export async function processStripeTestReceipt(eventId:string):Promise<void>{
     if(receipt.status==='PROCESSED')return;
     await tx.$queryRaw`SELECT id FROM orders WHERE id=${orderId} FOR UPDATE`;
     const order=await tx.marketOrder.findUnique({where:{id:orderId}});
-    if(!order||order.userId!==buyerId||order.orderType!=='pickup'||
+    if(!order||order.userId!==buyerId||
+       order.orderType!==(intent.metadata.mode==='rc810_test_delivery'?'delivery':'pickup')||
        order.paymentMethod!=='stripe'||order.paymentProvider!=='stripe'||
        order.paymentProviderId!==intent.id||
        moneyMinor(order.total.toFixed(2))!==intent.amount)
@@ -213,6 +226,11 @@ export async function processStripeTestReceipt(eventId:string):Promise<void>{
           ['gmv',order.total.toFixed(2),'GMV después de pago TEST'],
           ['restaurant_payable',order.restaurantPayout.toFixed(2),
             'Saldo comercio condicionado a liquidación TEST'],
+          ...(order.orderType==='delivery'?[
+            ['driver_payable',(Number(order.driverEarning.toFixed(2))+
+              Number(order.tip.toFixed(2))).toFixed(2),
+              'Ganancia repartidor TEST condicionada a liquidación'] as const,
+          ]:[]),
           ['platform_revenue',order.platformRevenue.toFixed(2),
             'Ingresos de plataforma después de cobro TEST'],
           ['payment_processing','-'+order.paymentProcessingFee.toFixed(2),
