@@ -149,6 +149,11 @@ async function sweepReadyDeliveries():Promise<void>{
       for(const item of ready)
         if(eligible.has(item.id))await dispatchStageDeliveryReady(item.id);
     }
+    // Independent from the generic worker heartbeat. A running process with
+    // a crashed READY sweep must NOT be reported as dispatch-operational.
+    // Only signal after a successful PostgreSQL scan + bounded retry pass.
+    // Redis TTL self-expires after missed or failed scans.
+    await connection.set('tala:node:stage:dispatch:sweep:ok','1','EX',60);
   }catch(err){
     console.error('RC88_READY_DISPATCH_RETRY_FAILED',
       err instanceof Error?err.name:'unknown');
