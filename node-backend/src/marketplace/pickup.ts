@@ -163,6 +163,19 @@ export async function completeStagePickup(
         cashCollected:cash?order.total:'0.00', // tarjeta NO es efectivo recibido
       },
     });
+    // RC8.7: record physical collection at the pickup handoff exactly
+    // once, atomically with PIN proof and delivered state. Money stays
+    // with the merchant; this is NOT a Stripe receipt or a transferable
+    // platform balance. The early cash order economics remain estimates.
+    if(cash){
+      await tx.stageFinancialLedgerEntry.create({data:{
+        orderId:order.id,userId:order.userId,restaurantId:order.restaurantId,
+        account:'cash_collected_by_merchant',direction:'credit',
+        amount:order.total,kind:'cash_pickup_collection',
+        description:'Efectivo recibido por comercio al entregar pickup; conciliación pendiente',
+        idempotencyKey:'order:'+order.id+':cash-pickup:collected',
+      }});
+    }
     await tx.stageDeliveryProof.create({data:{
       orderId:order.id,driverId:actor.id,pinVerified:true,
       photoUrl:payload.photo_url??'',lat:payload.lat??null,lng:payload.lng??null,
