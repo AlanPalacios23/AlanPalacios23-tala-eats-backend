@@ -11,6 +11,22 @@ const opts={
 const stripe=(x)=>x.methods.methods.find(m=>m.id==='stripe');
 const cash=(x)=>x.methods.methods.find(m=>m.id==='cash');
 
+test('tarifas de referencia respetan motor Node v1.6.2 y no habilitan delivery',()=>{
+  const v162=buildPublicPaymentContracts({...opts,pricingV162Enabled:true});
+  assert.equal(v162.methods.commercial_pricing_version,'1.6.2');
+  assert.equal(v162.methods.service_fee_rate,'0.07');
+  assert.equal(v162.methods.service_fee_cap,'25.00');
+  assert.equal(v162.methods.delivery_base_fee,'35.00');
+  assert.equal(v162.methods.delivery_included_km,'2');
+  assert.equal(v162.methods.delivery_additional_per_km,'5.00');
+  assert.equal(v162.methods.delivery_checkout_supported,false);
+  const legacy=buildPublicPaymentContracts({...opts,pricingV162Enabled:false});
+  assert.equal(legacy.methods.commercial_pricing_version,'1.5.2');
+  assert.equal(legacy.methods.delivery_base_fee,'39.00');
+  assert.equal(legacy.methods.service_fee_cap,undefined);
+  assert.equal(legacy.methods.delivery_checkout_supported,false);
+});
+
 test('staging Flutter API shows Stripe TEST and never advertises live collection',()=>{
   const r=buildPublicPaymentContracts(opts);
   assert.equal(stripe(r).enabled,true);
