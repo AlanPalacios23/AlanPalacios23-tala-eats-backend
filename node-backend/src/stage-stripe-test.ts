@@ -74,8 +74,9 @@ export async function createTestPaymentIntent(orderId:number,buyerId:number) {
   const intent=pointer===STRIPE_INTENT_RESERVATION
     ? await provider.paymentIntents.create({
         amount,currency:'mxn',
+        // RC8.7: same compatible card-only Stripe v23 contract as LIVE.
+        // Do not combine explicit card selection with automatic methods.
         allowed_payment_method_types:['card'],
-        automatic_payment_methods:{enabled:true,allow_redirects:'never'},
         capture_method:'automatic',
         metadata,description:'Tala Eats pedido TEST #'+order.id,
       },{idempotencyKey:requestKey})
