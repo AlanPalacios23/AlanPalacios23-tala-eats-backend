@@ -63,9 +63,12 @@ export type PickupProof = {
 export async function completeStagePickup(
   orderId:number, actor:AuthUser, payload:PickupProof,
 ):Promise<number>{
+  const liveCardEnabled=config.NODE_ENV==='production'&&
+    config.STRIPE_LIVE_ENABLED==='true'&&
+    config.STRIPE_FINANCIAL_WRITES_ENABLED==='true';
   if(config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true'&&
-     config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true')
-    reject(503,'Entrega de staging deshabilitada');
+     config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true'&&!liveCardEnabled)
+    reject(503,'Entrega de recogida deshabilitada');
   if(!['restaurant','admin'].includes(actor.role))
     reject(403,'No autorizado');
   // Authorize owner before incrementing a SHARED per-order PIN budget.
@@ -81,7 +84,8 @@ export async function completeStagePickup(
     reject(403,'Ese pedido no pertenece a tu restaurante');
   if(candidate.orderType!=='pickup'||
      !((candidate.paymentMethod==='cash'&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true')||
-       (candidate.paymentMethod==='stripe'&&config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true')))
+       (candidate.paymentMethod==='stripe'&&
+        (config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'||liveCardEnabled))))
     reject(503,'Solo recogida de staging con método habilitado');
   await limitPickupPin(orderId,actor.id);
   return db.$transaction(async tx=>{
@@ -96,7 +100,8 @@ export async function completeStagePickup(
     if(actor.role!=='admin' && order.restaurant.ownerId!==actor.id)
       reject(403,'Ese pedido no pertenece a tu restaurante');
     const cash=order.paymentMethod==='cash'&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true';
-    const card=order.paymentMethod==='stripe'&&config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true';
+    const card=order.paymentMethod==='stripe'&&
+      (config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'||liveCardEnabled);
     if(order.orderType!=='pickup'||(!cash&&!card))
       reject(503,'Solo recogida de staging con método habilitado');
     // Replay is idempotent only if a valid proof exists.
@@ -110,13 +115,18 @@ export async function completeStagePickup(
        card&&order.paymentStatus==='paid'))
       reject(409,'Pedido o pago no apto para entrega');
     if(card){
+      const live=liveCardEnabled;
       const verified=await tx.stageFinancialLedgerEntry.findFirst({
-        where:{orderId:order.id,kind:'stripe_test_payment',
-          account:'stripe_test_collected',
-          idempotencyKey:'order:'+order.id+':stripe-test:collected'},
+        where:{orderId:order.id,
+          kind:live?'stripe_live_payment':'stripe_test_payment',
+          account:live?'stripe_live_collected':'stripe_test_collected',
+          direction:'credit',
+          idempotencyKey:live?
+            'order:'+order.id+':stripe-live:collected':
+            'order:'+order.id+':stripe-test:collected'},
       });
       if(!verified||verified.amount.toFixed(2)!==order.total.toFixed(2))
-        reject(503,'Pago Stripe TEST sin conciliación: no entregar');
+        reject(503,'Pago Stripe sin comprobante financiero firmado: no entregar');
     }
     // Exclude legacy/imported records that did not originate in isolated C1.
     const initial=await tx.stageOrderEvent.findFirst({
