@@ -56,6 +56,11 @@ jobs:
           python3 -m py_compile node-backend/scripts/rc813-web-push-live-onepass.py
           python3 -m unittest discover -s node-backend/scripts -p test_rc813_web_push_live_onepass.py -v
           bash -n node-backend/scripts/rc813-unified-live-cutover.sh
+      - name: Validate RC814 opt-in LIVE pickup cash with private-env rollback
+        run: |
+          python3 -m py_compile node-backend/scripts/rc814-enable-live-pickup-cash.py
+          bash -n node-backend/scripts/rc814-pickup-live-go-live.sh
+          python3 -m unittest discover -s node-backend/scripts -p test_rc814_cash_live.py -v
       - name: Verify saved PM2 recovery is safe and syntax-valid
         run: |
           python3 -m py_compile node-backend/scripts/rc813-preserve-saved-parallel-pm2.py
