@@ -1,4 +1,5 @@
 import { Worker } from 'bullmq';
+import {deliverWebPushIteration,webPushConfigured} from './operational/web-push.js';
 import { Redis } from 'ioredis';
 import { config } from './config.js';
 import { db } from './db.js';
@@ -191,8 +192,23 @@ async function tickMail(){
 const mailTimer=config.STAGE_EMAIL_DELIVERY_MODE==='resend'
  ? setInterval(()=>{void tickMail();},30_000):null;
 if(mailTimer)void tickMail();
+// Operational Web Push is an independent timer, never a Stripe side effect.
+let pushBusy=false;
+async function tickPush(){
+ if(pushBusy||!webPushConfigured())return;
+ pushBusy=true;
+ try{
+  await deliverWebPushIteration(25);
+  await connection.set('tala:node:stage:web-push:heartbeat','ready','EX',45);
+ }catch(err){
+  console.error('STAGE_WEB_PUSH_WORKER_HOLD',err instanceof Error?err.name:'unknown');
+ }finally{pushBusy=false;}
+}
+const pushTimer=webPushConfigured()?setInterval(()=>{void tickPush();},15_000):null;
+if(pushTimer)void tickPush();
 console.log('TALA_STAGE_WORKER_RUNNING');
 async function shutdown() {
+  if(pushTimer)clearInterval(pushTimer);
   if(mailTimer)clearInterval(mailTimer);
   clearInterval(workerHeartbeatTimer);
   clearInterval(receiptSweepTimer);

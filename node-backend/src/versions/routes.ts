@@ -8,6 +8,7 @@ import { db } from '../db.js';
 import { config } from '../config.js';
 import { account, bad, param } from '../operational/routes.js';
 import { verifyTotp } from '../auth/crypto.js';
+import {validPushEndpoint,webPushConfigured} from '../operational/web-push.js';
 export const v9Router=Router();
 export const v10Router=Router();
 export const v11Router=Router();
@@ -124,8 +125,21 @@ v11Router.get('/release-cohort',async(req,res)=>{
  res.setHeader('Cache-Control','private, no-store');
  res.json({bucket,canary_percent:percent,channel:bucket<percent?'canary':'stable',version:VERSION});
 });
-v11Router.get('/push/config',(_req,res)=>{
- res.json({enabled:false,public_key:null});
+v11Router.get('/push/config',async(_req,res)=>{
+ let worker=false;
+ if(webPushConfigured()){
+  const redis=new Redis(config.REDIS_URL,{
+   lazyConnect:true,connectTimeout:1400,maxRetriesPerRequest:1,
+   retryStrategy:()=>null,
+  });
+  try{
+   await redis.connect();
+   worker=(await redis.get(`tala:node:${config.NODE_ENV==='production'?'live':'stage'}:web-push:heartbeat`))==='ready';
+  }catch{worker=false;}finally{redis.disconnect();}
+ }
+ const enabled=webPushConfigured()&&worker;
+ res.setHeader('Cache-Control','no-store');
+ res.json({enabled,public_key:enabled?config.WEB_PUSH_VAPID_PUBLIC_KEY:null});
 });
 v11Router.get('/privacy/preferences',async(req,res)=>{
  const who=await account(req);
@@ -1143,6 +1157,7 @@ const pushPublic=(x:{
  active:x.active,created_at:x.createdAt.toISOString(),
  updated_at:x.updatedAt.toISOString()});
 v11Router.post('/push/subscriptions',async(req,res)=>{
+ if(!webPushConfigured())return bad(503,'Web Push no está configurado');
  const who=await account(req);
  const p=valid(z.strictObject({
   endpoint:z.url().min(20).max(1200),
@@ -1151,7 +1166,8 @@ v11Router.post('/push/subscriptions',async(req,res)=>{
   platform:z.enum(['web','android','ios']).default('web'),
   device_label:z.string().max(200).default(''),
  }),req.body);
- if(!p.endpoint.startsWith('https://'))return bad(422,'Push requiere HTTPS');
+ if(!validPushEndpoint(p.endpoint))return bad(422,'Proveedor push no autorizado');
+ if(p.platform!=='web'||!p.p256dh||!p.auth)return bad(422,'Suscripción Web Push incompleta');
  // Endpoints are bearer capabilities; one endpoint can only belong to one
  // current account. Serialize cross-worker moves by PostgreSQL advisory lock.
  const created=await db.$transaction(async tx=>{
