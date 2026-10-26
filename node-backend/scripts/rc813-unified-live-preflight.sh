@@ -75,12 +75,13 @@ fi
 }
 if [[ "$MODE" == --verify ]];then
  run_live --input-type=module - <<'JS'
+import {execFileSync} from 'node:child_process';
+const curlJson=(url)=>JSON.parse(execFileSync('curl',['-fsS','--max-time','12',url],{encoding:'utf8',timeout:14000}));
 const local='http://127.0.0.1:18190/api/v1',pub='https://talaeats.alan-palacios-dev.com/api/v1';
 for(const base of [local,pub]){
- const h=await fetch(base+'/health',{signal:AbortSignal.timeout(12000)});
- const ready=await fetch(base+'/ready',{signal:AbortSignal.timeout(12000)});
- const [a,b]=await Promise.all([h.json(),ready.json()]);
- if(!h.ok||!ready.ok||a.status!=='ok'||a.version!=='rc8.13-unified-live'||
+ const a=curlJson(base+'/health');
+ const b=curlJson(base+'/ready');
+ if(a.status!=='ok'||a.version!=='rc8.13-unified-live'||
  a.production!==true||a.online_payment_writes!==true||b.ready!==true||
  b.environment!=='production'||b.workerOnline!==true||b.financialWrites!==true||
  b.onlinePaymentsEnabled!==true)throw Error('RC813_LIVE_POSTDEPLOY_NOT_READY');
@@ -112,12 +113,13 @@ run_live scripts/rc86-live-activation-audit.mjs || {
  echo 'RC813_LIVE_ABORT=FINANCIAL_AUDIT_HOLD';exit 1;
 }
 run_live --input-type=module - <<'JS'
+import {execFileSync} from 'node:child_process';
+const curlJson=(url)=>JSON.parse(execFileSync('curl',['-fsS','--max-time','12',url],{encoding:'utf8',timeout:14000}));
 const bases=['http://127.0.0.1:18190','https://talaeats.alan-palacios-dev.com'];
 for(const base of bases){
- const h=await fetch(base+'/api/v1/health',{signal:AbortSignal.timeout(12000)});
- const ready=await fetch(base+'/api/v1/ready',{signal:AbortSignal.timeout(12000)});
- const [a,b]=await Promise.all([h.json(),ready.json()]);
- if(!h.ok||!ready.ok||a.production!==true||
+ const a=curlJson(base+'/api/v1/health');
+ const b=curlJson(base+'/api/v1/ready');
+ if(a.production!==true||
  a.online_payment_writes!==true||b.workerOnline!==true||
  b.ready!==true||b.environment!=='production'||
  b.financialWrites!==true||b.onlinePaymentsEnabled!==true)
