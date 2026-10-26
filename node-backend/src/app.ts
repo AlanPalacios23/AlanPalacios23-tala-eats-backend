@@ -4,6 +4,7 @@ import { Redis } from 'ioredis';
 import {buildLiveRuntimeDependencies} from './live/runtime-dependencies.js';
 import {buildIsolatedWebhookRouter} from './live/webhook-router.js';
 import {buildIsolatedCheckoutRouter} from './live/checkout-router.js';
+import {pickupCapability,type PickupMerchant} from './live/pickup-readiness.js';
 import {buildLiveMerchantFinanceRouter} from './live/merchant-finance-router.js';
 import {buildPayeeFinanceRouter} from './live/payee-finance-router.js';
 import {inspectLiveFinancialData} from './live/financial-readiness.js';
@@ -52,6 +53,52 @@ app.use(express.json({ limit: '128kb' }));
 if(live){
   app.use('/api/v1',buildLiveMerchantFinanceRouter(live.pool,live.stripe));
   app.use('/api/v1',buildPayeeFinanceRouter(live.pool,live.stripe));
+  // Read-only, buyer-visible readiness for THIS merchant. Global payment
+  // method configuration alone does not mean a particular shop can receive
+  // orders. Never echo Stripe account IDs, owner emails, or bank details.
+  app.get('/api/v1/restaurants/:id/pickup-readiness',async(req,res)=>{
+    res.setHeader('Cache-Control','private, no-store');
+    try {
+      const session=await current(req);
+      if(!['customer','admin'].includes(session.user.role)){
+        res.status(403).json({error:'BUYER_REQUIRED'});return;
+      }
+      if(session.user.role==='admin'&&
+        (!session.user.twoFactorEnabled||!session.mfaVerified)){
+        res.status(403).json({error:'ADMIN_MFA_REQUIRED'});return;
+      }
+      const id=Number(req.params.id);
+      if(!Number.isSafeInteger(id)||id<=0){
+        res.status(422).json({error:'RESTAURANT_ID_INVALID'});return;
+      }
+      const result=await live.pool.query<PickupMerchant>(
+        `SELECT r.id,r.is_open,r.pickup_enabled,r.verification_status,
+         r.onboarding_status,r.owner_id,u.email AS owner_email,
+         u.is_active AS owner_active,m.stripe_account_id,m.owner_approved_at
+         FROM restaurants r
+         LEFT JOIN users u ON u.id=r.owner_id
+         LEFT JOIN tala_live_merchant_accounts m ON m.restaurant_id=r.id
+         WHERE r.id=$1 LIMIT 1`,[id]);
+      const seller=result.rows[0]??null;
+      if(!seller){
+        res.status(404).json({error:'RESTAURANT_NOT_FOUND'});return;
+      }
+      // Do not call Stripe unless the mapping belongs to a verified,
+      // approved owner. Avoid confusing an outage with authorization.
+      if(seller.owner_approved_at&&seller.stripe_account_id){
+        const account=await live.stripe.accounts.retrieve(seller.stripe_account_id);
+        res.json(pickupCapability(seller,account,liveChargeApproved,
+          config.STRIPE_PLATFORM_ACCOUNT_ID,
+          config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true'));
+        return;
+      }
+      res.json(pickupCapability(seller,null,liveChargeApproved,
+        config.STRIPE_PLATFORM_ACCOUNT_ID,
+        config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true'));
+    }catch {
+      res.status(503).json({error:'PICKUP_READINESS_UNAVAILABLE'});
+    }
+  });
   // Check the payee again at PaymentIntent time: a previously created
   // pending order must NEVER bypass the seller authorization gate.
   app.post(['/api/v1/orders/:id/stripe/payment-intent',

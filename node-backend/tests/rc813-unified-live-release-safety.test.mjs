@@ -57,6 +57,12 @@ test('RC8.13 retiring temporary PM2 requires verified LIVE SHA and separate oper
  assert.match(retire,/stage_pm2 delete tala-rc813-parallel-worker/);
  assert.doesNotMatch(retire,/flushdb|flushall|DROP DATABASE|prisma migrate deploy/);
 });
+test('RC8.14 pickup LIVE promotion locks exact current WEB PUSH financial runtime',()=>{
+ assert.match(promote,/10f28bcaf63efd3e0ab9dc0366440219da261916/);
+ assert.doesNotMatch(promote,/OLD_SHA.*aea74744ba47db2333bcef052b296a7a7ab63eb9/);
+ assert.match(promote,/RC813_CONNECT_TRANSFERS=STILL_OFF/);
+ assert.match(promote,/RC813_LIVE_PUSH_WORKER_AND_PUBLIC_VAPID=PASS/);
+});
 test('RC8.13 shell syntax and no invocation without deliberate approval',()=>{
  for(const file of ['rc813-unified-live-preflight.sh','rc813-unified-live-cutover.sh','rc813-retire-parallel-stage.sh']){
   const path=new URL('../scripts/'+file,import.meta.url).pathname;
