@@ -311,8 +311,11 @@ def main():
   raise
  execute(["bash","scripts/rc813-unified-live-preflight.sh","--verify",CANDIDATE],cwd=WORK,timeout=60)
  live_http_ready()
- with urlopen(DOMAIN+"/api/v1/v11/push/config",timeout=8) as res:
-  p=json.loads(res.read(4096))
+ result=subprocess.run(["curl","-fsS","--max-time","15",
+  DOMAIN+"/api/v1/v11/push/config"],capture_output=True,text=True,timeout=19)
+ if result.returncode:fail("LIVE_WEB_PUSH_CONFIG_HTTP_FAILED")
+ try:p=json.loads(result.stdout)
+ except ValueError:fail("LIVE_WEB_PUSH_CONFIG_INVALID_JSON")
  if p.get("enabled") is not True or not isinstance(p.get("public_key"),str):
   fail("WEB_PUSH_PUBLIC_NOT_READY_POST_CUTOVER")
  print("LIVE_PUSH_PUBLIC_WEB_CONFIG=PASS")
