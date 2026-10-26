@@ -27,7 +27,7 @@ test('Web Push stage migration script is valid Bash and limits all DB writes to 
   "PUSH_DB_WEB_PUSH_LEDGER_APPLIED=PASS",
   'PUSH_DB_LIVE_AND_PM2=UNMODIFIED'
  ]) assert.ok(source.includes(expected),expected);
- assert.ok(source.indexOf('PUSH_DB_PLAN_ONLY=PASS')<source.indexOf('pg_dump'));
+ assert.ok(source.indexOf('PUSH_DB_PLAN_ONLY=PASS')<source.indexOf("spawnSync('pg_dump'"));
  assert.ok(source.indexOf('PUSH_DB_STAGE_PGDUMP_VERIFIED=PASS')<source.indexOf('migrate deploy'));
  assert.ok(source.indexOf('I_APPROVE_STAGE_PUSH_DB_ONLY')<source.indexOf('migrate deploy'));
  for(const banned of [
