@@ -1,0 +1,42 @@
+name: RC8.13 isolated Node Web Push QA
+on:
+  push:
+    branches: [feat/rc813-web-push-vapid-20261026]
+    paths:
+      - node-backend/**
+      - .github/workflows/rc813-web-push-ci.yml
+  pull_request:
+    paths:
+      - node-backend/**
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rc813-web-push-qa-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  web-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Install pinned dependencies
+        working-directory: node-backend
+        run: npm ci --no-audit --no-fund
+      - name: Generate Prisma client without database
+        working-directory: node-backend
+        run: npm run generate
+      - name: Validate schema without database writes
+        working-directory: node-backend
+        run: npm run db:validate
+      - name: Compile all Node routes and workers
+        working-directory: node-backend
+        run: npm run build
+      - name: Push SSRF/consent/finance-isolation tests
+        working-directory: node-backend
+        run: node --test tests/rc813-web-push-vapid.test.mjs
