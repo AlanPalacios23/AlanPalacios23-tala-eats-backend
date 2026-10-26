@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
+import {spawnSync} from 'node:child_process';
 import {validPushEndpoint,safeNotificationPath,PROMOTIONAL_PUSH_KINDS} from '../dist/operational/web-push-policy.js';
 
 const read=p=>readFileSync(fileURLToPath(new URL(p,import.meta.url)),'utf8');
@@ -54,4 +55,20 @@ test('delivery architecture is opt-in and does not change Stripe/financial mutat
  assert.ok(route.includes("v11Router.get('/push/config'"));
  assert.ok(route.includes('webPushConfigured()&&worker'));
  assert.ok(route.includes("if(!validPushEndpoint(p.endpoint))"));
+});
+
+test('stage bootstrap pins a known CI commit and cannot apply DB migrations or PM2',()=>{
+ const script=read('../scripts/rc813-web-push-prepare-kali.sh');
+ const file=fileURLToPath(new URL('../scripts/rc813-web-push-prepare-kali.sh',import.meta.url));
+ const result=spawnSync('bash',['-n',file],{encoding:'utf8'});
+ assert.equal(result.status,0,result.stderr);
+ assert.ok(script.includes("SHA='398b531c4778a03975f30470f6979a38b9c8bb62'"));
+ assert.ok(script.includes('bash "$RUNNER" --prepare "$SHA"'));
+ assert.ok(script.includes('bash "$RUNNER" --plan "$SHA"'));
+ assert.ok(script.includes('PUSH_STAGE_PRISMA_PLAN=HOLD_REVIEW_MIGRATIONS_AND_STAGE_DATA'));
+ assert.ok(script.includes('PRIVATE_PARALLEL_STAGE_ENV=VALID'));
+ assert.ok(script.includes('ISOLATED_PM2_DIRECTORY=ABSENT'));
+ assert.ok(!script.includes('prisma migrate deploy'));
+ assert.ok(!script.includes('pm2 start'));
+ assert.ok(!script.includes('bash "$RUNNER" --apply'));
 });
