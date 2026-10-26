@@ -38,6 +38,10 @@ class LiveWebPushGate(unittest.TestCase):
    with self.subTest(key=key):
     with self.assertRaises(SystemExit):
      mod.verify_flags({**GOOD,key:value})
+ def test_existing_live_redis_db0_can_be_used_while_stage_db1_is_forbidden(self):
+  mod.verify_flags({**GOOD,"REDIS_URL":"redis://:password@127.0.0.1:16379/0"})
+  with self.assertRaises(SystemExit):
+   mod.verify_flags({**GOOD,"REDIS_URL":"redis://:password@127.0.0.1:16379/1"})
  def test_duplicate_env_forbidden(self):
   with self.assertRaises(SystemExit):
    mod.env_dict("WEB_PUSH_ENABLED=false\nWEB_PUSH_ENABLED=true\n")
