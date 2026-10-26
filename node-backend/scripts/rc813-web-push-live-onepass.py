@@ -87,7 +87,7 @@ def verify_flags(v):
     (pg.hostname=="127.0.0.1" and pg.port==15435) or
     pg.username=="tala_node_stage" or pg.path=="/tala_node_stage" or
     rd.scheme not in ("redis","rediss") or not rd.hostname or not rd.password or
-    (rd.hostname=="127.0.0.1" and rd.port==16379 and rd.path in ("","/0","/1")) or
+    (rd.hostname=="127.0.0.1" and rd.port==16379 and rd.path=="/1") or
     any(v.get(k,"false")!="true" for k in CHECKS) or
     any(v.get(k,"false")!="false" for k in OFF) or
     v.get("WEB_PUSH_ENABLED","false")!="false"):
