@@ -913,6 +913,23 @@ model StagePushSubscription {
  @@index([active])
  @@map("push_subscriptions")
 }
+// Additive durable Web Push delivery attempts; no Stripe/ledger tables changed.
+model StageWebPushDelivery {
+ id Int @id @default(autoincrement())
+ notificationId Int @map("notification_id")
+ subscriptionId Int @map("subscription_id")
+ status String @default("pending") @db.VarChar(24)
+ attempts Int @default(0)
+ nextAttemptAt DateTime @default(now()) @map("next_attempt_at")
+ claimUntil DateTime? @map("claim_until")
+ sentAt DateTime? @map("sent_at")
+ lastError String @default("") @map("last_error") @db.VarChar(160)
+ createdAt DateTime @default(now()) @map("created_at")
+ updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+ @@unique([notificationId,subscriptionId],name:"uq_web_push_pair")
+ @@index([status,nextAttemptAt],name:"idx_web_push_retry")
+ @@map("web_push_deliveries")
+}
 model StageSubstitution {
  id Int @id @default(autoincrement())
  orderId Int @map("order_id")
