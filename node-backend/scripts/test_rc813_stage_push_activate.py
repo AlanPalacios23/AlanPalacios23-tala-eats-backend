@@ -41,7 +41,6 @@ class ActivationTest(unittest.TestCase):
   self.assertIn("RC813_STAGE_PUSH_ACTIVATION_PLAN_READ_ONLY=PASS",code)
   self.assertIn("ACTIVE_STAGE_SUBSCRIPTIONS_REQUIRE_REVIEW",code)
   self.assertIn("SELECT count(*)::int AS n FROM push_subscriptions",code)
-  self.assertIn('env.get("STRIPE_SECRET_KEY")',code) if False else None
   self.assertIn("run_pm2(\"restart\",name,\"--update-env\")",code)
   self.assertIn('("tala-rc813-parallel-worker","tala-rc813-parallel-api")',code)
   self.assertIn("except (Exception,SystemExit):",code)
