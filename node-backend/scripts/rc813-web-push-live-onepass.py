@@ -102,14 +102,20 @@ def verify_flags(v):
 
 def live_http_ready():
  for base in ("http://127.0.0.1:18190",DOMAIN):
+  cmd=["curl","-fsS","--connect-timeout","5","--max-time","15"]
+  if base.startswith("http://127.0.0.1:"):
+   cmd+=["--noproxy","*"]
   try:
-   with urlopen(base+"/api/v1/ready",timeout=12) as res:
-    data=json.loads(res.read(4096))
-   if not(res.status==200 and data.get("ready") is True and
-     data.get("environment")=="production" and data.get("financialWrites") is True and
-     data.get("onlinePaymentsEnabled") is True and data.get("workerOnline") is True):
-    fail("LIVE_STRIPE_READINESS_UNEXPECTED")
-  except Exception:fail("LIVE_PUBLIC_OR_LOCAL_UNAVAILABLE")
+   result=subprocess.run(cmd+[base+"/api/v1/ready"],capture_output=True,
+     text=True,timeout=19)
+   if result.returncode:fail("LIVE_HTTP_CURL_FAILED")
+   data=json.loads(result.stdout)
+  except (ValueError,subprocess.TimeoutExpired):
+   fail("LIVE_HTTP_RESPONSE_INVALID")
+  if not(data.get("ready") is True and
+    data.get("environment")=="production" and data.get("financialWrites") is True and
+    data.get("onlinePaymentsEnabled") is True and data.get("workerOnline") is True):
+   fail("LIVE_STRIPE_READINESS_UNEXPECTED")
  print("LIVE_PUSH_EXISTING_STRIPE_HEALTH=PASS")
 
 def verify_pm2():
