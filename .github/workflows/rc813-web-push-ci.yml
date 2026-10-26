@@ -40,3 +40,5 @@ jobs:
       - name: Push SSRF/consent/finance-isolation tests
         working-directory: node-backend
         run: node --test tests/rc813-web-push-vapid.test.mjs
+      - name: Validate Kali read-only stage diagnostic syntax
+        run: python3 -c "import ast,pathlib; ast.parse(pathlib.Path('node-backend/scripts/rc813-web-push-stage-readonly.py').read_text())"
