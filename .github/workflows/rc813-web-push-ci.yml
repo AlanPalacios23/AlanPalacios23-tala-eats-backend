@@ -40,6 +40,9 @@ jobs:
       - name: Push SSRF, finance isolation and stage-only migration safety tests
         working-directory: node-backend
         run: node --test tests/rc813-web-push-vapid.test.mjs tests/rc813-web-push-stage-migration.test.mjs
+      - name: Validate Redis DB1 exact-key recovery safeguards
+        working-directory: node-backend
+        run: node --test tests/rc813-redis-db1-meta-recovery.test.mjs
       - name: Validate Kali read-only stage diagnostic syntax
         run: python3 -c "import ast,pathlib; ast.parse(pathlib.Path('node-backend/scripts/rc813-web-push-stage-readonly.py').read_text())"
       - name: Verify saved PM2 recovery is safe and syntax-valid
