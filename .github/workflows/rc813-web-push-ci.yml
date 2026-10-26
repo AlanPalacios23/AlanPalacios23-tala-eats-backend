@@ -51,6 +51,11 @@ jobs:
           python3 -m unittest discover -s node-backend/scripts -p test_rc813_vapid_private.py -v
           python3 -m py_compile node-backend/scripts/rc813-stage-web-push-activate.py
           python3 -m unittest discover -s node-backend/scripts -p test_rc813_stage_push_activate.py -v
+      - name: Validate LIVE Web Push one-pass cutover syntax and finance isolation
+        run: |
+          python3 -m py_compile node-backend/scripts/rc813-web-push-live-onepass.py
+          python3 -m unittest discover -s node-backend/scripts -p test_rc813_web_push_live_onepass.py -v
+          bash -n node-backend/scripts/rc813-unified-live-cutover.sh
       - name: Verify saved PM2 recovery is safe and syntax-valid
         run: |
           python3 -m py_compile node-backend/scripts/rc813-preserve-saved-parallel-pm2.py
