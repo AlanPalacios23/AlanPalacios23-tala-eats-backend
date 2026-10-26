@@ -36,8 +36,9 @@ export async function deliverWebPushIteration(batch=20):Promise<{sent:number;fai
   if(claimedCount>=batch)break;
   const account=allowed.get(note.userId);
   if(!account||account.role!=='customer'||!account.isActive)continue;
-  for(const sub of subscriptions.filter(s=>s.userId===note.userId&&
-   note.createdAt>=sub.createdAt&&note.createdAt>=sub.updatedAt)){
+  for(const sub of subscriptions){
+   if(sub.userId!==note.userId||note.createdAt<sub.createdAt||
+      note.createdAt<sub.updatedAt)continue;
    if(!validPushEndpoint(sub.endpoint)){
     await db.stagePushSubscription.updateMany({where:{id:sub.id},data:{active:false}});
     continue;
