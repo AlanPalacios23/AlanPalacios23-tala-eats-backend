@@ -42,7 +42,7 @@ let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{
  }catch{process.exit(1)}
 })')" || { echo 'RC813_ABORT=UNEXPECTED_LIVE_PM2';exit 1; }
 OLD_SHA="$(git -C "$OLD_DIR" rev-parse --verify HEAD)" || exit 1
-[[ "$OLD_SHA" == 'aea74744ba47db2333bcef052b296a7a7ab63eb9' &&
+[[ "$OLD_SHA" == '10f28bcaf63efd3e0ab9dc0366440219da261916' &&
    "$OLD_DIR" != "$DIR" && -f "$OLD_DIR/dist/server.js" &&
    -f "$OLD_DIR/dist/live/production-worker.js" ]] || {
  echo 'RC813_ABORT=UNREVIEWED_PREVIOUS_LIVE_RELEASE';exit 1;
