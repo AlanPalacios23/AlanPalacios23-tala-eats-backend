@@ -188,14 +188,13 @@ if [[ "$PUSH_EXPECTED" == true ]]; then
  PUSH_READY=no
  for i in $(seq 1 15);do
   if node --env-file="$ENV" --input-type=module - <<'JS' >/dev/null 2>&1
+import {execFileSync} from 'node:child_process';
 const expected=process.env.WEB_PUSH_VAPID_PUBLIC_KEY;
 if(!expected||process.env.WEB_PUSH_ENABLED!=='true')process.exit(1);
 for(const root of ['http://127.0.0.1:18190','https://talaeats.alan-palacios-dev.com']){
- const res=await fetch(root+'/api/v1/v11/push/config',{
-   signal:AbortSignal.timeout(4000)});
- const value=await res.json();
- if(!res.ok||value.enabled!==true||value.public_key!==expected)
-   process.exit(1);
+ const raw=execFileSync('curl',['-fsS','--max-time','9',root+'/api/v1/v11/push/config'],{encoding:'utf8',timeout:11000});
+ const value=JSON.parse(raw);
+ if(value.enabled!==true||value.public_key!==expected)process.exit(1);
 }
 JS
   then PUSH_READY=yes;break;fi
