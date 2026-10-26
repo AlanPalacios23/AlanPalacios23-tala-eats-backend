@@ -128,15 +128,15 @@ def atomic_write(contents):
  finally:
   if os.path.exists(temp):os.unlink(temp)
 def main():
- if len(sys.argv) not in (3,4) or sys.argv[1] not in ("--plan","--activate") or
-  not re.fullmatch(r"[a-f0-9]{40}",sys.argv[2]):
+ if (len(sys.argv) not in (3,4) or sys.argv[1] not in ("--plan","--activate") or
+     not re.fullmatch(r"[a-f0-9]{40}",sys.argv[2])):
   hold("USE_PLAN_OR_ACTIVATE_WITH_SHA")
  mode,sha=sys.argv[1:3]
  if mode=="--activate" and (len(sys.argv)!=4 or sys.argv[3]!=APPROVAL):
   hold("EXPLICIT_CASH_APPROVAL_REQUIRED")
  if mode=="--plan" and len(sys.argv)!=3:hold("UNEXPECTED_ARGUMENTS")
- if os.geteuid()==0 or pwd.getpwuid(os.geteuid()).pw_name!="tala-node-stage" or
-   os.environ.get("HOME")!=str(HOME):
+ if (os.geteuid()==0 or pwd.getpwuid(os.geteuid()).pw_name!="tala-node-stage" or
+     os.environ.get("HOME")!=str(HOME)):
   hold("SERVICE_USER_REQUIRED")
  if not private_file(ENV):hold("LIVE_ENV_PRIVATE_0600")
  old=ENV.read_text()
@@ -152,8 +152,9 @@ def main():
  if mode=="--plan":
   print("RC814_LIVE_CASH_FLAG_PLAN=PASS_NO_WRITES")
   return
- if not BACKUPS.is_dir() or BACKUPS.is_symlink() or
-    BACKUPS.stat().st_uid!=os.geteuid() or stat.S_IMODE(BACKUPS.stat().st_mode)!=0o700:
+ if (not BACKUPS.is_dir() or BACKUPS.is_symlink() or
+     BACKUPS.stat().st_uid!=os.geteuid() or
+     stat.S_IMODE(BACKUPS.stat().st_mode)!=0o700):
   hold("PRIVATE_BACKUP_DIR_REQUIRED")
  backup=BACKUPS/("rc814-pre-live-cash-"+dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")+
   "-"+str(os.getpid())+".env")
