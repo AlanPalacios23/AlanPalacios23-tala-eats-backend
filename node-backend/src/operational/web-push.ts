@@ -2,29 +2,13 @@
 import webpush from 'web-push';
 import {db} from '../db.js';
 import {config} from '../config.js';
+import {PROMOTIONAL_PUSH_KINDS,safeNotificationPath,validPushEndpoint} from './web-push-policy.js';
+export {validPushEndpoint} from './web-push-policy.js';
 
-const PROMOTIONAL=new Set(['promo','promotion','marketing','advertising']);
 const MAX_ATTEMPTS=5;
 export function webPushConfigured():boolean {
  return config.WEB_PUSH_ENABLED==='true'&&Boolean(config.WEB_PUSH_VAPID_PUBLIC_KEY&&
   config.WEB_PUSH_VAPID_PRIVATE_KEY&&config.WEB_PUSH_SUBJECT);
-}
-/** Never let a forged browser subscription turn the API into a private-network POST proxy. */
-export function validPushEndpoint(endpoint:string):boolean {
- try {
-  const url=new URL(endpoint);
-  if(url.protocol!=='https:'||url.username||url.password||url.hash||
-     url.port&&url.port!=='443')return false;
-  const host=url.hostname.toLowerCase();
-  return host==='fcm.googleapis.com'||host==='fcmregistrations.googleapis.com'||
-   host==='updates.push.services.mozilla.com'||host==='web.push.apple.com'||
-   host.endsWith('.push.apple.com')||host.endsWith('.notify.windows.com');
- }catch{return false;}
-}
-export function safeNotificationPath(kind:string,message:string):string {
- const m=message.match(/(?:pedido|orden)\s*#([1-9][0-9]{0,11})/i);
- return m&&['order','delivery','payment','restaurant_order'].includes(kind)
-   ?'/pedidos/'+m[1]:'/notificaciones';
 }
 function retryAt(attempts:number):Date {
  return new Date(Date.now()+Math.min(30*60_000,30_000*2**Math.max(0,attempts-1)));
@@ -34,7 +18,7 @@ export async function deliverWebPushIteration(batch=20):Promise<{sent:number;fai
  const since=new Date(Date.now()-2*60*60*1000);
  const notices=await db.authNotification.findMany({
   where:{createdAt:{gte:since}},
-  orderBy:{createdAt:'asc'},take:Math.max(1,Math.min(50,batch)),
+  orderBy:{createdAt:'desc'},take:Math.max(100,Math.min(1000,batch*10)),
   select:{id:true,userId:true,createdAt:true,kind:true,title:true,message:true}
  });
  if(!notices.length)return {sent:0,failed:0,suppressed:0};
@@ -47,8 +31,9 @@ export async function deliverWebPushIteration(batch=20):Promise<{sent:number;fai
   where:{active:true,platform:'web',userId:{in:users.map(u=>u.id)}},
   take:1000
  });
- let sent=0,failed=0,suppressed=0;
+ let sent=0,failed=0,suppressed=0,claimedCount=0;
  for(const note of notices){
+  if(claimedCount>=batch)break;
   const account=allowed.get(note.userId);
   if(!account||account.role!=='customer'||!account.isActive)continue;
   for(const sub of subscriptions.filter(s=>s.userId===note.userId&&
@@ -73,8 +58,9 @@ export async function deliverWebPushIteration(batch=20):Promise<{sent:number;fai
      claimUntil:new Date(now.getTime()+60_000)}
    });
    if(!claimed.count)continue;
+   claimedCount++;
    const attempt=existing.attempts+1;
-   if(PROMOTIONAL.has(note.kind)&&!account.marketingOptIn){
+   if(PROMOTIONAL_PUSH_KINDS.has(note.kind)&&!account.marketingOptIn){
     await db.stageWebPushDelivery.update({where:{id:existing.id},
      data:{status:'suppressed',claimUntil:null,lastError:'marketing-no-consent'}});
     suppressed++;continue;
