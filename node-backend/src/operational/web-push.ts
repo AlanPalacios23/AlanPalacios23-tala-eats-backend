@@ -15,6 +15,10 @@ function retryAt(attempts:number):Date {
 }
 export async function deliverWebPushIteration(batch=20):Promise<{sent:number;failed:number;suppressed:number}>{
  if(!webPushConfigured())return {sent:0,failed:0,suppressed:0};
+ // The worker must NOT report ready before the additive migration is present.
+ // In an empty database there may be no notifications to trigger the ledger,
+ // so explicitly probe the delivery table every tick (read-only).
+ await db.stageWebPushDelivery.count({where:{id:-1}});
  const since=new Date(Date.now()-2*60*60*1000);
  const notices=await db.authNotification.findMany({
   where:{createdAt:{gte:since}},
