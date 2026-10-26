@@ -40,6 +40,10 @@ const schema = z.object({
   MERCHANT_MANAGED_DELIVERY: z.enum(['false','true']).default('false'),
   SCHEDULE_PREP_LEAD_MINUTES: z.coerce.number().int().min(5).max(360).default(45),
   AUTH_JWT_SECRET: z.string().min(40).optional(),
+  WEB_PUSH_ENABLED: z.enum(['false','true']).default('false'),
+  WEB_PUSH_VAPID_PUBLIC_KEY: z.string().regex(/^[A-Za-z0-9_-]{86,88}$/).optional(),
+  WEB_PUSH_VAPID_PRIVATE_KEY: z.string().regex(/^[A-Za-z0-9_-]{42,44}$/).optional(),
+  WEB_PUSH_SUBJECT: z.string().regex(/^(mailto:.+@.+|https:\/\/[^/]+.*)$/).optional(),
 });
 // Stripe is the only online payment provider in this Node release.
 // Reject accidentally imported Mercado Pago secrets even with writes off.
@@ -49,6 +53,9 @@ if (forbiddenPaymentKeys.length) {
   throw new Error('STAGING_STRIPE_ONLY_FORBIDS_MERCADOPAGO_ENV');
 }
 export const config = schema.parse(process.env);
+if(config.WEB_PUSH_ENABLED==='true'&&
+   (!config.WEB_PUSH_VAPID_PUBLIC_KEY||!config.WEB_PUSH_VAPID_PRIVATE_KEY||!config.WEB_PUSH_SUBJECT))
+  throw new Error('WEB_PUSH_ENABLED_REQUIRES_VALID_VAPID_KEYS_AND_SUBJECT');
 if(config.STAGE_EMAIL_DELIVERY_MODE==='resend') {
   if(!config.STAGE_EMAIL_RESEND_API_KEY?.startsWith('re_') ||
      !config.STAGE_EMAIL_FROM?.includes('@') ||
