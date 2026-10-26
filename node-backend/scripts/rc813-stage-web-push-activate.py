@@ -141,7 +141,7 @@ def run_pm2(*args):
 
 
 def verify_pm2():
- if not owned_dir(PM2HOME) or not regular_private(PM2HOME/"pm2.pid",0o600) and not (PM2HOME/"pm2.pid").is_file():
+ if not owned_dir(PM2HOME) or not (PM2HOME/"pm2.pid").is_file() or (PM2HOME/"pm2.pid").is_symlink():
   fail("STAGE_PM2_DAEMON_NOT_PRESENT")
  try:
   pid=int((PM2HOME/"pm2.pid").read_text().strip())
@@ -248,7 +248,7 @@ def main():
     time.sleep(2)
   if not verified:raise RuntimeError("PUSH_STAGE_WORKER_NOT_READY")
   verify_pm2()
- except Exception:
+ except (Exception,SystemExit):
   print("RC813_STAGE_PUSH_ACTIVATION_ROLLBACK=START")
   fd,tmp=tempfile.mkstemp(prefix=".stage-push-restore-",dir=ENV.parent)
   with os.fdopen(fd,"w",encoding="utf8") as f:
