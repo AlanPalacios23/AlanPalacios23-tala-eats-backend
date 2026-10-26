@@ -46,6 +46,10 @@ class LiveWebPushGate(unittest.TestCase):
   for value in [
     "I_APPROVE_REAL_WEB_PUSH_WITH_LIVE_CUTOVER",
     "LIVE_PUSH_EXISTING_STRIPE_HEALTH=PASS",
+    'OLD = "aea74744ba47db2333bcef052b296a7a7ab63eb9"',
+    'CANDIDATE = "10f28bcaf63efd3e0ab9dc0366440219da261916"',
+    'cmd=["curl","-fsS","--connect-timeout","5","--max-time","15"]',
+    "LIVE_WEB_PUSH_CONFIG_HTTP_FAILED",
     "LIVE_PUSH_PRODUCTION_BACKUP_VERIFIED=PASS",
     "LIVE_PUSH_EXACTLY_ONE_MIGRATION=PASS",
     "LIVE_PUSH_FINANCE_READONLY_AUDIT=PASS",
