@@ -9,8 +9,8 @@ export interface PickupMerchant {
  owner_approved_at:Date|null;
 }
 export interface StripeSellerSnapshot {
- id:string;country:string|null;email:string|null;details_submitted:boolean;
- payouts_enabled:boolean;capabilities?:{transfers?:string|null}|null;
+ id:string;country?:string|null;email?:string|null;details_submitted?:boolean;
+ payouts_enabled?:boolean;capabilities?:{transfers?:string|null}|null;
 }
 export type PickupCapability={
  restaurant_id:number;order_type:'pickup';ready:boolean;
