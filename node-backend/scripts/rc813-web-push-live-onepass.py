@@ -128,8 +128,8 @@ def verify_pm2():
  appdirs={x.get("pm2_env",{}).get("pm_cwd") for x in apps}
  if len(appdirs)!=1:fail("LIVE_PM2_DIFFERENT_RELEASES")
  current=next(iter(appdirs))
- if not current or not current.endswith("/node-backend") or
- not current.startswith(str(SERVICE/"tala-node-releases")+"/"):
+ if (not current or not current.endswith("/node-backend") or
+    not current.startswith(str(SERVICE/"tala-node-releases")+"/")):
   fail("UNEXPECTED_LIVE_RELEASE_DIRECTORY")
  git=execute(["git","-C",current,"rev-parse","HEAD"],quiet=True)
  if git.strip()!=OLD:fail("EXISTING_LIVE_SHA_CHANGED_REVIEW")
@@ -263,8 +263,8 @@ def restore_env(original):
 def main():
  if sys.argv[1:]!=["--activate",APPROVAL]:
   fail("EXPLICIT_REAL_LIVE_APPROVAL_REQUIRED")
- if os.geteuid()==0 or pwd.getpwuid(os.geteuid()).pw_name!="tala-node-stage" or
-   os.environ.get("HOME")!=str(SERVICE):
+ if (os.geteuid()==0 or pwd.getpwuid(os.geteuid()).pw_name!="tala-node-stage" or
+    os.environ.get("HOME")!=str(SERVICE)):
   fail("SERVICE_USER_ONLY")
  if not owned_file(LIVE_ENV):fail("PRIVATE_LIVE_ENV_NOT_0600")
  oldenv=LIVE_ENV.read_text(encoding="utf8")
