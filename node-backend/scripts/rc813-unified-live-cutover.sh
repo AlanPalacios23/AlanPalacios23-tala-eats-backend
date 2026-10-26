@@ -179,6 +179,33 @@ for i in $(seq 1 40);do
  sleep 2
 done
 [[ "$LIVE_READY" == yes ]] || { echo 'RC813_ABORT=LIVE_PAYMENT_READINESS_OR_PUBLIC_ROUTE';exit 1; }
+# Web Push is opt-in. A payment-healthy LIVE process alone is NOT enough
+# to commit a push release; require the real finance-worker heartbeat and
+# public VAPID config from the same two LIVE processes. A failure before
+# DEPLOYED=yes triggers the existing PM2 rollback.
+PUSH_EXPECTED="$(node --env-file="$ENV" -e 'process.stdout.write(process.env.WEB_PUSH_ENABLED==="true"?"true":"false")')"
+if [[ "$PUSH_EXPECTED" == true ]]; then
+ PUSH_READY=no
+ for i in $(seq 1 15);do
+  if node --env-file="$ENV" --input-type=module - <<'JS' >/dev/null 2>&1
+const expected=process.env.WEB_PUSH_VAPID_PUBLIC_KEY;
+if(!expected||process.env.WEB_PUSH_ENABLED!=='true')process.exit(1);
+for(const root of ['http://127.0.0.1:18190','https://talaeats.alan-palacios-dev.com']){
+ const res=await fetch(root+'/api/v1/v11/push/config',{
+   signal:AbortSignal.timeout(4000)});
+ const value=await res.json();
+ if(!res.ok||value.enabled!==true||value.public_key!==expected)
+   process.exit(1);
+}
+JS
+  then PUSH_READY=yes;break;fi
+  sleep 2
+ done
+ [[ "$PUSH_READY" == yes ]] || {
+  echo 'RC813_LIVE_PUSH_WORKER_OR_PUBLIC_API_NOT_READY_ROLLBACK';exit 1;
+ }
+ echo 'RC813_LIVE_PUSH_WORKER_AND_PUBLIC_VAPID=PASS'
+fi
 live_pm2 save
 DEPLOYED=yes
 trap - EXIT
