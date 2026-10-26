@@ -20,8 +20,8 @@ import tempfile
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 
-CANDIDATE = "ba5f5d5b7c83d6672b01de5addda29dd58f1e062"
-OLD = "fbacabaae34e6dea8718aa6ced648431248dfbab"
+CANDIDATE = "10f28bcaf63efd3e0ab9dc0366440219da261916"
+OLD = "aea74744ba47db2333bcef052b296a7a7ab63eb9"
 APPROVAL = "I_APPROVE_REAL_WEB_PUSH_WITH_LIVE_CUTOVER"
 SERVICE = Path("/home/tala-node-stage")
 ROOT = SERVICE / "tala-node-releases" / CANDIDATE
