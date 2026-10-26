@@ -44,6 +44,7 @@ test('delivery architecture is opt-in and does not change Stripe/financial mutat
  assert.ok(code.includes("status:gone?'expired'"));
  assert.ok(code.includes('PROMOTIONAL_PUSH_KINDS.has(note.kind)&&!account.marketingOptIn'));
  assert.ok(code.includes('stageWebPushDelivery.upsert'));
+ assert.ok(code.includes('await db.stageWebPushDelivery.count({where:{id:-1}})'), 'no heartbeat without delivery table');
  assert.ok(stage.includes('STAGE_WEB_PUSH_WORKER_HOLD'));
  assert.ok(live.includes('LIVE_WEB_PUSH_WORKER_HOLD'));
  assert.ok(live.includes('rc8WorkerIteration'));
