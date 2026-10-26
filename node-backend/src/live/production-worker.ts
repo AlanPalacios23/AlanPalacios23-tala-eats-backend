@@ -6,6 +6,8 @@
 import {config} from '../config.js';
 import {buildLiveRuntimeDependencies} from './runtime-dependencies.js';
 import {rc8WorkerIteration} from './worker-runner.js';
+import {deliverWebPushIteration,webPushConfigured} from '../operational/web-push.js';
+import {db} from '../db.js';
 
 if(config.NODE_ENV!=='production')throw Error('LIVE_WORKER_ENV_REQUIRED');
 const {settings,pool,redis,stripe}=buildLiveRuntimeDependencies();
@@ -26,14 +28,31 @@ const tick=async()=>{
    console.error('LIVE_FINANCE_WORKER_DEPENDENCY_OR_RECONCILIATION_HOLD');
  }finally{busy=false;}
 };
+// Web Push is opt-in, independent of Stripe reconciliation and LIVE finances.
+let pushBusy=false;
+async function pushTick(){
+ if(pushBusy||stopping||!webPushConfigured())return;
+ pushBusy=true;
+ try{
+  await deliverWebPushIteration(25);
+  await redis.set('tala:node:live:web-push:heartbeat','ready','EX',45);
+ }catch(err){
+  console.error('LIVE_WEB_PUSH_WORKER_HOLD',err instanceof Error?err.name:'unknown');
+ }finally{pushBusy=false;}
+}
+const pushTimer=webPushConfigured()?setInterval(()=>{void pushTick();},15000):null;
+if(pushTimer)void pushTick();
 const timer=setInterval(()=>{void tick();},5000);
 void tick();
 const shutdown=async()=>{
  if(stopping)return;
  stopping=true;
  clearInterval(timer);
+ if(pushTimer)clearInterval(pushTimer);
+ try{await redis.del('tala:node:live:web-push:heartbeat');}catch{/* TTL expires */}
  try{await redis.del(key);}catch{/* TTL expires on outage */}
  redis.disconnect();
+ await db.$disconnect();
  await pool.end();
 };
 process.once('SIGTERM',()=>{void shutdown().then(()=>process.exit(0));});
