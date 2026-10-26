@@ -1,0 +1,38 @@
+name: Node Web Push lockfile (isolated RC branch)
+on:
+  push:
+    branches: [feat/rc813-web-push-vapid-20261026]
+    paths:
+      - node-backend/package.json
+      - .github/workflows/rc813-web-push-lock.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: rc813-node-push-lock
+  cancel-in-progress: false
+jobs:
+  update-lock:
+    if: github.repository == 'AlanPalacios23/AlanPalacios23-tala-eats-backend'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/rc813-web-push-vapid-20261026
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Update only dependency lockfile
+        working-directory: node-backend
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Commit lockfile on isolated branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add node-backend/package-lock.json
+          if ! git diff --cached --quiet; then
+            git commit -m "build(node-push): pin web-push dependency lockfile"
+            git push origin HEAD:feat/rc813-web-push-vapid-20261026
+          fi
