@@ -4,6 +4,7 @@ on:
     branches: [feat/rc95-live-delivery-readiness-20261028]
     paths:
       - 'node-backend/scripts/rc95-live-delivery-readiness-audit.mjs'
+      - 'node-backend/scripts/rc95-kali-prepare-driver-presence.sh'
       - 'node-backend/src/config.ts'
       - 'node-backend/src/marketplace/driver.ts'
       - 'node-backend/src/marketplace/delivery-runtime.ts'
@@ -33,6 +34,17 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund
           npm run generate
           npm run build
+      - name: Driver presence preparer is syntax-safe and does not support deploy
+        working-directory: node-backend
+        run: |
+          bash -n scripts/rc95-kali-prepare-driver-presence.sh
+          set +e
+          bash scripts/rc95-kali-prepare-driver-presence.sh --apply 0c8d92fa62ae910843b3d4c764da85a852b17085 > prepare.log 2>&1
+          code=$?
+          set -e
+          if [[ "$code" != 2 ]]; then cat prepare.log; exit 1; fi
+          grep -q 'RC95_PREPARE_ABORT=USAGE' prepare.log
+          echo 'RC95_NO_DEPLOY_WITH_PREPARER=PASS'
       - name: Driver presence isolation tests
         working-directory: node-backend
         run: node --test tests/rc95-driver-presence.test.mjs
