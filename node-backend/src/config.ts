@@ -31,6 +31,14 @@ const schema = z.object({
   STAGE_EMAIL_RESEND_API_KEY: z.string().min(12).optional(),
   STAGE_EMAIL_FROM: z.string().min(6).max(220).optional(),
   STAGE_EMAIL_ALLOWED_RECIPIENTS: z.string().optional(),
+  // LIVE authentication mail is independent of Stripe and deliberately OFF.
+  // The sender domain must be verified at Resend before an operator enables
+  // these values in the private LIVE env; never commit credentials to Git.
+  LIVE_AUTH_EMAIL_DELIVERY_MODE: z.enum(['disabled','resend']).default('disabled'),
+  LIVE_AUTH_EMAIL_SENDER_APPROVED: z.enum(['false','true']).default('false'),
+  LIVE_AUTH_EMAIL_RESEND_API_KEY: z.string().min(12).optional(),
+  LIVE_AUTH_EMAIL_FROM: z.email().max(220).optional(),
+
   STAGE_DRIVER_DELIVERY_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_DRIVER_MAX_PICKUP_KM: z.coerce.number().finite().min(1).max(30).default(8),
   STAGE_DELIVERY_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
@@ -65,6 +73,16 @@ if(config.NODE_ENV==='staging'&&config.TREASURY_CONNECT_WEBHOOK_INGEST_ENABLED==
 if(config.WEB_PUSH_ENABLED==='true'&&
    (!config.WEB_PUSH_VAPID_PUBLIC_KEY||!config.WEB_PUSH_VAPID_PRIVATE_KEY||!config.WEB_PUSH_SUBJECT))
   throw new Error('WEB_PUSH_ENABLED_REQUIRES_VALID_VAPID_KEYS_AND_SUBJECT');
+if(config.NODE_ENV==='production'&&config.STAGE_EMAIL_DELIVERY_MODE==='resend')
+ throw Error('STAGING_EMAIL_PROVIDER_FORBIDDEN_IN_PRODUCTION');
+if(config.LIVE_AUTH_EMAIL_DELIVERY_MODE==='resend'){
+ if(config.NODE_ENV!=='production'||config.LIVE_AUTH_EMAIL_SENDER_APPROVED!=='true'||
+    !config.LIVE_AUTH_EMAIL_RESEND_API_KEY?.startsWith('re_')||
+    !config.LIVE_AUTH_EMAIL_FROM)
+  throw Error('LIVE_AUTH_EMAIL_REQUIRES_APPROVED_VERIFIED_RESEND_SENDER');
+}
+if(config.NODE_ENV!=='production'&&config.LIVE_AUTH_EMAIL_DELIVERY_MODE!=='disabled')
+ throw Error('LIVE_AUTH_EMAIL_FORBIDDEN_IN_STAGING');
 if(config.STAGE_EMAIL_DELIVERY_MODE==='resend') {
   if(!config.STAGE_EMAIL_RESEND_API_KEY?.startsWith('re_') ||
      !config.STAGE_EMAIL_FROM?.includes('@') ||
