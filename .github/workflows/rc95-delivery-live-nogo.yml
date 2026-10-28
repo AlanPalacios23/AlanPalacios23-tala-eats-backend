@@ -5,6 +5,7 @@ on:
     paths:
       - 'node-backend/scripts/rc95-live-delivery-readiness-audit.mjs'
       - 'node-backend/scripts/rc95-kali-prepare-driver-presence.sh'
+      - 'node-backend/scripts/rc95-driver-presence-live-cutover.sh'
       - 'node-backend/src/config.ts'
       - 'node-backend/src/marketplace/driver.ts'
       - 'node-backend/src/marketplace/delivery-runtime.ts'
@@ -45,6 +46,21 @@ jobs:
           if [[ "$code" != 2 ]]; then cat prepare.log; exit 1; fi
           grep -q 'RC95_PREPARE_ABORT=USAGE' prepare.log
           echo 'RC95_NO_DEPLOY_WITH_PREPARER=PASS'
+      - name: Presence-only cutover syntax, approval and recovery safeguards
+        working-directory: node-backend
+        run: |
+          bash -n scripts/rc95-driver-presence-live-cutover.sh
+          set +e
+          bash scripts/rc95-driver-presence-live-cutover.sh --apply WRONG_APPROVAL > cutover.log 2>&1
+          code=$?
+          set -e
+          test "$code" -eq 2
+          grep -q 'RC95_CUTOVER_ABORT=USAGE_OR_APPROVAL' cutover.log
+          grep -q 'RC95_AUTOMATIC_ROLLBACK=START' scripts/rc95-driver-presence-live-cutover.sh
+          grep -q 'RC95_MANUAL_ROLLBACK_TO_RC94=PASS' scripts/rc95-driver-presence-live-cutover.sh
+          grep -q 'RC95_LIVE_DELIVERY_CHECKOUT=LOCKED' scripts/rc95-driver-presence-live-cutover.sh
+          grep -q 'RC95_LIVE_DELIVERY_CARD=LOCKED' scripts/rc95-driver-presence-live-cutover.sh
+          echo 'RC95_CUTOVER_APPROVAL_AND_SAFE_RECOVERY=PASS'
       - name: Driver presence isolation tests
         working-directory: node-backend
         run: node --test tests/rc95-driver-presence.test.mjs
