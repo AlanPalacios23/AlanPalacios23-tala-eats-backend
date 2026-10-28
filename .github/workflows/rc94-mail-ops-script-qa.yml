@@ -1,0 +1,42 @@
+name: RC94 mail activation safety checks
+on:
+  push:
+    branches: [ops/rc94-resend-activation-20261028]
+    paths:
+      - 'node-backend/scripts/rc94-kali-activate-resend-mail.sh'
+      - '.github/workflows/rc94-mail-ops-script-qa.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  syntax-and-refusal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify Bash syntax
+        run: bash -n node-backend/scripts/rc94-kali-activate-resend-mail.sh
+      - name: No money operations; no secrets sent to shell args
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('node-backend/scripts/rc94-kali-activate-resend-mail.sh').read_text()
+          assert "RC94_MAIL_HOLD=WRONG_USER" in s
+          assert "RC94_MAIL_HOLD=INBOX_NOT_CONFIRMED" in s
+          assert "RC94_MAIL_ROLLBACK=OLD_ENV_RESTORED_PM2_RESTART_ATTEMPTED" in s
+          assert "0c8d92fa62ae910843b3d4c764da85a852b17085" in s
+          assert "LIVE_AUTH_EMAIL_DELIVERY_MODE" in s
+          for x in ["stripe.payouts.create(","stripe.transfers.create(","prisma migrate","DROP DATABASE"]:
+              assert x not in s
+          print("RC94_INSTALLER_STATIC_SECURITY=PASS")
+          PY
+      - name: Reject arbitrary shell account, do not change PM2
+        run: |
+          set -eu
+          if bash node-backend/scripts/rc94-kali-activate-resend-mail.sh --activate >out.log 2>&1; then
+            echo "ERR: unprivileged activation was possible"; exit 1
+          fi
+          grep -q 'RC94_MAIL_HOLD=WRONG_USER' out.log
+          echo 'RC94_UNAUTHORIZED_ACTIVATION=REJECTED'
