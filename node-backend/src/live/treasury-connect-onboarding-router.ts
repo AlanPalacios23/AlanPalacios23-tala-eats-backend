@@ -67,9 +67,15 @@ async function stripeState(provider:Provider,x:Owner){
   v.country==='MX'&&v.currency==='mxn'&&v.default_for_currency===true);
  if(defaults.length>1)throw Error('MULTIPLE_DEFAULT_BANKS');
  const bankEntry=defaults[0];
+ // MX external banks may remain 'new' while Connect payouts are enabled.
+ // App-level verified means payout-eligible, not a provider status rewrite.
+ const bankPayoutReady=bankEntry?.object==='bank_account'&&
+  ['new','verified'].includes(bankEntry.status)&&
+  acct.payouts_enabled===true&&acct.details_submitted===true&&
+  !acct.requirements?.disabled_reason;
  const bankStatus=!bankEntry?'not_linked':
-  bankEntry.object==='bank_account'&&bankEntry.status==='verified'?
-   'verified':bankEntry.object==='bank_account'&&bankEntry.status==='errored'?
+  bankPayoutReady?'verified':
+  bankEntry.object==='bank_account'&&bankEntry.status==='errored'?
    'restricted':'pending_review';
  const ready=acct.details_submitted===true&&acct.payouts_enabled===true&&
   acct.capabilities?.transfers==='active'&&!acct.requirements?.disabled_reason&&
@@ -78,7 +84,7 @@ async function stripeState(provider:Provider,x:Owner){
  const status=!x.approved?'pending_review':
   ready&&bankStatus==='verified'?'verified':
   bankStatus==='restricted'?'restricted':'pending_verification';
- return {status,bankStatus,connectReady:ready,bankVerified:bankStatus==='verified',
+ return {status,bankStatus,connectReady:ready,bankVerified:bankPayoutReady,
   payoutSchedule:acct.settings?.payouts?.schedule?.interval??'unknown'};
 }
 export function buildTreasuryConnectOnboardingRouter(pool:Pool,provider:Provider){
