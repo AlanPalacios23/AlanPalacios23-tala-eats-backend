@@ -92,7 +92,7 @@ export async function mockableBankPayoutExecution(
   created.amount===reservation.amountMinor&&created.currency==='mxn'&&
   created.destination===reservation.bankId&&
   ['pending','in_transit','paid'].includes(created.status)&&
-  created.metadata.tala_treasury_withdrawal===reservation.id,
+  created.metadata?.tala_treasury_withdrawal===reservation.id,
   'STRIPE_PAYOUT_RESPONSE_INCONSISTENT');
  // Status must stay submitted/unknown until a VERIFIED connected-account webhook
  // + server retrieval confirms terminal status. Never return 'paid' here.
