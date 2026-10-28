@@ -13,6 +13,9 @@ import {config} from '../config.js';
 import {treasuryBalance,displayMinor,
   NODE_TREASURY_LIVE_EXECUTION_ENABLED,type TreasuryPayee} from './treasury-policy.js';
 import {inspectConnectedBankAndPayouts} from './treasury-bank-verification.js';
+import {reserveTreasuryWithdrawal} from './treasury-reservations.js';
+import {approveTreasuryWithdrawal} from './treasury-dual-approval.js';
+import {recordTreasuryTransferReview} from './treasury-transfer-reservations.js';
 
 const positive=(raw:unknown)=>{
  if(typeof raw!=='string'||!/^[1-9][0-9]{0,9}$/.test(raw))throw Error('PAYEE_ID_INVALID');
@@ -24,7 +27,7 @@ const minor=(raw:unknown):bigint=>{
  if(typeof raw!=='string'||!/^\d{1,16}$/.test(raw))throw Error('TREASURY_MINOR_INVALID');
  return BigInt(raw);
 };
-type RoleIdentity={kind:TreasuryPayee;id:number;account:string;approved:boolean;
+type RoleIdentity={kind:TreasuryPayee;id:number;ownerId:number;account:string;approved:boolean;
  ownerEmail:string};
 async function identity(req:Request,pool:Pool,kind:TreasuryPayee,payeeId:number):Promise<RoleIdentity>{
  const s=await current(req);
@@ -34,14 +37,14 @@ async function identity(req:Request,pool:Pool,kind:TreasuryPayee,payeeId:number)
    'SELECT r.owner_id,m.stripe_account_id,m.owner_approved_at,u.email,u.is_active AS active FROM restaurants r JOIN users u ON u.id=r.owner_id LEFT JOIN tala_live_merchant_accounts m ON m.restaurant_id=r.id WHERE r.id=$1',[payeeId]);
   const x=a.rows[0];
   if(!x||x.owner_id!==s.userId||!x.active||!x.stripe_account_id)throw Error('MERCHANT_NOT_AUTHORIZED_OR_CONNECT_MISSING');
-  return {kind,id:payeeId,account:x.stripe_account_id,approved:Boolean(x.owner_approved_at),ownerEmail:x.email};
+  return {kind,id:payeeId,ownerId:s.userId,account:x.stripe_account_id,approved:Boolean(x.owner_approved_at),ownerEmail:x.email};
  }
  if(s.user.role!=='driver'||s.userId!==payeeId)throw Error('DRIVER_ROLE_REQUIRED');
  const a=await pool.query<{stripe_account_id:string;owner_approved_at:Date|null;email:string;active:boolean}>(
   'SELECT d.stripe_account_id,d.owner_approved_at,u.email,u.is_active AS active FROM tala_live_driver_accounts d JOIN users u ON u.id=d.user_id JOIN driver_profiles p ON p.user_id=d.user_id WHERE d.user_id=$1 AND p.is_verified=true',[payeeId]);
  const x=a.rows[0];
  if(!x||!x.active)throw Error('DRIVER_NOT_VERIFIED_OR_CONNECT_MISSING');
- return {kind,id:payeeId,account:x.stripe_account_id,approved:Boolean(x.owner_approved_at),ownerEmail:x.email};
+ return {kind,id:payeeId,ownerId:s.userId,account:x.stripe_account_id,approved:Boolean(x.owner_approved_at),ownerEmail:x.email};
 }
 type ConnectedReads=Pick<Stripe,'accounts'|'balance'|'transfers'|'charges'|'payouts'>;
 async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIdentity){
@@ -116,9 +119,17 @@ async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIdentity){
   ownerApproved:x.approved,connectReady:Boolean(connectReady),
   pendingUnknownWithdrawals:pending
  });
- return {...balance,serverAllowsRequests:false as const,
+ return {...balance,serverAllowsRequests:NODE_TREASURY_LIVE_EXECUTION_ENABLED,
   payoutExecutionEnabled:NODE_TREASURY_LIVE_EXECUTION_ENABLED,
-  bankStatus:(bank.verified?'verified':'verification_pending') as 'verified'|'verification_pending'};
+  bankStatus:(bank.verified?'verified':'verification_pending') as 'verified'|'verification_pending',
+  serverOnly:{
+   kind:x.kind,payeeId:x.id,ownerId:x.ownerId,accountId:x.account,
+   bankId:bank.bankId??'',transferredMinor:total,stripeAvailableMinor:available,
+   ownerApproved:x.approved,connectReady:Boolean(connectReady),
+   bankVerified:bank.verified,scheduleManual:bankSchedule,
+   openCases:incidentCount,unrecognizedPayouts:bank.unknownPayouts,
+   pendingTransfers:holdCount
+  }};
 }
 export function buildTreasuryRouter(pool:Pool,stripe:ConnectedReads){
  const router=Router();
@@ -157,11 +168,63 @@ export function buildTreasuryRouter(pool:Pool,stripe:ConnectedReads){
     bank_payouts_not_enabled:true});
   }catch{res.status(403).json({error:'WITHDRAWAL_HISTORY_NOT_AUTHORIZED'});}
  });
- router.post('/withdrawals/:role/:id/request',(_req,res)=>{
-  // No route may create a payout while LIVE release gates reject Connect
-  // transfers, account payout reconciliation and dedicated TOTP reservation.
-  res.status(503).json({error:'TREASURY_WITHDRAWALS_NOT_RELEASED',
-   withdrawals_execution_enabled:false,bank_payout_created:false});
+ router.post('/withdrawals/:role/:id/request',async(req,res)=>{
+  if(!NODE_TREASURY_LIVE_EXECUTION_ENABLED){
+   res.status(503).json({error:'TREASURY_WITHDRAWALS_NOT_RELEASED',
+    withdrawals_execution_enabled:false,bank_payout_created:false});return;
+  }
+  try{
+   const role=req.params.role;
+   if(role!=='restaurant'&&role!=='driver'){res.status(404).end();return;}
+   const payeeId=positive(req.params.id);
+   const session=await current(req);
+   if(!session.user.twoFactorEnabled||!session.mfaVerified)
+    {res.status(403).json({error:'WITHDRAWAL_STEP_UP_MFA_REQUIRED'});return;}
+   const body=req.body as Record<string,unknown>|undefined;
+   if(!body||Object.keys(body).sort().join(',')!=='amount_cents,request_key,totp'||
+      typeof body.amount_cents!=='string'||!/^[1-9][0-9]{0,10}$/.test(body.amount_cents)||
+      typeof body.request_key!=='string'||typeof body.totp!=='string')
+    {res.status(422).json({error:'WITHDRAWAL_INPUT_INVALID'});return;}
+   const recipient=await identity(req,pool,role,payeeId);
+   const balance=await auditedSnapshot(pool,stripe,recipient);
+   if(!balance.eligible||balance.withdrawableMinor<100n)
+    {res.status(409).json({error:'WITHDRAWAL_VERIFIED_BALANCE_HOLD'});return;}
+   const reserved=await reserveTreasuryWithdrawal(pool,{
+    snapshot:balance.serverOnly,actorUserId:session.userId,
+    amountMinor:BigInt(body.amount_cents),clientKey:body.request_key,
+    totp:body.totp
+   });
+   res.status(202).json({withdrawal_id:reserved.id,state:reserved.status,
+     new_reservation:reserved.created,bank_payout_created:false,
+     requires_admin_dual_approval:true});
+  }catch{res.status(409).json({error:'WITHDRAWAL_IDENTITY_BALANCE_OR_OTP_HOLD'});}
+ });
+ router.post('/admin/treasury/withdrawals/:id/:phase',async(req,res)=>{
+  if(!NODE_TREASURY_LIVE_EXECUTION_ENABLED){res.status(503).json({error:'TREASURY_NOT_RELEASED'});return;}
+  try{
+   const session=await current(req);
+   if(session.user.role!=='admin'||!session.user.twoFactorEnabled||!session.mfaVerified)
+    {res.status(403).json({error:'ADMIN_TREASURY_MFA_REQUIRED'});return;}
+   const phase=req.params.phase;
+   if(phase!=='review'&&phase!=='approve'){res.status(404).end();return;}
+   const result=await approveTreasuryWithdrawal(pool,req.params.id,session.userId,true,phase);
+   res.status(200).json(result);
+  }catch{res.status(409).json({error:'TREASURY_WITHDRAWAL_REVIEW_DENIED'});}
+ });
+ router.post('/admin/treasury/transfers/:orderId/:kind/:payeeId/:phase',async(req,res)=>{
+  if(!NODE_TREASURY_LIVE_EXECUTION_ENABLED){res.status(503).json({error:'TREASURY_NOT_RELEASED'});return;}
+  try{
+   const session=await current(req);
+   if(session.user.role!=='admin'||!session.user.twoFactorEnabled||!session.mfaVerified)
+    {res.status(403).json({error:'ADMIN_TREASURY_MFA_REQUIRED'});return;}
+   const kind=req.params.kind,phase=req.params.phase;
+   if((kind!=='restaurant'&&kind!=='driver')||
+      (phase!=='review'&&phase!=='approve')){res.status(404).end();return;}
+   const result=await recordTreasuryTransferReview(pool,stripe,{
+    orderId:positive(req.params.orderId),kind,payeeId:positive(req.params.payeeId),
+    adminId:session.userId,adminMfaVerified:true,phase});
+   res.status(200).json({...result,money_moved:false});
+  }catch{res.status(409).json({error:'TREASURY_TRANSFER_REVIEW_DENIED'});}
  });
  return router;
 }
