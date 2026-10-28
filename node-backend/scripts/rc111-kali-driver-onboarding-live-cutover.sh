@@ -135,6 +135,41 @@ schema(){
  RC110_SHA="$SHA" node --env-file="$ENV" \
  scripts/rc110-kali-live-driver-plate-migration.mjs --verify
 }
+# Manual rollback must be possible even when the new API or worker is DOWN.
+# Do not require postdeploy readiness to rescue an unhealthy release.
+if [[ "$MODE" == --rollback ]];then
+ [[ -f "$RECEIPT" && ! -L "$RECEIPT" &&
+    "$(stat -c '%a' "$RECEIPT")" == 600 &&
+    "$(stat -c '%u' "$RECEIPT")" == "$(id -u)" ]] ||
+ { echo RC111_ABORT=NO_VERIFIED_ROLLBACK_RECEIPT;exit 1; }
+ ROLLBACK_CWD="$(node -e 'const r=require(process.argv[1]);if(r.sha!==process.argv[2])process.exit(2);process.stdout.write(r.previousCwd)' "$RECEIPT" "$SHA")"
+ [[ "$ROLLBACK_CWD" =~ ^/home/tala-node-stage/tala-node-releases/[a-f0-9]{40}/node-backend$ &&
+    -s "$ROLLBACK_CWD/rc813-live/ecosystem.config.cjs" ]] ||
+ { echo RC111_ABORT=PREVIOUS_RELEASE_NOT_SAFE;exit 1; }
+ cmp -s "$ROLLBACK_CWD/rc813-live/ecosystem.config.cjs" "$ECO" ||
+ { echo RC111_ABORT=UNSAFE_ROLLBACK_TOPOLOGY;exit 1; }
+ export RC111_TARGET_CWD="$WORK"
+ pm jlist | node --input-type=commonjs -e '
+ let src="";process.stdin.on("data",s=>src+=s);
+ process.stdin.on("end",()=>{
+  try{
+   const items=JSON.parse(src),allow=["tala-node-stage-api","tala-node-stage-worker"];
+   if(items.length>2||items.some(p=>!allow.includes(p.name)||
+    p.pm2_env?.pm_cwd!==process.env.RC111_TARGET_CWD))
+    throw Error("FOREIGN_PROCESS");
+  }catch{console.error("RC111_ABORT=UNSAFE_PM2_ROLLBACK_STATE");process.exitCode=1;}
+ });'
+ financial_flags
+ pm delete tala-node-stage-api >/dev/null 2>&1 || true
+ pm delete tala-node-stage-worker >/dev/null 2>&1 || true
+ pm start "$ROLLBACK_CWD/rc813-live/ecosystem.config.cjs" --only tala-node-stage-worker --update-env >/dev/null
+ pm start "$ROLLBACK_CWD/rc813-live/ecosystem.config.cjs" --only tala-node-stage-api --update-env >/dev/null
+ pm save >/dev/null
+ [[ "$(pm_identity)" == "$ROLLBACK_CWD" ]] && ready
+ echo RC111_MANUAL_ROLLBACK=PASS
+ echo RC111_MANUAL_ROLLBACK_SCHEMA_COLUMN=RETAINED
+ exit 0
+fi
 old="$(pm_identity)"
 old_sha="${old%/node-backend}";old_sha="${old_sha##*/}"
 OLD_ECO="$old/rc813-live/ecosystem.config.cjs"
@@ -156,24 +191,6 @@ if [[ "$MODE" == --verify ]];then
  capabilities
  echo 'RC111_LIVE_ONBOARDING_DEPLOY=PASS'
  echo 'RC111_DISPATCH_CARD_PAYOUTS=LOCKED'
- exit 0
-fi
-if [[ "$MODE" == --rollback ]];then
- [[ "$old_sha" == "$SHA" && -f "$RECEIPT" &&
-    ! -L "$RECEIPT" && "$(stat -c '%a' "$RECEIPT")" == 600 &&
-    "$(stat -c '%u' "$RECEIPT")" == "$(id -u)" ]] ||
- { echo RC111_ABORT=NO_VERIFIED_ROLLBACK_RECEIPT;exit 1; }
- ROLLBACK_CWD="$(node -e 'const r=require(process.argv[1]);if(r.sha!==process.argv[2])process.exit(2);process.stdout.write(r.previousCwd)' "$RECEIPT" "$SHA")"
- [[ "$ROLLBACK_CWD" =~ ^/home/tala-node-stage/tala-node-releases/[a-f0-9]{40}/node-backend$ &&
-    -s "$ROLLBACK_CWD/rc813-live/ecosystem.config.cjs" ]] ||
- { echo RC111_ABORT=PREVIOUS_RELEASE_NOT_SAFE;exit 1; }
- pm delete tala-node-stage-api >/dev/null
- pm delete tala-node-stage-worker >/dev/null
- pm start "$ROLLBACK_CWD/rc813-live/ecosystem.config.cjs" --only tala-node-stage-worker --update-env >/dev/null
- pm start "$ROLLBACK_CWD/rc813-live/ecosystem.config.cjs" --only tala-node-stage-api --update-env >/dev/null
- pm save >/dev/null
- [[ "$(pm_identity)" == "$ROLLBACK_CWD" ]] && ready
- echo RC111_MANUAL_ROLLBACK=PASS
  exit 0
 fi
 [[ "$old_sha" == "$OLD_EXPECTED" && "$old_sha" != "$SHA" ]] ||
