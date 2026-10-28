@@ -34,11 +34,11 @@ try{
  const id=created.rows[0].id;
  const evtId='evt_SYNTHETIC'+randomUUID().replaceAll('-','').slice(0,9);
  const raw=event(evtId,payout,account);
- const parsed=ingestTreasurySignedEvent(Buffer.from(raw),stamp(raw),provider.webhooks,secret);
+ const parsed=ingestTreasurySignedEvent(Buffer.from(raw),stamp(raw),provider,secret);
  assert.ok(parsed);
  assert.deepEqual(await persistTreasurySignedEvent(pool,parsed),{queued:true});
  await assert.rejects(async()=>ingestTreasurySignedEvent(
-  Buffer.from(raw),'t='+now+',v1='+('0'.repeat(64)),provider.webhooks,secret));
+  Buffer.from(raw),'t='+now+',v1='+('0'.repeat(64)),provider,secret));
  const fake={
   payouts:{retrieve:async(idArg,_params,options)=>{
    assert.equal(idArg,payout);
@@ -63,7 +63,7 @@ try{
  assert.equal(ledger.rows[0].amount_minor,'1200');
  const unknownEvt='evt_SYNTHETIC'+randomUUID().replaceAll('-','').slice(0,9);
  const rawOther=event(unknownEvt,'po_UNKNOWN12345',account);
- const recordOther=ingestTreasurySignedEvent(Buffer.from(rawOther),stamp(rawOther),provider.webhooks,secret);
+ const recordOther=ingestTreasurySignedEvent(Buffer.from(rawOther),stamp(rawOther),provider,secret);
  await persistTreasurySignedEvent(pool,recordOther);
  const wrong={payouts:{retrieve:async()=>({
   id:'po_UNKNOWN12345',livemode:true,automatic:false,currency:'mxn',amount:1200,
