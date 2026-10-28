@@ -112,5 +112,7 @@ test('route inventory grants only reviewed node-only Stripe status endpoint',()=
   const inventory=read('scripts/node_route_coverage.py');
   assert.match(inventory,/STRIPE_TEST_STATUS_NODE_ONLY/);
   assert.match(inventory,/\("GET", "\/api\/v1\/payments\/stripe\/orders\/\{\}\/status"\)/);
-  assert.match(inventory,/observed != ADMIN_NODE_ONLY \| STRIPE_TEST_STATUS_NODE_ONLY/);
+  assert.match(inventory,/observed != \(ADMIN_NODE_ONLY \| STRIPE_TEST_STATUS_NODE_ONLY/);
+  assert.match(inventory,/PASSWORD_RESET_BROWSER_NODE_ONLY/);
+  assert.match(inventory,/PICKUP_PRICE_PREVIEW_NODE_ONLY/);
 });
