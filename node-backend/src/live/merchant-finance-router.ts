@@ -25,6 +25,8 @@ export function buildLiveMerchantFinanceRouter(pool:Pool,stripe:Provider){
    const owners=await pool.query<{owner_id:number;email:string}>(
     "SELECT r.owner_id,u.email FROM restaurants r JOIN users u ON u.id=r.owner_id WHERE r.id=$1 AND r.owner_id IS NOT NULL AND u.is_active=true AND u.role='restaurant'",[rid]);
    if(owners.rows.length!==1){res.status(404).json({error:'SELLER_OWNER_REQUIRED'});return;}
+   const session=await current(req);
+   await requireTreasuryBankStepUp(pool,session,req.body?.totp);
    // Platform funds must never be mapped as a seller's Connect recipient.
    // Both accounts are read through Stripe: IDs aren't trusted from the app.
    if(account===config.STRIPE_PLATFORM_ACCOUNT_ID){
