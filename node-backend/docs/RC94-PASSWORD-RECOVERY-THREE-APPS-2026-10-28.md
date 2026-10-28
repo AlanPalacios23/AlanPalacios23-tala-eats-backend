@@ -37,6 +37,7 @@ Sin estas variables, la recuperación LIVE **permanece desactivada** y no se deb
 - CI con PostgreSQL 15 y Redis 8 efímeros y respuestas del backend HTTP reales.
 - Probar `customer`, `restaurant` y `driver`, recuperación completa, contraseña anterior rechazada, token consumido no reutilizable, sesiones anteriores revocadas, y respuesta uniforme para correos desconocidos.
 - Probar Redis sin conexión, límite de envíos y que una cola fallida no afecte webhooks de Stripe ni su heartbeat.
+- Ejecutar el remitente Resend en CI contra un proveedor simulado sin red: aceptar solo una dirección autorizada, bloquear destinatarios ajenos, probar idempotencia y redactar el cuerpo enviado. Que una prueba de mock pase no certifica la entrega real del proveedor.
 - Verificar remitente y DNS en Resend y probar un correo de entrega real a una cuenta autorizada antes de incorporar restaurantes o repartidores.
 - Comprobar en Kali la configuración LIVE con una inspección **sin revelar secretos** y el inventario de migraciones. Hacer backup encriptado, restauración aislada, despliegue PM2 con rollback y prueba pública HTTPS.
 - RC9.4 no habilita transferencias, desembolsos Connect o cobros adicionales.
