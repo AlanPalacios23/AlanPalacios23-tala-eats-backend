@@ -8,6 +8,7 @@
  */
 import type Stripe from 'stripe';
 import {buildTransferProposal,type TransferPrerequisites} from './transfer-planning.js';
+import {NODE_TREASURY_LIVE_EXECUTION_ENABLED} from './treasury-policy.js';
 
 export type DualApproval={reviewedBy:number;approvedBy:number};
 export type TransferReservation={
@@ -22,6 +23,14 @@ export type PayoutReservation={
 function assert(ok:unknown,reason:string):asserts ok{
  if(!ok)throw Error('TREASURY_DENIED:'+reason);
 }
+function releaseGate(explicit:boolean,feature:'transfer'|'bank'){
+ assert(explicit,'MONEY_RELEASE_NOT_APPROVED');
+ // Hard production kill-switch independent of caller-supplied approval flags.
+ // Only a separately audited source release may change this const.
+ if(process.env.NODE_ENV==='production'&&!NODE_TREASURY_LIVE_EXECUTION_ENABLED)
+  throw Error('TREASURY_DENIED:PRODUCTION_FINANCIAL_GATE_LOCKED');
+ if(feature==='bank'&&!explicit)throw Error('TREASURY_DENIED:BANK_PAYOUT_NOT_RELEASED');
+}
 function approved(a:DualApproval){
  assert(Number.isSafeInteger(a.reviewedBy)&&a.reviewedBy>0&&
   Number.isSafeInteger(a.approvedBy)&&a.approvedBy>0&&
@@ -35,7 +44,7 @@ export async function mockableTransferExecution(
   provider:Pick<Stripe,'transfers'|'charges'>,reservation:TransferReservation,
   releaseApproved:boolean
 ){
- assert(releaseApproved,'MONEY_RELEASE_NOT_APPROVED');
+ releaseGate(releaseApproved,'transfer');
  assert(reservation.state==='reserved','NOT_ATOMICALLY_RESERVED');
  approved(reservation.approved);
  const plan=buildTransferProposal(reservation.input);
@@ -70,7 +79,8 @@ export async function mockableBankPayoutExecution(
  provider:Pick<Stripe,'payouts'>,reservation:PayoutReservation,
  releaseApproved:boolean
 ){
- assert(releaseApproved,'BANK_PAYOUT_NOT_RELEASED');
+ if(!releaseApproved)throw Error('TREASURY_DENIED:BANK_PAYOUT_NOT_RELEASED');
+ releaseGate(releaseApproved,'bank');
  assert(reservation.state==='reserved','NOT_ATOMICALLY_RESERVED');
  approved(reservation.approved);
  assert(Number.isSafeInteger(reservation.payeeId)&&reservation.payeeId>0&&
