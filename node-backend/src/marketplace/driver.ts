@@ -6,7 +6,7 @@ import { Redis } from 'ioredis';
 import { db } from '../db.js';
 import { config } from '../config.js';
 import {stageDeliveryTenderAllowed} from './delivery-financial-proof.js';
-import {canOperateDriverPresence,driverLocationKey,driverPersistKey} from './delivery-runtime.js';
+import {canOperateDriverPresence,driverLocationKey,driverPersistKey,hasFreshVerifiedDriverGps} from './delivery-runtime.js';
 import type { AuthUser } from '../generated/prisma/client.js';
 
 const ACTIVE=['assigned','picked_up','on_the_way'];
@@ -121,15 +121,7 @@ export async function driverPresenceReadiness(actor:AuthUser){
       await redis.connect();
       const key=driverLocationKey(config.NODE_ENV,actor.id);
       const [raw,ttl]=await Promise.all([redis.get(key),redis.ttl(key)]);
-      if(raw&&ttl>0&&ttl<=120){
-        const parsed=JSON.parse(raw) as {lat?:unknown;lng?:unknown;reported_at?:unknown};
-        const age=typeof parsed.reported_at==='string'
-          ? Date.now()-Date.parse(parsed.reported_at):NaN;
-        freshGps=typeof parsed.lat==='number'&&Number.isFinite(parsed.lat)&&
-          Math.abs(parsed.lat)<=90&&typeof parsed.lng==='number'&&
-          Number.isFinite(parsed.lng)&&Math.abs(parsed.lng)<=180&&
-          Number.isFinite(age)&&age>=0&&age<=120000;
-      }
+      freshGps=hasFreshVerifiedDriverGps(raw,ttl,Date.now());
     }catch{/* Availability must fail closed on Redis failures. */}
     finally{redis.disconnect();}
   }
