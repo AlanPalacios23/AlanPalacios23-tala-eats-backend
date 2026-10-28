@@ -76,6 +76,16 @@ try {
  }
  const remote=new Map(accounts.map(a=>[a.id,a]));
  console.log('RC9_STRIPE_LIVE_CONNECTED_ACCOUNTS='+accounts.length);
+ const webhooks=await stripe.webhookEndpoints.list({limit:100});
+ if(webhooks.has_more)stop('WEBHOOK_ENDPOINT_PAGINATION_INCOMPLETE');
+ const connectWebhook=webhooks.data.find(w=>
+  w.url==='https://talaeats.alan-palacios-dev.com/api/v1/webhooks/stripe-connect'&&
+  w.status==='enabled'&&w.connect===true&&
+  ['payout.created','payout.updated','payout.paid','payout.failed','payout.canceled']
+   .every(t=>w.enabled_events.includes(t)));
+ console.log('RC9_SIGNED_CONNECT_PAYOUT_WEBHOOK='+Boolean(connectWebhook));
+ if(!connectWebhook)stop('MISSING_CONNECT_PAYOUT_SIGNED_EVENTS');
+
  const payees=[
   ...db.merchant.map(x=>({...x,kind:'restaurant'})),
   ...db.driver.map(x=>({...x,kind:'driver'}))
