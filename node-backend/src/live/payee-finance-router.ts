@@ -52,6 +52,8 @@ export function buildPayeeFinanceRouter(pool:Pool,stripe:StripeRead){
      "SELECT u.email FROM users u JOIN driver_profiles p ON p.user_id=u.id WHERE u.id=$1 AND u.role='driver' AND u.is_active=true AND p.is_verified=true",
      [userId]);
    if(seller.rows.length!==1){res.status(409).json({error:'DRIVER_NOT_VERIFIED'});return;}
+   const session=await current(req);
+   await requireTreasuryBankStepUp(pool,session,req.body?.totp);
    const acct=await stripe.accounts.retrieve(account);
    if(acct.id!==account||acct.country!=='MX'||!acct.email||
       acct.email.trim().toLowerCase()!==seller.rows[0]!.email.trim().toLowerCase()){
