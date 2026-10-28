@@ -8,6 +8,7 @@ import {randomUUID} from 'node:crypto';
 import {totpForTestOnly} from '../dist/auth/crypto.js';
 import {reserveTreasuryWithdrawal} from '../dist/live/treasury-reservations.js';
 import {approveTreasuryWithdrawal} from '../dist/live/treasury-dual-approval.js';
+import {dispatchTreasuryWithdrawal} from '../dist/live/treasury-dispatch.js';
 const pool=new Pool({connectionString:process.env.DATABASE_URL,max:5});
 const secret='JBSWY3DPEHPK3PXP';
 const nowMs=Date.now();
@@ -64,5 +65,27 @@ try{
  const status=await pool.query("SELECT state,reviewed_by_user_id,approved_by_user_id FROM tala_live_treasury_withdrawals WHERE id IN ($1,$2)",[first.id,courier.id]);
  assert.equal(status.rows.length,2);
  assert.ok(status.rows.every(x=>x.state==='reserved'&&x.reviewed_by_user_id===reviewer&&x.approved_by_user_id===approver));
+ let providerCalls=0;
+ const mockProvider={payouts:{create:async(args,opts)=>{
+   providerCalls++;
+   assert.equal(opts.stripeAccount,providerCalls===1?'acct_QARESTAURANT1':'acct_QADRIVER1');
+   assert.ok(opts.idempotencyKey.startsWith('tala:treasury:payout:v1:'));
+   assert.equal(args.amount,500);
+   return {id:'po_QAPROVIDER'+providerCalls,livemode:false,amount:args.amount,
+    currency:'mxn',destination:args.destination,status:'pending',
+    metadata:{tala_treasury_withdrawal:args.metadata.tala_treasury_withdrawal}};
+ }}};
+ for(const w of [first,courier]){
+  const sent=await dispatchTreasuryWithdrawal(pool,mockProvider,w.id,1000,true);
+  assert.equal(sent.state,'submitted');
+  await assert.rejects(dispatchTreasuryWithdrawal(pool,mockProvider,w.id,1000,true),
+   /ALREADY_DISPATCHED_OR_UNKNOWN/);
+ }
+ assert.equal(providerCalls,2);
+ const post=await pool.query(
+  "SELECT state,stripe_payout_id FROM tala_live_treasury_withdrawals WHERE id IN ($1,$2)",
+  [first.id,courier.id]);
+ assert.ok(post.rows.every(x=>x.state==='submitted'&&x.stripe_payout_id?.startsWith('po_')));
+ console.log('TREASURY_DRIVER_RESTAURANT_MOCK_PAYOUT_DISPATCH_PASS');
  console.log('TREASURY_DUAL_PAYEE_PG15_TRANSACTIONAL_RESERVATION_PASS');
 }finally{await pool.end();}
