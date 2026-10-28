@@ -16,6 +16,8 @@ on:
       - 'node-backend/tests/rc9-kali-live-cutover.test.mjs'
       - 'node-backend/scripts/rc91-kali-onboarding-two-pm2-cutover.sh'
       - 'node-backend/tests/rc91-kali-onboarding-cutover.test.mjs'
+      - 'node-backend/scripts/rc91-kali-prepare-release.sh'
+      - 'node-backend/tests/rc91-kali-prepare-release.test.mjs'
       - 'node-backend/tests/rc9-mobile-connect-wallet-contract.test.mjs'
       - 'node-backend/scripts/rc9-live-withdrawal-activation-audit.mjs'
       - 'node-backend/tests/rc9-live-withdrawal-activation-audit.test.mjs'
@@ -37,6 +39,8 @@ on:
       - 'node-backend/tests/rc9-kali-live-cutover.test.mjs'
       - 'node-backend/scripts/rc91-kali-onboarding-two-pm2-cutover.sh'
       - 'node-backend/tests/rc91-kali-onboarding-cutover.test.mjs'
+      - 'node-backend/scripts/rc91-kali-prepare-release.sh'
+      - 'node-backend/tests/rc91-kali-prepare-release.test.mjs'
       - 'node-backend/tests/rc9-mobile-connect-wallet-contract.test.mjs'
       - 'node-backend/scripts/rc9-live-withdrawal-activation-audit.mjs'
       - 'node-backend/tests/rc9-live-withdrawal-activation-audit.test.mjs'
@@ -86,6 +90,8 @@ jobs:
       - name: Validate RC9 Kali installer syntax and non-production permission guard
         run: |
           bash -n scripts/rc9-kali-prepare-release.sh
+          bash -n scripts/rc91-kali-prepare-release.sh
+          bash -n scripts/rc91-kali-onboarding-two-pm2-cutover.sh
           if bash scripts/rc9-kali-prepare-release.sh --plan "$GITHUB_SHA"; then
             echo 'RC9_CI_FAIL_INSTALLER_RAN_OUTSIDE_KALI_OPERATOR'; exit 1
           fi
