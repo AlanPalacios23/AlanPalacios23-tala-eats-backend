@@ -88,7 +88,7 @@ async function stripeState(provider:Provider,x:Owner){
   payoutSchedule:acct.settings?.payouts?.schedule?.interval??'unknown'};
 }
 const MAX_STATUS_READS_PER_FIVE_MINUTES=30;
-async function checkConnectStatusRateLimit(redis:Redis,x:Owner):Promise<boolean>{
+export async function checkConnectStatusRateLimit(redis:Redis,x:Pick<Owner,'ownerId'|'role'|'id'>):Promise<boolean>{
  // Distributed, bounded, per owner/payee. Never cache provider bank approval
  // or wallet funds: Stripe itself stays the source of truth.
  const key='tala:node:live:connect-status:'+x.ownerId+':'+x.role+':'+x.id;
