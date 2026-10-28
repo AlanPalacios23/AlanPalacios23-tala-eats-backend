@@ -1,0 +1,41 @@
+name: RC96 live-delivery workflow source and financial NO-GO
+on:
+  push:
+    branches: [feat/rc96-driver-delivery-workflow-gated-20261028]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  rc96-safety:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Build guarded LIVE delivery implementation
+        working-directory: node-backend
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run generate
+          npm run build
+      - name: Signed money proof and never-release gates
+        working-directory: node-backend
+        run: node --test tests/rc96-live-delivery-proof.test.mjs
+      - name: Regression suite
+        working-directory: node-backend
+        run: npm test
+      - name: Confirm no delivery payments can be accidentally switched on
+        working-directory: node-backend
+        run: |
+          set +e
+          NODE_ENV=production LIVE_DELIVERY_DISPATCH_ENABLED=true \
+          node --input-type=module -e "import('./dist/config.js')" > hold.log 2>&1
+          rc=$?
+          set -e
+          test "$rc" != 0
+          grep -q 'RC96_LIVE_DELIVERY_NOT_RELEASED_STRIPE_TEST_REQUIRED' hold.log
+          echo 'RC96_LIVE_DELIVERY_SWITCH_HARD_BLOCKED=PASS'
