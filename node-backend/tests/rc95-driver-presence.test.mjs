@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {driverLocationKey,driverPersistKey,canOperateDriverPresence} from '../src/marketplace/delivery-runtime.ts';
+import {driverLocationKey,driverPersistKey,canOperateDriverPresence,hasFreshVerifiedDriverGps} from '../src/marketplace/delivery-runtime.ts';
 
 test('stage and LIVE location keys are disjoint and stable',()=>{
  assert.equal(driverLocationKey('staging',19),'tala:node:stage:driver:19:location');
@@ -50,4 +50,19 @@ test('driver route exposes own readiness without coordinates or accidental deliv
  const section=driver.slice(driver.indexOf('export async function driverPresenceReadiness'),driver.indexOf('export async function canDriverReachPickup'));
  assert.doesNotMatch(section,/await tx\.marketOrder\.|db\.marketOrder\.|stripe\.|order\.create/);
  assert.doesNotMatch(section,/currentLat:|currentLng:|reported_at:parsed\.reported_at/);
+});
+
+test('GPS heartbeat expires after 120 seconds and rejects tampering, future data and invalid coordinates',()=>{
+ const now=Date.parse('2026-10-28T19:35:00.000Z');
+ const location=(lat,lng,when)=>JSON.stringify({lat,lng,reported_at:when});
+ assert.equal(hasFreshVerifiedDriverGps(location(20.65,-103.7,new Date(now).toISOString()),120,now),true);
+ assert.equal(hasFreshVerifiedDriverGps(location(20.65,-103.7,new Date(now-119000).toISOString()),1,now),true);
+ assert.equal(hasFreshVerifiedDriverGps(location(20.65,-103.7,new Date(now-121000).toISOString()),120,now),false);
+ assert.equal(hasFreshVerifiedDriverGps(location(20.65,-103.7,new Date(now+1000).toISOString()),120,now),false);
+ assert.equal(hasFreshVerifiedDriverGps(location(20.65,-103.7,new Date(now).toISOString()),0,now),false);
+ assert.equal(hasFreshVerifiedDriverGps(location(20.65,-103.7,new Date(now).toISOString()),121,now),false);
+ assert.equal(hasFreshVerifiedDriverGps(location(95,-103.7,new Date(now).toISOString()),10,now),false);
+ assert.equal(hasFreshVerifiedDriverGps(location(20.65,-200,new Date(now).toISOString()),10,now),false);
+ assert.equal(hasFreshVerifiedDriverGps('not json',10,now),false);
+ assert.equal(hasFreshVerifiedDriverGps(null,10,now),false);
 });
