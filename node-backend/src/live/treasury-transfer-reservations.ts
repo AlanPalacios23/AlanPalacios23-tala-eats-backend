@@ -93,13 +93,14 @@ export async function recordTreasuryTransferReview(
   if(!/^pi_[A-Za-z0-9]+$/.test(o.payment_provider_id))
    throw Error('TREASURY_ORIGINAL_PAYMENT_INTENT_MISSING');
   const pi=await provider.paymentIntents.retrieve(o.payment_provider_id);
-  if(!pi.livemode||pi.status!=='succeeded'||pi.currency!=='mxn'||
+  const expectedLive=process.env.NODE_ENV==='production';
+  if(pi.livemode!==expectedLive||pi.status!=='succeeded'||pi.currency!=='mxn'||
     pi.metadata.order_id!==String(action.orderId)||pi.amount_received!==cents(o.total_minor))
    throw Error('TREASURY_PAYMENT_INTENT_MISMATCH');
   const chId=typeof pi.latest_charge==='string'?pi.latest_charge:pi.latest_charge?.id;
   if(!chId||!/^ch_[A-Za-z0-9]+$/.test(chId))throw Error('TREASURY_SOURCE_CHARGE_MISSING');
   const charge=await provider.charges.retrieve(chId);
-  if(!charge.livemode||!charge.paid||!charge.captured||charge.refunded||charge.disputed||
+  if(charge.livemode!==expectedLive||!charge.paid||!charge.captured||charge.refunded||charge.disputed||
     charge.amount_refunded!==0||charge.id!==chId||charge.currency!=='mxn'||
     charge.amount_captured!==pi.amount_received)
    throw Error('TREASURY_CAPTURE_NOT_VERIFIED');
