@@ -143,10 +143,11 @@ export function buildTreasuryRouter(pool:Pool,stripe:ConnectedReads){
    const x=await identity(req,pool,role,id);
    const b=await auditedSnapshot(pool,stripe,x);
    res.json({payee_kind:role,payee_id:id,currency:'MXN',unit:'centavos',
-    eligible_cents:b.eligibleMinor.toString(),already_requested_cents:b.reservedMinor.toString(),
-    provider_available_cents:b.providerAvailableMinor.toString(),
-    withdrawable_cents:b.withdrawableMinor.toString(),withdrawable:displayMinor(b.withdrawableMinor),
+    eligible_cents:Number(b.eligibleMinor),already_requested_cents:Number(b.reservedMinor),
+    provider_available_cents:Number(b.providerAvailableMinor),
+    withdrawable_cents:Number(b.withdrawableMinor),withdrawable:displayMinor(b.withdrawableMinor),
     bank:{status:b.bankStatus},eligible:b.eligible,blockers:b.blockers,
+    limits:{minimum_cents:100,per_request_cents:50000,daily_remaining_cents:100000},
     server_allows_requests:false,payout_execution_enabled:false,
     source:b.source,real_bank_payouts_created:false});
   }catch(e){
@@ -164,9 +165,8 @@ export function buildTreasuryRouter(pool:Pool,stripe:ConnectedReads){
    await identity(req,pool,role,id);
    const r=await pool.query<{id:string;amount_minor:string;state:string;created_at:Date}>(
     'SELECT id::text,amount_minor::text,state,created_at FROM tala_live_treasury_withdrawals WHERE payee_kind=$1 AND payee_id=$2 ORDER BY id DESC LIMIT 50',[role,id]);
-   res.json({payee_kind:role,payee_id:id,currency:'MXN',
-    withdrawals:r.rows.map(w=>({id:w.id,amount_cents:w.amount_minor,status:w.state,created_at:w.created_at})),
-    bank_payouts_not_enabled:true});
+   res.json(r.rows.map(w=>({id:w.id,amount_cents:Number(w.amount_minor),
+    currency:'mxn',status:w.state,created_at:w.created_at})));
   }catch{res.status(403).json({error:'WITHDRAWAL_HISTORY_NOT_AUTHORIZED'});}
  });
  router.post('/withdrawals/:role/:id/request',async(req,res)=>{
