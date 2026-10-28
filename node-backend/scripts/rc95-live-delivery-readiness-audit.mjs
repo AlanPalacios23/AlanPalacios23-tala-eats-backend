@@ -125,6 +125,10 @@ if(mode==='--source'){
    db.marketOrder.count({where:{orderType:'delivery',status:'ready',driverId:null}}),
   ]);
   console.log('RC95_APPROVED_OPEN_MERCHANT_COUNT='+stores);
+  const approvedDriverTotal=await db.marketplaceDriverProfile.count({
+    where:{isVerified:true,user:{is:{role:'driver',isActive:true}}},
+  });
+  console.log('RC95_APPROVED_DRIVER_TOTAL='+approvedDriverTotal);
   console.log('RC95_VERIFIED_DRIVER_ONLINE_FLAG_COUNT='+drivers);
   // Presence evidence is separate from the PostgreSQL online toggle.
   // LIVE namespace is deliberately empty on unmodified RC9.4 deployment.
@@ -136,7 +140,8 @@ if(mode==='--source'){
   let gpsRead='PASS';
   const {createRequire}=await import('node:module');
   const requireFromRelease=createRequire(resolve(root,'package.json'));
-  const Redis=requireFromRelease('ioredis');
+  const RedisModule=requireFromRelease('ioredis');
+  const Redis=RedisModule.default??RedisModule.Redis??RedisModule;
   const redis=new Redis(config.REDIS_URL,{
     lazyConnect:true,connectTimeout:2000,maxRetriesPerRequest:1,retryStrategy:()=>null,
   });
