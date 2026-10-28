@@ -11,6 +11,7 @@ on:
       - 'node-backend/tests/rc9-treasury-*.test.mjs'
       - 'node-backend/scripts/ci-rc9-treasury-*.mjs'
       - 'node-backend/scripts/rc9-treasury-live-preflight.mjs'
+      - 'node-backend/scripts/rc9-kali-prepare-release.sh'
       - '.github/workflows/rc9-node-treasury-safe.yml'
   pull_request:
     paths:
@@ -21,6 +22,7 @@ on:
       - 'node-backend/tests/rc9-treasury-*.test.mjs'
       - 'node-backend/scripts/ci-rc9-treasury-*.mjs'
       - 'node-backend/scripts/rc9-treasury-live-preflight.mjs'
+      - 'node-backend/scripts/rc9-kali-prepare-release.sh'
       - '.github/workflows/rc9-node-treasury-safe.yml'
 permissions:
   contents: read
@@ -61,6 +63,12 @@ jobs:
           npm run build
       - name: All Node tests with money disabled
         run: npm test
+      - name: Validate RC9 Kali installer syntax and non-production permission guard
+        run: |
+          bash -n scripts/rc9-kali-prepare-release.sh
+          if bash scripts/rc9-kali-prepare-release.sh --plan "$GITHUB_SHA"; then
+            echo 'RC9_CI_FAIL_INSTALLER_RAN_OUTSIDE_KALI_OPERATOR'; exit 1
+          fi
       - name: Read-only production source preflight (LIVE stays OFF)
         run: node scripts/rc9-treasury-live-preflight.mjs
       - name: Hard release lock remains OFF in source
