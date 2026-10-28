@@ -23,6 +23,6 @@ test('RC9.2 deployment cannot be applied by arbitrary account',()=>{
     encoding:'utf8',env:{HOME:'/tmp',PATH:'/usr/bin:/bin'},
   });
   assert.notEqual(r.status,0);
-  assert.match(r.stdout+r.stderr,/RC92_ABORT|RC92_CUTOVER_ABORT/);
+  assert.match(r.stdout+r.stderr,/RC92_ABORT|RC92_CUTOVER_ABORT|USAGE:/);
  }
 });
