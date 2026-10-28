@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 set +x
 umask 077
-MODE="\${1:-}"; SHA="\${2:-}"; APPROVAL="\${3:-}"
+MODE="${1:-}"; SHA="${2:-}"; APPROVAL="${3:-}"
 if [[ ! "$MODE" =~ ^--(plan|apply|verify)$ || ! "$SHA" =~ ^[0-9a-f]{40}$ ]];then
  echo 'RC9_SCHEMA_ABORT=MODE_OR_SHA';exit 2
 fi
@@ -84,7 +84,7 @@ if [[ "$MODE" == --plan ]];then
  echo 'RC9_SCHEMA_PLAN=PASS_READ_ONLY'
  exit 0
 fi
-[[ "\${RC9_RESTORE_ATTESTED:-}" == 'I_VERIFIED_RC9_RESTORE_AND_SHADOW_MIGRATION' ]] || {
+[[ "${RC9_RESTORE_ATTESTED:-}" == 'I_VERIFIED_RC9_RESTORE_AND_SHADOW_MIGRATION' ]] || {
  echo 'RC9_SCHEMA_ABORT=RESTORE_ATTESTATION_REQUIRED';exit 1;
 }
 node --env-file="$ENV" ./node_modules/prisma/build/index.js migrate deploy
