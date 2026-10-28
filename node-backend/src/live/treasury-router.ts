@@ -53,12 +53,13 @@ async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIdentity){
   acct.details_submitted===true&&!acct.requirements?.disabled_reason&&
   (acct.requirements?.currently_due?.length??0)===0&&
   (acct.requirements?.past_due?.length??0)===0;
- const stripeBalance=await stripe.balance.retrieve({stripeAccount:x.account});
+ const stripeBalance=await stripe.balance.retrieve({}, {stripeAccount:x.account});
  const accountAvailable=stripeBalance.available.filter(b=>b.currency==='mxn');
- if(accountAvailable.length!==1||!accountAvailable[0]?.source_types||
-   !Number.isSafeInteger(accountAvailable[0].source_types.card))
+ const cardMinor=accountAvailable[0]?.source_types?.card;
+ if(accountAvailable.length!==1||typeof cardMinor!=='number'||
+   !Number.isSafeInteger(cardMinor))
   throw Error('CONNECT_CARD_BALANCE_UNVERIFIED');
- const available=BigInt(accountAvailable[0].source_types.card);
+ const available=BigInt(cardMinor);
  if(available<0n)throw Error('CONNECT_NEGATIVE_BALANCE');
  const transferRows=await pool.query<{order_id:number;payee_kind:string;payee_id:number;
    connected_account_id:string;stripe_transfer_id:string;amount_minor:string;
