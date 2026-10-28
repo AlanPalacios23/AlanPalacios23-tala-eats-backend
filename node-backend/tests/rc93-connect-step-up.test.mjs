@@ -62,6 +62,11 @@ test('RC93 all bank-onboarding/confirmation routes require shared durable step-u
  assert.ok(part(driver,"r.post('/driver/finance/connect/confirm'","r.get('/driver/finance/connect/status'").includes('requireTreasuryBankStepUp'));
  assert.ok(part(driver,"r.post('/driver/finance/connect/onboarding-link'","r.get('/driver/finance/earnings'").includes('requireTreasuryBankStepUp'));
  assert.ok(mobile.includes('await requireTreasuryBankStepUp(pool,s,req.body?.totp)'));
+ assert.ok(part(merchant,"r.post('/admin/finance/connect-map'","r.post('/owner/finance/connect/:rid/confirm'").includes('requireTreasuryBankStepUp'));
+ assert.ok(part(driver,"r.post('/admin/finance/driver/connect-map'","r.post('/driver/finance/connect/confirm'").includes('requireTreasuryBankStepUp'));
+ assert.match(merchant,/u\.is_active=true AND u\.role='restaurant'/);
+ assert.match(driver,/p\.is_verified=true/);
+
  assert.doesNotMatch(merchant,/(?:payouts|transfers)\.create\(/);
  assert.doesNotMatch(driver,/(?:payouts|transfers)\.create\(/);
 });
