@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {inspectConnectedBankAndPayouts} from '../dist/live/treasury-bank-verification.js';
 const bank={id:'ba_MX123',object:'bank_account',country:'MX',currency:'mxn',
- default_for_currency:true,status:'verified'};
+ default_for_currency:true,status:'verified',bank_name:'Banco MX',last4:'1234'};
 const payout={id:'po_ABC123',amount:5000,currency:'mxn',destination:bank.id,
  automatic:false,livemode:true,metadata:{tala_treasury_withdrawal:'10',tala_payee_kind:'restaurant',tala_payee_id:'8'},status:'paid'};
 const api=({bankData=[bank],bankMore=false,payoutData=[payout],payoutMore=false}={})=>({
@@ -14,7 +14,8 @@ const api=({bankData=[bank],bankMore=false,payoutData=[payout],payoutMore=false}
 const local=[{id:payout.id,withdrawalId:'10',payeeKind:'restaurant',payeeId:8,bankId:bank.id,amountMinor:'5000',state:'paid'}];
 test('bank and payout reconciliation permits only one verified MXN destination and fully known Stripe payout IDs',async()=>{
  const a=await inspectConnectedBankAndPayouts(api(),'acct_TESTMERCHANT',local);
- assert.deepEqual(a,{verified:true,bankId:bank.id,unknownPayouts:0,reason:null});
+ assert.deepEqual(a,{verified:true,bankId:bank.id,unknownPayouts:0,reason:null,
+  bankName:'Banco MX',last4:'1234'});
 });
 test('unverified or multiple bank destinations always block withdrawability',async()=>{
  for(const args of [
