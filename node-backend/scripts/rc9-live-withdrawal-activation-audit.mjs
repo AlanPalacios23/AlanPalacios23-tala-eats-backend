@@ -82,8 +82,8 @@ try {
  ];
  if(new Set(payees.map(x=>x.account)).size!==payees.length)stop('DUPLICATE_CONNECT_PAYEE');
  const unique=payees.filter(x=>typeof x.account==='string'&&remote.has(x.account));
- const statistics={restaurant:{registered:db.merchant.length,approved:0,manual_ready:0},
-  driver:{registered:db.driver.length,approved:0,manual_ready:0}};
+ const statistics={restaurant:{registered:db.merchant.length,approved:0,bank_verified:0,manual_ready:0},
+  driver:{registered:db.driver.length,approved:0,bank_verified:0,manual_ready:0}};
  for(const p of payees){
   const s=statistics[p.kind],acct=remote.get(p.account);
   const approved=p.approved===true&&p.active===true&&
@@ -93,12 +93,21 @@ try {
     acct?.details_submitted===true&&!acct?.requirements?.disabled_reason&&
     (acct?.requirements?.currently_due?.length??0)===0&&
     (acct?.requirements?.past_due?.length??0)===0;
-  if(approved&&capabilities&&acct?.settings?.payouts?.schedule?.interval==='manual')
+  let bankVerified=false;
+  if(acct){
+   const banks=await stripe.accounts.listExternalAccounts(acct.id,{object:'bank_account',limit:100});
+   const defaults=banks.data.filter(b=>b.object==='bank_account'&&b.country==='MX'&&
+     b.currency==='mxn'&&b.default_for_currency===true);
+   bankVerified=!banks.has_more&&defaults.length===1&&defaults[0].status==='verified';
+  }
+  if(approved&&bankVerified)s.bank_verified++;
+  if(approved&&capabilities&&bankVerified&&acct?.settings?.payouts?.schedule?.interval==='manual')
    s.manual_ready++;
  }
  for(const [kind,stat] of Object.entries(statistics)){
   console.log('RC9_'+kind.toUpperCase()+'_CONNECT_REGISTERED='+stat.registered);
   console.log('RC9_'+kind.toUpperCase()+'_OWNER_APPROVED='+stat.approved);
+  console.log('RC9_'+kind.toUpperCase()+'_BANK_VERIFIED='+stat.bank_verified);
   console.log('RC9_'+kind.toUpperCase()+'_MANUAL_PAYOUT_READY='+stat.manual_ready);
  }
  if(accounts.length!==unique.length)stop('STRIPE_ACCOUNT_NOT_UNIQUELY_MAPPED_TO_PAYEE');
@@ -110,6 +119,11 @@ try {
  if(db.counts.pending_withdrawals>0||db.counts.pending_events>0)
   stop('UNRECONCILED_WITHDRAWAL_OR_CONNECT_EVENT');
  if(db.counts.completed_transfers===0)stop('NO_RECONCILED_FUNDS_FOR_WITHDRAWAL');
+ const priorTransfers=await stripe.transfers.list({limit:100});
+ if(priorTransfers.has_more)stop('PROVIDER_TRANSFER_PAGINATION_REQUIRED');
+ const unverifiable=priorTransfers.data.filter(t=>!t.source_transaction).length;
+ console.log('RC9_STRIPE_TRANSFERS_WITHOUT_SOURCE_TRANSACTION='+unverifiable);
+ if(unverifiable>0)console.log('RC9_LEGACY_TRANSFERS_REQUIRE_MANUAL_RECONCILIATION=YES');
  if(db.counts.payout_receipts===0)console.log('RC9_FIRST_SIGNED_BANK_PAYOUT_STILL_UNPROVEN=YES');
  // Transfer/Payout executors MUST NOT be unlocked by this read-only audit.
  console.log('RC9_TREASURY_SOURCE_EXECUTION_LOCKED=YES');
