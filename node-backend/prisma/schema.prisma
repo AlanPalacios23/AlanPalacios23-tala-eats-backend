@@ -1291,3 +1291,16 @@ model TalaLiveTreasuryLedger {
  @@index([createdAt],map:"treasury_ledger_created")
  @@map("tala_live_treasury_ledger")
 }
+
+
+model TalaLiveTreasuryAdminStep {
+  id BigInt @id @default(autoincrement())
+  adminUserId Int @map("admin_user_id")
+  otpStep BigInt @map("otp_step")
+  actionKind String @map("action_kind") @db.VarChar(24)
+  targetKey String @map("target_key") @db.VarChar(120)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@unique([adminUserId,otpStep],map:"treasury_admin_step_unique")
+  @@index([actionKind,targetKey,createdAt],map:"treasury_admin_steps_target")
+  @@map("tala_live_treasury_admin_steps")
+}
