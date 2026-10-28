@@ -41,15 +41,21 @@ record('LIVE_DELIVERY_CHECKOUT',
  /liveCard=isStripePickupIntent\(req\.body\)/.test(routeSrc)===false &&
  /const liveStripe=cardStripePickup&&/.test(checkoutSrc)===false,
  'Current LIVE card checkout and order creation accept pickup only');
+let gpsRuntimeSrc='';
+try{gpsRuntimeSrc=read('src/marketplace/delivery-runtime.ts');}catch{/* RC9.4 deployed source */}
 record('LIVE_GPS_NAMESPACE',
- !/tala:node:stage:driver:/.test(driverSrc),
- 'Driver heartbeat and PIN budget must use independently isolated LIVE Redis keys');
+ /driverLocationKey\\(config\\.NODE_ENV/.test(driverSrc)&&
+ /driverPersistKey\\(config\\.NODE_ENV/.test(driverSrc)&&
+ /'live'/.test(gpsRuntimeSrc),
+ 'Driver GPS heartbeat keys are isolated by environment; no LIVE dispatch enabled');
 record('LIVE_READY_DISPATCH',
  !/if\(next==='ready'&&config\.NODE_ENV==='staging'/.test(lifecycleSrc),
  'Restaurant READY dispatch is staging-only');
 record('LIVE_DRIVER_TENDER_PROOF',
  !/config\.NODE_ENV!=='staging'/.test(financialSrc),
  'Cash and card handoff must use verified LIVE-specific tender and ledger');
+record('LIVE_DRIVER_PRESENCE_MOBILE_E2E',false,
+ 'No verified connected driver or device GPS evidence; LIVE presence opt-in must stay off');
 record('LIVE_DISPATCH_WORKER',
  /dispatchStageDeliveryReady|dispatchLiveDeliveryReady|dispatchReadyDelivery/.test(workerSrc),
  'Production worker currently runs finance, mail and web push but no READY recovery');
