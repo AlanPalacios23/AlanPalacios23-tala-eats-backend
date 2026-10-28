@@ -7,9 +7,10 @@ MODE="$1"
 APPROVAL=""
 if (( $# == 2 ));then APPROVAL="$2";fi
 if (( $# < 1 || $# > 2 )) ||
-   [[ ! "$MODE" =~ ^--(plan|apply|verify)$ ]] ||
+   [[ ! "$MODE" =~ ^--(plan|apply|verify|rollback)$ ]] ||
    { [[ "$MODE" == --apply ]] && [[ "$APPROVAL" != I_APPROVE_RC95_DRIVER_PRESENCE_ONLY ]]; } ||
-   { [[ "$MODE" != --apply ]] && (( $# != 1 )); };then
+   { [[ "$MODE" == --rollback ]] && [[ "$APPROVAL" != I_APPROVE_RC95_RESTORE_RC94 ]]; } ||
+   { [[ "$MODE" != --apply && "$MODE" != --rollback ]] && (( $# != 1 )); };then
  echo RC95_CUTOVER_ABORT=USAGE_OR_APPROVAL;exit 2
 fi
 [[ "$(id -un)" == tala-node-stage && "$HOME" == /home/tala-node-stage ]] ||
@@ -100,16 +101,33 @@ if [[ "$MODE" == --verify ]];then
  echo RC95_LIVE_DELIVERY_AND_CARD=LOCKED
  exit 0
 fi
+if [[ "$MODE" == --rollback ]];then
+ pm_check "$NEW"
+ [[ -f "$BACKUP" && ! -L "$BACKUP" &&
+    "$(stat -c %a "$BACKUP")" == 600 &&
+    "$(stat -c %u "$BACKUP")" == "$(id -u)" ]] ||
+    { echo RC95_ROLLBACK_ABORT=PRIVATE_BACKUP_NOT_FOUND;exit 1; }
+ cp -p "$BACKUP" "$ENV"
+ pm delete tala-node-stage-api >/dev/null
+ pm delete tala-node-stage-worker >/dev/null
+ pm start "$OLD_ECO" --only tala-node-stage-worker --update-env >/dev/null
+ pm start "$OLD_ECO" --only tala-node-stage-api --update-env >/dev/null
+ pm save >/dev/null
+ pm_check "$OLD";ready
+ echo RC95_MANUAL_ROLLBACK_TO_RC94=PASS
+ exit 0
+fi
 pm_check "$OLD";ready
 [[ ! -e "$BACKUP" ]] || { echo RC95_CUTOVER_ABORT=BACKUP_ALREADY_EXISTS;exit 1; }
 cp -p "$ENV" "$BACKUP"
 [[ ! -L "$BACKUP" && "$(stat -c %a "$BACKUP")" == 600 ]] ||
  { echo RC95_CUTOVER_ABORT=BACKUP_PERMISSIONS;exit 1; }
 FINISHED=no
+CHANGED=no
 cleanup(){
  local result=$?
  trap - EXIT
- if [[ "$FINISHED" != yes ]];then
+ if [[ "$FINISHED" != yes && "$CHANGED" == yes ]];then
   echo RC95_AUTOMATIC_ROLLBACK=START
   cp -p "$BACKUP" "$ENV" || true
   pm delete tala-node-stage-api >/dev/null 2>&1 || true
@@ -122,6 +140,7 @@ cleanup(){
  exit "$result"
 }
 trap cleanup EXIT
+CHANGED=yes
 export PRIVATE_LIVE_ENV="$ENV"
 node <<'JS'
 const fs=require('node:fs'),path=require('node:path');
