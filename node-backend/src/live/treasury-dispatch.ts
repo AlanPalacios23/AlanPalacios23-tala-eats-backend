@@ -39,10 +39,10 @@ export async function dispatchTreasuryWithdrawal(
  if(!dbId(id)||!Number.isSafeInteger(verifiedAvailableMinor)||verifiedAvailableMinor<100)
   throw Error('TREASURY_REQUEST_UNVERIFIED');
  if(!releaseApproved)throw Error('TREASURY_PAYOUT_NOT_RELEASED');
- const client=await pool.connect();let began=false;
+ const client=await pool.connect();let begun=false;
  let row:StoredPayout;
  try{
-  await client.query('BEGIN');began=true;
+  await client.query('BEGIN');begun=true;
   const result=await client.query<StoredPayout>(
    'SELECT id::text,payee_kind,payee_id,state,connected_account_id,bank_destination_id,amount_minor::text,stripe_payout_id,requested_by_user_id,reviewed_by_user_id,approved_by_user_id FROM tala_live_treasury_withdrawals WHERE id=$1 FOR UPDATE',
    [id]);
@@ -63,8 +63,8 @@ export async function dispatchTreasuryWithdrawal(
    "UPDATE tala_live_treasury_withdrawals SET state='submitted',updated_at=NOW() WHERE id=$1 AND state='reserved' AND stripe_payout_id IS NULL",
    [id]);
   if(updated.rowCount!==1)throw Error('TREASURY_DISPATCH_RACE');
-  await client.query('COMMIT');began=false;
- }catch(e){if(began)await client.query('ROLLBACK').catch(()=>{});throw e;}
+  await client.query('COMMIT');begun=false;
+ }catch(e){if(begun)await client.query('ROLLBACK').catch(()=>{});throw e;}
  finally{client.release();}
  const reservation:PayoutReservation={
   id,state:'reserved',kind:row!.payee_kind,payeeId:row!.payee_id,
@@ -99,7 +99,7 @@ export async function dispatchTreasuryTransfer(
  if(!dbId(id)||!releaseApproved)throw Error('TREASURY_TRANSFER_NOT_RELEASED');
  const client=await pool.connect();let begun=false;let row:StoredTransfer;
  try{
-  await client.query('BEGIN');began=true;
+  await client.query('BEGIN');begun=true;
   const r=await client.query<StoredTransfer>(
    'SELECT id::text,state,order_id,payee_kind,payee_id,connected_account_id,source_charge_id,amount_minor::text,idempotency_key,reviewed_by_user_id,approved_by_user_id,stripe_transfer_id FROM tala_live_treasury_transfers WHERE id=$1 FOR UPDATE',
    [id]);
@@ -117,8 +117,8 @@ export async function dispatchTreasuryTransfer(
    "UPDATE tala_live_treasury_transfers SET state='submitted',updated_at=NOW() WHERE id=$1 AND state='reserved' AND stripe_transfer_id IS NULL",
    [id]);
   if(q.rowCount!==1)throw Error('TREASURY_TRANSFER_DISPATCH_RACE');
-  await client.query('COMMIT');began=false;
- }catch(e){if(began)await client.query('ROLLBACK').catch(()=>{});throw e;}
+  await client.query('COMMIT');begun=false;
+ }catch(e){if(begun)await client.query('ROLLBACK').catch(()=>{});throw e;}
  finally{client.release();}
  const reservation:TransferReservation={
   id,state:'reserved',
