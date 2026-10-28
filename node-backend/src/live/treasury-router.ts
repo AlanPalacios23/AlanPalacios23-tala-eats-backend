@@ -90,7 +90,7 @@ async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIdentity){
     throw Error('ORIGINAL_CHARGE_REFUND_DISPUTE_HOLD');
   total+=amount;
  }
- const [withdrawals,holds,cases]=await Promise.all([
+ const [withdrawals,holds,cases,daily]=await Promise.all([
   pool.query<{total:string;pending:string}>(
     "SELECT COALESCE(SUM(amount_minor),0)::text AS total, COALESCE(SUM(CASE WHEN state IN ('reserved','submitted','unknown','review_required') THEN 1 ELSE 0 END),0)::text AS pending FROM tala_live_treasury_withdrawals WHERE payee_kind=$1 AND payee_id=$2 AND state IN ('reserved','submitted','unknown','review_required','paid')",
     [x.kind,x.id]),
@@ -99,6 +99,9 @@ async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIdentity){
     [x.kind,x.id]),
   pool.query<{n:string}>(
     "SELECT count(*)::text AS n FROM tala_live_payee_allocations a JOIN tala_live_financial_cases f ON f.order_id=a.order_id WHERE a.payee_kind=$1 AND a.payee_id=$2 AND f.status<>'resolved'",
+    [x.kind,x.id]),
+  pool.query<{daily_minor:string}>(
+    "SELECT COALESCE(SUM(amount_minor),0)::text AS daily_minor FROM tala_live_treasury_withdrawals WHERE payee_kind=$1 AND payee_id=$2 AND created_at >= DATE_TRUNC('day', NOW() AT TIME ZONE 'America/Mexico_City') AT TIME ZONE 'America/Mexico_City' AND state <> 'canceled'",
     [x.kind,x.id])
  ]);
  const reserved=minor(withdrawals.rows[0]?.total??'0');
@@ -120,7 +123,12 @@ async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIdentity){
   ownerApproved:x.approved,connectReady:Boolean(connectReady),
   pendingUnknownWithdrawals:pending
  });
- return {...balance,serverAllowsRequests:NODE_TREASURY_LIVE_EXECUTION_ENABLED,
+ const usedToday=BigInt(daily.rows[0]?.daily_minor??'0');
+ if(usedToday<0n||usedToday>9_000_000_000_000n)throw Error('TREASURY_DAILY_LIMIT_INVALID');
+ const dailyRemainingMinor=usedToday<100000n?100000n-usedToday:0n;
+ return {...balance,dailyRemainingMinor,
+  bankName:bank.bankName??null,last4:bank.last4??null,
+  serverAllowsRequests:NODE_TREASURY_LIVE_EXECUTION_ENABLED,
   payoutExecutionEnabled:NODE_TREASURY_LIVE_EXECUTION_ENABLED,
   bankStatus:(bank.verified?'verified':'verification_pending') as 'verified'|'verification_pending',
   serverOnly:{
@@ -146,8 +154,9 @@ export function buildTreasuryRouter(pool:Pool,stripe:ConnectedReads){
     eligible_cents:Number(b.eligibleMinor),already_requested_cents:Number(b.reservedMinor),
     provider_available_cents:Number(b.providerAvailableMinor),
     withdrawable_cents:Number(b.withdrawableMinor),withdrawable:displayMinor(b.withdrawableMinor),
-    bank:{status:b.bankStatus},eligible:b.eligible,blockers:b.blockers,
-    limits:{minimum_cents:100,per_request_cents:50000,daily_remaining_cents:100000},
+    bank:{status:b.bankStatus,bank_name:b.bankName,last4:b.last4},
+    eligible:b.eligible,blockers:b.blockers,
+    limits:{minimum_cents:100,per_request_cents:50000,daily_remaining_cents:Number(b.dailyRemainingMinor)},
     server_allows_requests:false,payout_execution_enabled:false,
     source:b.source,real_bank_payouts_created:false});
   }catch(e){
