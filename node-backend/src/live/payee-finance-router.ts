@@ -71,7 +71,13 @@ export function buildPayeeFinanceRouter(pool:Pool,stripe:StripeRead){
    res.status(saved.rowCount===1?201:409).json(saved.rowCount===1?
      {driver_user_id:userId,owner_confirmation_required:true}:
      {error:'DRIVER_CONNECT_ALREADY_LINKED'});
-  }catch{res.status(403).json({error:'DRIVER_CONNECT_REGISTRATION_DENIED'});}
+  }catch(e){
+   const msg=e instanceof Error?e.message:'';
+   if(msg.startsWith('CONNECT_FRESH_TOTP_')||msg==='TREASURY_TOTP_RATE_LIMITED'){
+     res.status(msg==='TREASURY_TOTP_RATE_LIMITED'?429:403).json({error:msg});return;
+   }
+   res.status(403).json({error:'DRIVER_CONNECT_REGISTRATION_DENIED'});
+  }
  });
  r.post('/driver/finance/connect/confirm',async(req,res)=>{
   try{
@@ -97,7 +103,13 @@ export function buildPayeeFinanceRouter(pool:Pool,stripe:StripeRead){
      'UPDATE tala_live_driver_accounts SET owner_approved_at=COALESCE(owner_approved_at,NOW()),updated_at=NOW() WHERE user_id=$1 AND stripe_account_id=$2 RETURNING user_id',[userId,recipient.stripe_account_id]);
    res.status(result.rowCount===1?200:404).json(result.rowCount===1?
      {owner_confirmed:true}:{error:'DRIVER_CONNECT_NOT_REGISTERED'});
-  }catch{res.status(403).json({error:'DRIVER_SESSION_REQUIRED'});}
+  }catch(e){
+   const msg=e instanceof Error?e.message:'';
+   if(msg.startsWith('CONNECT_FRESH_TOTP_')||msg==='TREASURY_TOTP_RATE_LIMITED'){
+     res.status(msg==='TREASURY_TOTP_RATE_LIMITED'?429:403).json({error:msg});return;
+   }
+   res.status(403).json({error:'DRIVER_SESSION_REQUIRED'});
+  }
  });
  r.get('/driver/finance/connect/status',async(req,res)=>{
   try{
