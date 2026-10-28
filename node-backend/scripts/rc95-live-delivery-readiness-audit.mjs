@@ -126,6 +126,39 @@ if(mode==='--source'){
   ]);
   console.log('RC95_APPROVED_OPEN_MERCHANT_COUNT='+stores);
   console.log('RC95_VERIFIED_DRIVER_ONLINE_FLAG_COUNT='+drivers);
+  // Presence evidence is separate from the PostgreSQL online toggle.
+  // LIVE namespace is deliberately empty on unmodified RC9.4 deployment.
+  const verifiedOnline=await db.marketplaceDriverProfile.findMany({
+    where:{isVerified:true,isOnline:true,user:{is:{role:'driver',isActive:true}}},
+    select:{userId:true},orderBy:{userId:'asc'},take:100,
+  });
+  let fresh=0;
+  let gpsRead='PASS';
+  const {createRequire}=await import('node:module');
+  const requireFromRelease=createRequire(resolve(root,'package.json'));
+  const Redis=requireFromRelease('ioredis');
+  const redis=new Redis(config.REDIS_URL,{
+    lazyConnect:true,connectTimeout:2000,maxRetriesPerRequest:1,retryStrategy:()=>null,
+  });
+  try{
+    await redis.connect();
+    for(const row of verifiedOnline){
+      const key='tala:node:live:driver:'+row.userId+':location';
+      const [raw,ttl]=await Promise.all([redis.get(key),redis.ttl(key)]);
+      if(!raw||ttl<1||ttl>120)continue;
+      try{
+        const p=JSON.parse(raw);
+        const age=Date.now()-Date.parse(p.reported_at);
+        if(typeof p.lat==='number'&&Number.isFinite(p.lat)&&Math.abs(p.lat)<=90&&
+           typeof p.lng==='number'&&Number.isFinite(p.lng)&&Math.abs(p.lng)<=180&&
+           Number.isFinite(age)&&age>=0&&age<=120000)fresh++;
+      }catch{/* unknown/stale GPS is never counted */}
+    }
+  }catch{gpsRead='UNAVAILABLE';}
+  finally{redis.disconnect();}
+  console.log('RC95_FRESH_VERIFIED_LIVE_DRIVER_GPS_COUNT='+fresh);
+  console.log('RC95_LIVE_GPS_INSPECTION='+gpsRead);
+
   console.log('RC95_UNASSIGNED_READY_DELIVERIES_COUNT='+unassigned);
   console.log('RC95_ONLINE_DB_FLAG_IS_NOT_FRESH_GPS=YES');
  }finally{await db.$disconnect();}
