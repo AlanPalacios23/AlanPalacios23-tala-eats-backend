@@ -326,6 +326,13 @@ const onboardingSchema=z.strictObject({
  payout_account_ref:z.string().max(180).default(''),
  documents:z.array(z.string().max(250)).max(15).default([]),
 });
+// Public, read-only compatibility handshake: an older LIVE backend must
+// never silently discard registration plates from the new Driver PWA.
+operationsRouter.get('/onboarding-capabilities',(_req,res)=>{
+ res.setHeader('Cache-Control','no-store');
+ res.json({driver_plate_supported:true,driver_documents_supported:true,
+   driver_admin_approval_required:true});
+});
 operationsRouter.post('/onboarding',async(req,res)=>{
  const who=await account(req);
  const p=payload(onboardingSchema,req.body);
