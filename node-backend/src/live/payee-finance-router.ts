@@ -6,7 +6,7 @@ import {Router,type Request} from 'express';
 import type {Pool,PoolClient} from 'pg';
 import type Stripe from 'stripe';
 import {current} from '../auth/routes.js';
-import {verifyTotp} from '../auth/crypto.js';
+import {requireTreasuryBankStepUp} from './treasury-connect-step-up.js';
 import {config} from '../config.js';
 import {buildMoneyPlan,cashCollectorWhoMaySubmit} from './payee-allocation.js';
 import {buildTransferProposal} from './transfer-planning.js';
@@ -73,9 +73,26 @@ export function buildPayeeFinanceRouter(pool:Pool,stripe:StripeRead){
  });
  r.post('/driver/finance/connect/confirm',async(req,res)=>{
   try{
-   const userId=await driver(req);
+   const session=await current(req);
+   if(session.user.role!=='driver'||!session.user.isActive){
+    res.status(403).json({error:'DRIVER_SESSION_REQUIRED'});return;
+   }
+   const userId=session.userId;
+   const mapped=await pool.query<{stripe_account_id:string;email:string}>(
+     "SELECT d.stripe_account_id,u.email FROM tala_live_driver_accounts d JOIN users u ON u.id=d.user_id JOIN driver_profiles p ON p.user_id=d.user_id WHERE d.user_id=$1 AND u.is_active=true AND p.is_verified=true",[userId]);
+   if(mapped.rows.length!==1||
+      mapped.rows[0]!.stripe_account_id===config.STRIPE_PLATFORM_ACCOUNT_ID){
+    res.status(403).json({error:'DRIVER_CONNECT_NOT_REGISTERED'});return;
+   }
+   await requireTreasuryBankStepUp(pool,session,req.body?.totp);
+   const recipient=mapped.rows[0]!;
+   const remote=await stripe.accounts.retrieve(recipient.stripe_account_id);
+   if(remote.id!==recipient.stripe_account_id||remote.country!=='MX'||
+      remote.email?.trim().toLowerCase()!==recipient.email.trim().toLowerCase()){
+    res.status(409).json({error:'DRIVER_CONNECT_OWNER_CHANGED'});return;
+   }
    const result=await pool.query(
-     'UPDATE tala_live_driver_accounts SET owner_approved_at=COALESCE(owner_approved_at,NOW()),updated_at=NOW() WHERE user_id=$1 RETURNING user_id',[userId]);
+     'UPDATE tala_live_driver_accounts SET owner_approved_at=COALESCE(owner_approved_at,NOW()),updated_at=NOW() WHERE user_id=$1 AND stripe_account_id=$2 RETURNING user_id',[userId,recipient.stripe_account_id]);
    res.status(result.rowCount===1?200:404).json(result.rowCount===1?
      {owner_confirmed:true}:{error:'DRIVER_CONNECT_NOT_REGISTERED'});
   }catch{res.status(403).json({error:'DRIVER_SESSION_REQUIRED'});}
@@ -97,23 +114,35 @@ export function buildPayeeFinanceRouter(pool:Pool,stripe:StripeRead){
  r.post('/driver/finance/connect/onboarding-link',async(req,res)=>{
   try{
    const session=await current(req);
-   if(session.user.role!=='driver'||!session.user.twoFactorEnabled||
-      !session.mfaVerified||typeof req.body?.totp!=='string'||
-      !/^[0-9]{6}$/.test(req.body.totp)||
-      !verifyTotp(session.user.totpSecret,req.body.totp)){
+   if(session.user.role!=='driver'||!session.user.isActive){
      res.status(403).json({error:'DRIVER_CONNECT_FRESH_2FA_REQUIRED'});return;
    }
    const userId=session.userId;
-   const x=await pool.query<{stripe_account_id:string;owner_approved_at:Date|null}>(
-     'SELECT stripe_account_id,owner_approved_at FROM tala_live_driver_accounts WHERE user_id=$1',[userId]);
-   if(!x.rows[0]?.owner_approved_at){res.status(403).json({error:'OWNER_CONFIRMATION_REQUIRED'});return;}
+   const x=await pool.query<{stripe_account_id:string;owner_approved_at:Date|null;email:string}>(
+     "SELECT d.stripe_account_id,d.owner_approved_at,u.email FROM tala_live_driver_accounts d JOIN users u ON u.id=d.user_id JOIN driver_profiles p ON p.user_id=d.user_id WHERE d.user_id=$1 AND u.is_active=true AND p.is_verified=true",[userId]);
+   const mapped=x.rows[0];
+   if(!mapped?.owner_approved_at||mapped.stripe_account_id===config.STRIPE_PLATFORM_ACCOUNT_ID){
+     res.status(403).json({error:'OWNER_CONFIRMATION_REQUIRED'});return;
+   }
+   await requireTreasuryBankStepUp(pool,session,req.body?.totp);
+   const remote=await stripe.accounts.retrieve(mapped.stripe_account_id);
+   if(remote.id!==mapped.stripe_account_id||remote.country!=='MX'||
+      remote.email?.trim().toLowerCase()!==mapped.email.trim().toLowerCase()){
+     res.status(409).json({error:'DRIVER_CONNECT_OWNER_CHANGED'});return;
+   }
    const link=await stripe.accountLinks.create({
-     account:x.rows[0].stripe_account_id,type:'account_onboarding',
+     account:mapped.stripe_account_id,type:'account_onboarding',
      refresh_url:'https://talaeats.alan-palacios-dev.com/api/v1/connect/onboarding/refresh',
      return_url:'https://talaeats.alan-palacios-dev.com/api/v1/connect/onboarding/return'
    });
    res.json({url:link.url,expires_at:link.expires_at});
-  }catch{res.status(503).json({error:'STRIPE_ONBOARDING_UNAVAILABLE'});}
+  }catch(e){
+   const msg=e instanceof Error?e.message:'';
+   if(msg.startsWith('CONNECT_FRESH_TOTP_')||msg==='TREASURY_TOTP_RATE_LIMITED'){
+    res.status(msg==='TREASURY_TOTP_RATE_LIMITED'?429:403).json({error:msg});return;
+   }
+   res.status(503).json({error:'STRIPE_ONBOARDING_UNAVAILABLE'});
+  }
  });
  // Read-only earnings. Held is NOT an available balance and not a bank payout.
  r.get('/driver/finance/earnings',async(req,res)=>{
