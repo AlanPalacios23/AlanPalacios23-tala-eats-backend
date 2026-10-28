@@ -11,6 +11,8 @@ import {scanUnknownTreasuryPayouts} from './treasury-unknown-recovery.js';
 import {deliverWebPushIteration,webPushConfigured} from '../operational/web-push.js';
 import {db} from '../db.js';
 import {deliverAuthMailBatch} from '../email.js';
+import {liveDispatchReleased} from '../marketplace/live-delivery-payment.js';
+import {sweepLiveDeliveryReady} from '../marketplace/live-delivery-dispatch.js';
 
 if(config.NODE_ENV!=='production')throw Error('LIVE_WORKER_ENV_REQUIRED');
 const {settings,pool,redis,stripe}=buildLiveRuntimeDependencies();
@@ -67,12 +69,28 @@ async function pushTick(){
 }
 const pushTimer=webPushConfigured()?setInterval(()=>{void pushTick();},15000):null;
 if(pushTimer)void pushTick();
+// Independent bounded READY recovery, never coupled to Stripe receipt writes.
+let readyBusy=false;
+async function readyTick(){
+ if(stopping||readyBusy||!liveDispatchReleased())return;
+ readyBusy=true;
+ try{
+  const result=await sweepLiveDeliveryReady();
+  if(result.held>0)console.error('LIVE_DELIVERY_READY_PENDING_OPERATOR_MONITOR');
+  await redis.set('tala:node:live:dispatch:sweep:ok','1','EX',60);
+ }catch(err){console.error('LIVE_DELIVERY_DISPATCH_RECOVERY_HOLD',
+     err instanceof Error?err.name:'unknown');}
+ finally{readyBusy=false;}
+}
+const readyTimer=setInterval(()=>{void readyTick();},15000);
+void readyTick();
 const timer=setInterval(()=>{void tick();},5000);
 void tick();
 const shutdown=async()=>{
  if(stopping)return;
  stopping=true;
  clearInterval(timer);
+ clearInterval(readyTimer);
  if(pushTimer)clearInterval(pushTimer);
  if(mailTimer)clearInterval(mailTimer);
  try{await redis.del('tala:node:live:web-push:heartbeat');}catch{/* TTL expires */}
