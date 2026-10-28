@@ -46,7 +46,7 @@ async function identity(req:Request,pool:Pool,kind:TreasuryPayee,payeeId:number)
  if(!x||!x.active)throw Error('DRIVER_NOT_VERIFIED_OR_CONNECT_MISSING');
  return {kind,id:payeeId,ownerId:s.userId,account:x.stripe_account_id,approved:Boolean(x.owner_approved_at),ownerEmail:x.email};
 }
-type ConnectedReads=Pick<Stripe,'accounts'|'balance'|'transfers'|'charges'|'payouts'>;
+type ConnectedReads=Pick<Stripe,'accounts'|'balance'|'transfers'|'charges'|'payouts'|'paymentIntents'>;
 async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIdentity){
  if(!/^acct_[A-Za-z0-9]+$/.test(x.account)||x.account===config.STRIPE_PLATFORM_ACCOUNT_ID)
   throw Error('INVALID_CONNECT_RECIPIENT');
