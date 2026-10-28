@@ -10,6 +10,7 @@ on:
       - 'node-backend/prisma/**'
       - 'node-backend/tests/rc9-treasury-*.test.mjs'
       - 'node-backend/scripts/ci-rc9-treasury-*.mjs'
+      - 'node-backend/scripts/rc9-treasury-live-preflight.mjs'
       - '.github/workflows/rc9-node-treasury-safe.yml'
   pull_request:
     paths:
@@ -19,6 +20,7 @@ on:
       - 'node-backend/prisma/**'
       - 'node-backend/tests/rc9-treasury-*.test.mjs'
       - 'node-backend/scripts/ci-rc9-treasury-*.mjs'
+      - 'node-backend/scripts/rc9-treasury-live-preflight.mjs'
       - '.github/workflows/rc9-node-treasury-safe.yml'
 permissions:
   contents: read
@@ -59,6 +61,8 @@ jobs:
           npm run build
       - name: All Node tests with money disabled
         run: npm test
+      - name: Read-only production source preflight (LIVE stays OFF)
+        run: node scripts/rc9-treasury-live-preflight.mjs
       - name: Hard release lock remains OFF in source
         run: |
           grep -q "LIVE_CONNECT_PAYOUTS_REQUIRE_SEPARATE_AUDIT" src/config.ts
