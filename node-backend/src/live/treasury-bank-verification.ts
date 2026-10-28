@@ -9,7 +9,8 @@ export type BankAudit={verified:boolean;bankId:string|null;
  unknownPayouts:number;reason:string|null};
 export async function inspectConnectedBankAndPayouts(
  provider:Pick<Stripe,'accounts'|'payouts'>,account:string,
- local:readonly {id:string;amountMinor:string;bankId:string;state:string}[]
+ local:readonly {id:string;withdrawalId:string;payeeKind:'restaurant'|'driver';
+  payeeId:number;amountMinor:string;bankId:string;state:string}[]
 ):Promise<BankAudit>{
  if(!/^acct_[A-Za-z0-9]+$/.test(account))throw Error('CONNECT_ACCOUNT_INVALID');
  const external=await provider.accounts.listExternalAccounts(account,{object:'bank_account',limit:100});
@@ -25,9 +26,12 @@ export async function inspectConnectedBankAndPayouts(
     !/^ba_[A-Za-z0-9]+$/.test(chosen.id))
   return {verified:false,bankId:null,unknownPayouts:1,
    reason:'BANK_ACCOUNT_KYC_PENDING'};
- const known=new Map<string,{amountMinor:string;bankId:string;state:string}>();
+ const known=new Map<string,{withdrawalId:string;payeeKind:string;payeeId:number;
+ amountMinor:string;bankId:string;state:string}>();
  for(const r of local){
   if(!/^po_[A-Za-z0-9]+$/.test(r.id)||known.has(r.id)||
+     !/^[1-9][0-9]{0,15}$/.test(r.withdrawalId)||
+     !Number.isSafeInteger(r.payeeId)||r.payeeId<1||
      !/^\d{1,16}$/.test(r.amountMinor)||r.bankId!==chosen.id)
     throw Error('LOCAL_PAYOUT_AUDIT_INCONSISTENT');
   known.set(r.id,r);
@@ -46,7 +50,13 @@ export async function inspectConnectedBankAndPayouts(
       payout.destination!==chosen.id||payout.currency!=='mxn'||
       !payout.livemode||!Number.isSafeInteger(payout.amount)||
       BigInt(payout.amount)!==BigInt(recorded.amountMinor)||
-      payout.metadata?.tala_treasury_withdrawal===undefined)
+      payout.metadata?.tala_treasury_withdrawal!==recorded.withdrawalId||
+      payout.metadata?.tala_payee_kind!==recorded.payeeKind||
+      payout.metadata?.tala_payee_id!==String(recorded.payeeId)||
+      (recorded.state==='paid'&&payout.status!=='paid')||
+      (payout.status==='paid'&&recorded.state!=='paid')||
+      (recorded.state==='failed'&&payout.status!=='failed')||
+      (recorded.state==='canceled'&&payout.status!=='canceled'))
      throw Error('UNKNOWN_STRIPE_BANK_PAYOUT_REQUIRES_RECONCILIATION');
    seen.add(payout.id);total++;
   }
