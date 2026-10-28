@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import { db } from '../db.js';
+import { validDriverVehiclePlate } from './driver-onboarding-policy.js';
 import { current } from '../auth/routes.js';
 export const operationsRouter=Router();
 export const adminRouter=Router();
@@ -328,14 +329,38 @@ const onboardingSchema=z.strictObject({
 });
 // Public, read-only compatibility handshake: an older LIVE backend must
 // never silently discard registration plates from the new Driver PWA.
-operationsRouter.get('/onboarding-capabilities',(_req,res)=>{
+operationsRouter.get('/onboarding-capabilities',async(_req,res)=>{
  res.setHeader('Cache-Control','no-store');
- res.json({driver_plate_supported:true,driver_documents_supported:true,
+ // LIVE announces support only when the real SQL schema is prepared.
+ try{
+  const rows=await db.$queryRaw<Array<{supported:boolean}>>`
+   SELECT (
+    EXISTS(SELECT 1 FROM information_schema.columns
+      WHERE table_schema=current_schema()
+      AND table_name='onboarding_applications' AND column_name='plate')
+    AND EXISTS(SELECT 1 FROM information_schema.columns
+      WHERE table_schema=current_schema()
+      AND table_name='driver_profiles' AND column_name='plate')
+   ) AS supported
+  `;
+  if(rows.length!==1||rows[0]?.supported!==true){
+   res.status(503).json({driver_plate_supported:false,
+    driver_documents_supported:false,driver_admin_approval_required:true});
+   return;
+  }
+  res.json({driver_plate_supported:true,driver_documents_supported:true,
    driver_admin_approval_required:true});
+ }catch{
+  // A missing migration or a database outage must never enable signup.
+  res.status(503).json({driver_plate_supported:false,
+   driver_documents_supported:false,driver_admin_approval_required:true});
+ }
 });
 operationsRouter.post('/onboarding',async(req,res)=>{
  const who=await account(req);
  const p=payload(onboardingSchema,req.body);
+ if(p.entity_type==='driver'&&!validDriverVehiclePlate(p.vehicle,p.plate))
+  return bad(422,'Vehículo o placas inválidas para registro de repartidor');
  // Only attach an exact private onboarding upload belonging to this account.
  // Match Python's /api/v1/uploads/onboarding-document/u<ID>-<random>.<ext>.
  const prefix='/api/v1/uploads/onboarding-document/';
@@ -407,6 +432,8 @@ operationsRouter.patch('/admin/onboarding/:applicationId',async(req,res)=>{
   if(!account)return bad(404,'Cuenta de solicitante no encontrada');
   if(p.status==='approved'){
    if(old.entityType==='driver'){
+    if(!validDriverVehiclePlate(old.vehicle,old.plate))
+     return bad(409,'Solicitud sin vehículo o placas válidas: solicitar corrección');
     await tx.marketplaceDriverProfile.upsert({
      where:{userId:account.id},
      create:{userId:account.id,vehicle:old.vehicle||'Motocicleta',plate:old.plate,isVerified:true},

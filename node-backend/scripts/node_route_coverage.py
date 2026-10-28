@@ -139,6 +139,14 @@ RC95_DRIVER_READINESS_NODE_ONLY = {
     ("GET", "/api/v1/driver/presence-readiness"),
 }
 
+# RC11.0: production driver registration READ-ONLY compatibility handshake.
+# The endpoint checks the real LIVE DB schema before claiming support; it
+# returns 503 when the migration is missing. It cannot approve a driver or
+# bypass the authenticated ADMIN decision.
+RC110_ONBOARDING_CAPABILITIES_NODE_ONLY = {
+    ("GET", "/api/v1/operations/onboarding-capabilities"),
+}
+
 def main() -> None:
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check",action="store_true")
@@ -151,7 +159,8 @@ def main() -> None:
         if observed != (ADMIN_NODE_ONLY | STRIPE_TEST_STATUS_NODE_ONLY |
                         PICKUP_PRICE_PREVIEW_NODE_ONLY | STAGE_DELIVERY_QUOTE_NODE_ONLY |
                         PASSWORD_RESET_BROWSER_NODE_ONLY |
-                        RC95_DRIVER_READINESS_NODE_ONLY):
+                        RC95_DRIVER_READINESS_NODE_ONLY |
+                         RC110_ONBOARDING_CAPABILITIES_NODE_ONLY):
             raise ValueError("Unapproved Node-only route delta: "+
                              json.dumps(data["node_routes_without_python_match"]))
     if args.json:
