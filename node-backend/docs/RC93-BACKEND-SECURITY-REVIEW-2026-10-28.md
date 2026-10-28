@@ -24,7 +24,9 @@ API route has been security-reviewed, nor permission to send money.
 | P0 | Admin Connect-account mapping trusted an old MFA session | Require a newly supplied TOTP for each mapping | Code patched, CI required |
 | P0 | Bank TOTP could be reused within its accepted 30-second counter | Add unique `(user_id,otp_counter)` PostgreSQL consumption table and atomic insert; never store OTP | New additive migration, CI required |
 | P1 | Errors for invalid/replayed/rate-limited banking OTP were masked by broad 503 responses | Return explicit 403 or 429 while keeping Stripe/DB failures closed | Code patched |
-| P1 | Dependency CVEs had no blocker in Treasury CI | Add production-dependency npm HIGH/CRITICAL audit | CI added |
+| P1 | Six HIGH dependency advisories in the original lockfile | Update Prisma 7.10.1, Zod 4.6.7 and transitive lockfile; npm audit clean | Corrected in branch, full CI required |
+
+| P1 | Unlimited reads of Stripe Connect account/bank status per payee | Shared Redis budget of 30 GETs per 5 min with fail-closed Redis errors | Corrected in branch |
 
 ## Other critical gaps — **not fixed by this PR**
 1. **No money release**: `NODE_TREASURY_LIVE_EXECUTION_ENABLED=false` remains a
@@ -43,9 +45,9 @@ API route has been security-reviewed, nor permission to send money.
 6. One old Stripe transfer lacked a `source_transaction`; do not import it
    into the new ledger or count it as a customer-funded balance without
    independent reconciliation.
-7. Status endpoints call Stripe on demand; implement provider-budget-aware
-   throttling and caching only if proven necessary under load (never cache
-   withdrawability across a balance change).
+7. Provider status reads now have a Redis per-owner/payee rate limit. Further
+   load testing and budget tuning are still needed before a large rollout;
+   do not cache withdrawability across financial balance changes.
 8. Flutter / legacy clients that previously confirmed Connect owner identity
    without a fresh TOTP need an API contract update before merging this PR.
 9. RC9.2 Stripe return UX still requires a separate LIVE deployment; manual
@@ -63,6 +65,13 @@ API route has been security-reviewed, nor permission to send money.
   401/403/409/429, stale OTP, role/owner mismatch and account changes.
 - Encrypted **fresh** LIVE backup + independent recovery validation before
   applying RC9.3 migration in Kali.
+
+Release preparation scripts included in the branch:
+- `scripts/rc93-kali-prepare-release.sh` — plan/build/test, no LIVE changes.
+- `scripts/rc93-kali-live-connect-otp-migration.sh` — one reviewed migration,
+  explicit restore attestation and approval.
+- `scripts/rc93-kali-hardening-two-pm2-cutover.sh` — API/worker readiness,
+  existing LIVE Stripe flags and rollback.
 
 ## Production upgrade order (not executed)
 1. Freeze reviewed commit SHA, complete the PR's CI and QA.
