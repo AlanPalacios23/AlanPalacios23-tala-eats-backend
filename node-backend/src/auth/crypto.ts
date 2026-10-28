@@ -165,6 +165,25 @@ export function verifyTotp(secret: string, otp: string, nowSeconds = Math.floor(
   }
 }
 
+/** Return the exact accepted TOTP counter to durably prevent OTP replay.
+ * Unlike boolean verification, this explicitly identifies which skewed step
+ * was used, so the same code cannot be recorded under different counters.
+ */
+export function verifiedTotpCounter(secret:string,otp:string,
+ nowSeconds=Math.floor(Date.now()/1000)):number|null{
+ if(!secret||!/^[0-9]{6}$/.test(otp)||!Number.isSafeInteger(nowSeconds)||
+    nowSeconds<0)return null;
+ const base=Math.floor(nowSeconds/30);
+ for(const drift of [-1,0,1]){
+  const candidate=base+drift;
+  if(candidate<0)continue;
+  try{
+   const expected=totpAt(secret,candidate);
+   if(timingSafeEqual(Buffer.from(expected),Buffer.from(otp)))return candidate;
+  }catch{return null;}
+ }
+ return null;
+}
 export function totpForTestOnly(secret: string, nowSeconds: number): string {
   return totpAt(secret, Math.floor(nowSeconds / 30));
 }
