@@ -13,6 +13,15 @@ export async function inspectConnectedBankAndPayouts(
   payeeId:number;amountMinor:string;bankId:string;state:string}[]
 ):Promise<BankAudit>{
  if(!/^acct_[A-Za-z0-9]+$/.test(account))throw Error('CONNECT_ACCOUNT_INVALID');
+ const acct=await provider.accounts.retrieve(account);
+ // Stripe may leave a valid MX bank in status 'new'. Eligibility depends
+ // on the connected account's actual payout capability and requirements.
+ if(acct.id!==account||acct.country!=='MX'||acct.payouts_enabled!==true||
+    acct.details_submitted!==true||acct.requirements?.disabled_reason||
+    (acct.requirements?.currently_due?.length??0)!==0||
+    (acct.requirements?.past_due?.length??0)!==0)
+  return {verified:false,bankId:null,unknownPayouts:1,
+   reason:'CONNECT_PAYOUTS_NOT_AVAILABLE'};
  const external=await provider.accounts.listExternalAccounts(account,{object:'bank_account',limit:100});
  // Never trust incomplete pagination: the default destination might not be
  // the only active bank account, or the account could be cross-routed.
@@ -22,7 +31,8 @@ export async function inspectConnectedBankAndPayouts(
  if(bank.length!==1)return {verified:false,bankId:null,unknownPayouts:1,
   reason:'BANK_ACCOUNT_NOT_UNIQUELY_VERIFIED'};
  const chosen=bank[0]!;
- if(chosen.object!=='bank_account'||chosen.status!=='verified'||
+ if(chosen.object!=='bank_account'||
+    !['new','verified'].includes(chosen.status)||
     !/^ba_[A-Za-z0-9]+$/.test(chosen.id))
   return {verified:false,bankId:null,unknownPayouts:1,
    reason:'BANK_ACCOUNT_KYC_PENDING'};
