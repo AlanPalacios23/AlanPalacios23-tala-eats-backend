@@ -26,10 +26,10 @@ test('both Stripe financial primitives fail closed without explicit release',asy
 });
 test('dual approval and source charge prevent transfer even with isolated mock enabled',async()=>{
  let calls=0;
- const provider={charges:{retrieve:()=>{calls++;return {id:'ch_ORDER81',livemode:true,
+ const provider={charges:{retrieve:()=>{calls++;return {id:'ch_ORDER81',livemode:false,
   paid:true,captured:true,disputed:false,refunded:false,amount_refunded:0,
   currency:'mxn',amount_captured:11000}}},
-  transfers:{create:()=>{calls++;return {id:'tr_mock',livemode:true,currency:'mxn',
+  transfers:{create:()=>{calls++;return {id:'tr_mock',livemode:false,currency:'mxn',
    destination:'acct_RESTAURANT12',amount:8500,source_transaction:'ch_ORDER81'}}}};
  await assert.rejects(mockableTransferExecution(provider,{...reservation,
   approved:{reviewedBy:7,approvedBy:7}},true),/DUAL_APPROVAL_REQUIRED/);
@@ -47,7 +47,7 @@ test('bank payout mock cannot exceed verified funds or bypass separate approvers
  let n=0;
  const provider={payouts:{create:(_args,opts)=>{
   n++;assert.equal(opts.stripeAccount,'acct_DRIVER63');
-  return {id:'po_mock',livemode:true,amount:3200,currency:'mxn',
+  return {id:'po_mock',livemode:false,amount:3200,currency:'mxn',
    destination:'ba_VERIFIED63',status:'pending',metadata:{tala_treasury_withdrawal:'501'}};
  }}};
  await assert.rejects(mockableBankPayoutExecution(provider,{...payout,
