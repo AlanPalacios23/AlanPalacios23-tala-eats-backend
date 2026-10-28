@@ -108,7 +108,10 @@ try {
    const banks=await stripe.accounts.listExternalAccounts(acct.id,{object:'bank_account',limit:100});
    const defaults=banks.data.filter(b=>b.object==='bank_account'&&b.country==='MX'&&
      b.currency==='mxn'&&b.default_for_currency===true);
-   bankVerified=!banks.has_more&&defaults.length===1&&defaults[0].status==='verified';
+   bankVerified=!banks.has_more&&defaults.length===1&&
+    ['new','verified'].includes(defaults[0].status)&&
+    acct.payouts_enabled===true&&acct.details_submitted===true&&
+    !acct.requirements?.disabled_reason;
   }
   if(approved&&bankVerified)s.bank_verified++;
   if(approved&&capabilities&&bankVerified&&acct?.settings?.payouts?.schedule?.interval==='manual')
@@ -117,7 +120,7 @@ try {
  for(const [kind,stat] of Object.entries(statistics)){
   console.log('RC9_'+kind.toUpperCase()+'_CONNECT_REGISTERED='+stat.registered);
   console.log('RC9_'+kind.toUpperCase()+'_OWNER_APPROVED='+stat.approved);
-  console.log('RC9_'+kind.toUpperCase()+'_BANK_VERIFIED='+stat.bank_verified);
+  console.log('RC9_'+kind.toUpperCase()+'_BANK_PAYOUT_ELIGIBLE='+stat.bank_verified);
   console.log('RC9_'+kind.toUpperCase()+'_MANUAL_PAYOUT_READY='+stat.manual_ready);
  }
  if(accounts.length!==unique.length)stop('STRIPE_ACCOUNT_NOT_UNIQUELY_MAPPED_TO_PAYEE');
