@@ -6,7 +6,8 @@
  */
 import type Stripe from 'stripe';
 export type BankAudit={verified:boolean;bankId:string|null;
- unknownPayouts:number;reason:string|null};
+ unknownPayouts:number;reason:string|null;
+ bankName?:string|null;last4?:string|null};
 export async function inspectConnectedBankAndPayouts(
  provider:Pick<Stripe,'accounts'|'payouts'>,account:string,
  local:readonly {id:string;withdrawalId:string;payeeKind:'restaurant'|'driver';
@@ -77,5 +78,8 @@ export async function inspectConnectedBankAndPayouts(
  }
  if(!complete)throw Error('PAYOUT_HISTORY_OVER_1000_REQUIRES_REVIEW');
  if(seen.size!==known.size)throw Error('LOCAL_PAYOUT_NOT_PRESENT_AT_STRIPE');
- return {verified:true,bankId:chosen.id,unknownPayouts:0,reason:null};
+ return {verified:true,bankId:chosen.id,unknownPayouts:0,reason:null,
+  bankName:typeof chosen.bank_name==='string'?chosen.bank_name.slice(0,48):null,
+  last4:typeof chosen.last4==='string'&&/^\\d{4}$/.test(chosen.last4)?
+   chosen.last4:null};
 }
