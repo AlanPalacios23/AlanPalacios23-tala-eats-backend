@@ -46,7 +46,7 @@ export async function inspectConnectedBankAndPayouts(
   if(!Array.isArray(list.data)||list.data.length>100)throw Error('PAYOUT_PAGE_INVALID');
   for(const payout of list.data){
    const recorded=known.get(payout.id);
-   if(!recorded||seen.has(payout.id)||payout.automatic===true||
+   if(!recorded||seen.has(payout.id)||payout.automatic!==false||
       payout.destination!==chosen.id||payout.currency!=='mxn'||
       !payout.livemode||!Number.isSafeInteger(payout.amount)||
       BigInt(payout.amount)!==BigInt(recorded.amountMinor)||
