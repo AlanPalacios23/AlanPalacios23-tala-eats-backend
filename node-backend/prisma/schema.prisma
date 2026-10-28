@@ -1256,6 +1256,8 @@ model TalaLiveTreasuryWithdrawal {
   currency String @default("mxn") @db.VarChar(3)
   clientKey String @map("client_key") @db.VarChar(96)
   totpStep BigInt @map("totp_step")
+  reviewedByUserId Int? @map("reviewed_by_user_id")
+  approvedByUserId Int? @map("approved_by_user_id")
   state String @default("reserved") @db.VarChar(24)
   stripePayoutId String? @unique @map("stripe_payout_id") @db.VarChar(120)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
