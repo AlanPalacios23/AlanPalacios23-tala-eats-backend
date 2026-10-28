@@ -4,6 +4,10 @@ on:
     branches: [feat/rc95-live-delivery-readiness-20261028]
     paths:
       - 'node-backend/scripts/rc95-live-delivery-readiness-audit.mjs'
+      - 'node-backend/src/config.ts'
+      - 'node-backend/src/marketplace/driver.ts'
+      - 'node-backend/src/marketplace/delivery-runtime.ts'
+      - 'node-backend/tests/rc95-driver-presence.test.mjs'
       - 'node-backend/tests/rc95-live-delivery-audit.test.mjs'
       - '.github/workflows/rc95-delivery-live-nogo.yml'
   workflow_dispatch:
@@ -23,6 +27,15 @@ jobs:
       - name: Source syntax
         working-directory: node-backend
         run: node --check scripts/rc95-live-delivery-readiness-audit.mjs
+      - name: TypeScript compile (no LIVE environment)
+        working-directory: node-backend
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run generate
+          npm run build
+      - name: Driver presence isolation tests
+        working-directory: node-backend
+        run: node --test tests/rc95-driver-presence.test.mjs
       - name: Fail-closed source audit regression
         working-directory: node-backend
         run: node --test tests/rc95-live-delivery-audit.test.mjs
