@@ -8,6 +8,7 @@ import {pickupCapability,type PickupMerchant} from './live/pickup-readiness.js';
 import {buildLiveMerchantFinanceRouter} from './live/merchant-finance-router.js';
 import {buildPayeeFinanceRouter} from './live/payee-finance-router.js';
 import {buildTreasuryRouter} from './live/treasury-router.js';
+import {buildTreasuryConnectWebhookRouter} from './live/treasury-connect-webhook.js';
 import {inspectLiveFinancialData} from './live/financial-readiness.js';
 import { db } from './db.js';
 import { config } from './config.js';
@@ -44,6 +45,13 @@ if(live){
     live.stripe,live.pool,live.settings,'/webhook'));
   app.use('/api/v1/webhooks',buildIsolatedWebhookRouter(
     live.stripe,live.pool,live.settings));
+  if(config.TREASURY_CONNECT_WEBHOOK_INGEST_ENABLED==='true'&&
+     config.STRIPE_CONNECT_WEBHOOK_SECRET){
+    // New Connect payout receipts require their OWN signed webhook secret.
+    // Does not activate Stripe transfers or payouts.
+    app.use('/api/v1/webhooks',buildTreasuryConnectWebhookRouter(
+      live.stripe,live.pool,config.STRIPE_CONNECT_WEBHOOK_SECRET));
+  }
 }else{
   app.post('/api/v1/webhooks/stripe',
     express.raw({type:'application/json',limit:'1mb'}),stripeWebhook);
