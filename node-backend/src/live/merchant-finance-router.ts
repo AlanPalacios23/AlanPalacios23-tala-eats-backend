@@ -73,18 +73,31 @@ export function buildLiveMerchantFinanceRouter(pool:Pool,stripe:Provider){
  r.get('/owner/finance/connect/:rid/status',async(req,res)=>{
   try{
    const s=await current(req),rid=id(req.params.rid);
-   const rows=await pool.query<{owner_id:number;stripe_account_id:string;owner_approved_at:Date|null}>(
-    'SELECT r.owner_id,m.stripe_account_id,m.owner_approved_at FROM restaurants r JOIN tala_live_merchant_accounts m ON m.restaurant_id=r.id WHERE r.id=$1',
+   const rows=await pool.query<{owner_id:number;stripe_account_id:string;owner_approved_at:Date|null;owner_email:string;owner_active:boolean}>(
+    'SELECT r.owner_id,m.stripe_account_id,m.owner_approved_at,u.email AS owner_email,u.is_active AS owner_active FROM restaurants r JOIN tala_live_merchant_accounts m ON m.restaurant_id=r.id JOIN users u ON u.id=r.owner_id WHERE r.id=$1',
     [rid]);
    const x=rows.rows[0];
    if(!x||x.owner_id!==s.userId){
     res.status(403).json({error:'OWNER_CONNECT_NOT_REGISTERED'});return;
    }
    const stripeAccount=await stripe.accounts.retrieve(x.stripe_account_id);
-   res.json({owner_approved:Boolean(x.owner_approved_at),
-    transfers_active:stripeAccount.capabilities?.transfers==='active',
-    payouts_enabled:stripeAccount.payouts_enabled===true,
-    details_submitted:stripeAccount.details_submitted===true,
+   const ownerApproved=Boolean(x.owner_approved_at);
+   const transferActive=stripeAccount.capabilities?.transfers==='active';
+   const payoutsEnabled=stripeAccount.payouts_enabled===true;
+   const submitted=stripeAccount.details_submitted===true;
+   const identityMatches=x.owner_active===true&&
+     stripeAccount.id===x.stripe_account_id&&
+     stripeAccount.id!==config.STRIPE_PLATFORM_ACCOUNT_ID&&
+     stripeAccount.country==='MX'&&
+     typeof stripeAccount.email==='string'&&
+     stripeAccount.email.trim().toLowerCase()===x.owner_email.trim().toLowerCase();
+   const requirementsClear=!stripeAccount.requirements?.disabled_reason&&
+     (stripeAccount.requirements?.currently_due?.length??0)===0&&
+     (stripeAccount.requirements?.past_due?.length??0)===0;
+   res.json({restaurant_id:rid,owner_approved:ownerApproved,
+    transfers_active:transferActive,payouts_enabled:payoutsEnabled,
+    details_submitted:submitted,
+    ready:ownerApproved&&transferActive&&payoutsEnabled&&submitted&&identityMatches&&requirementsClear,
     bank_payout_executed:false});
   }catch{res.status(503).json({error:'OWNER_CONNECT_STATUS_UNAVAILABLE'});}
  });
@@ -105,9 +118,21 @@ export function buildLiveMerchantFinanceRouter(pool:Pool,stripe:Provider){
    res.json({url:link.url,expires_at:link.expires_at});
   }catch{res.status(503).json({error:'ONBOARDING_LINK_UNAVAILABLE'});}
  });
+ // Stripe sends no proof of approval to return_url; NEVER mark the bank
+ // verified or write a withdrawal based on this unauthenticated callback.
  r.get('/connect/onboarding/:step',(req,res)=>{
-  if(req.params.step!=='return'&&req.params.step!=='refresh'){res.status(404).end();return;}
-  res.type('text/plain').send('Vuelve a Tala Eats, inicia sesión y consulta Connect. Si expiró el enlace, solicita otro desde tu cuenta.');
+  const step=req.params.step;
+  if(step!=='return'&&step!=='refresh'){res.status(404).end();return;}
+  res.setHeader('Cache-Control','no-store');
+  res.setHeader('Referrer-Policy','no-referrer');
+  res.setHeader('X-Content-Type-Options','nosniff');
+  res.setHeader('Content-Security-Policy',"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+  const expired=step==='refresh';
+  const heading=expired?'Tu enlace de Stripe venció':'Volviste desde Stripe';
+  const detail=expired?
+   'Regresa a Tala Eats y solicita un nuevo enlace desde Wallet. No necesitas compartir tus datos bancarios con Tala Eats.':
+   'Stripe ha terminado este paso. Regresa a Tala Eats y abre Wallet: la app consultará el estado actualizado directamente en Stripe. Este retorno no significa que tu banco ya esté aprobado.';
+  res.status(200).type('html').send(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tala Eats | Stripe Connect</title><style>*,*::before,*::after{box-sizing:border-box}body{margin:0;min-height:100svh;display:grid;place-items:center;background:#faf9f6;color:#171717;font-family:system-ui,-apple-system,sans-serif;padding:24px}main{width:100%;max-width:480px;background:white;border-radius:24px;border:1px solid #eee;padding:32px 28px;box-shadow:0 16px 56px #1717170b}h1{font-size:26px;line-height:1.2;margin:0 0 18px}p{font-size:16px;line-height:1.6;margin:0 0 14px;color:#4b4b4b}.brand{font-weight:750;letter-spacing:-.02em;color:#ef7d23;margin:0 0 28px}.note{background:#fff5eb;border-radius:12px;padding:16px;margin-top:20px;color:#5f3b19;font-size:14px}@media(max-width:375px){main{padding:24px}}</style></head><body><main><div class="brand">Tala Eats</div><h1>${heading}</h1><p>${detail}</p><div class="note">En Android, cambia de Chrome a Tala Eats desde tus aplicaciones recientes. En Wallet, consulta el estado del banco o desliza para actualizar.</div></main></body></html>`);
  });
  r.get('/admin/finance/cases',async(req,res)=>{
   try{

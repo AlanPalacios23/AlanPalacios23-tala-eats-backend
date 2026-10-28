@@ -10,6 +10,9 @@ const schema = z.object({
   REDIS_URL: z.string().url(),
   STRIPE_SECRET_KEY: z.string().regex(/^(?:sk_test_|rk_test_|(?:sk|rk)_live_)[A-Za-z0-9]+$/).optional(),
   STRIPE_WEBHOOK_SECRET: z.string().startsWith('whsec_').optional(),
+  // Separate endpoint secret for signed Connect events, disabled by default.
+  TREASURY_CONNECT_WEBHOOK_INGEST_ENABLED: z.enum(['false','true']).default('false'),
+  STRIPE_CONNECT_WEBHOOK_SECRET: z.string().regex(/^whsec_[A-Za-z0-9]{16,}$/).optional(),
   STRIPE_PUBLISHABLE_KEY: z.string().regex(/^pk_(?:test|live)_[A-Za-z0-9]+$/).optional(),
   STAGE_STRIPE_TEST_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
   STRIPE_FINANCIAL_WRITES_ENABLED: z.enum(['false','true']).default('false'),
@@ -53,6 +56,12 @@ if (forbiddenPaymentKeys.length) {
   throw new Error('STAGING_STRIPE_ONLY_FORBIDS_MERCADOPAGO_ENV');
 }
 export const config = schema.parse(process.env);
+if(config.TREASURY_CONNECT_WEBHOOK_INGEST_ENABLED==='true'&&
+   (!config.STRIPE_CONNECT_WEBHOOK_SECRET||
+    config.STRIPE_CONNECT_WEBHOOK_SECRET===config.STRIPE_WEBHOOK_SECRET))
+ throw Error('CONNECT_WEBHOOK_REQUIRES_SEPARATE_SIGNING_SECRET');
+if(config.NODE_ENV==='staging'&&config.TREASURY_CONNECT_WEBHOOK_INGEST_ENABLED==='true')
+ throw Error('TREASURY_CONNECT_WEBHOOK_STAGE_HTTP_DISABLED');
 if(config.WEB_PUSH_ENABLED==='true'&&
    (!config.WEB_PUSH_VAPID_PUBLIC_KEY||!config.WEB_PUSH_VAPID_PRIVATE_KEY||!config.WEB_PUSH_SUBJECT))
   throw new Error('WEB_PUSH_ENABLED_REQUIRES_VALID_VAPID_KEYS_AND_SUBJECT');

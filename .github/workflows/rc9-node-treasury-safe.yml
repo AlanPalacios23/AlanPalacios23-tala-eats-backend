@@ -1,0 +1,167 @@
+name: Tala Eats Node Treasury RC9 — Restaurants and Drivers SAFE QA
+on:
+  push:
+    branches:
+      - feat/node-treasury-restaurant-driver-20261028
+    paths:
+      - 'node-backend/src/live/treasury-*.ts'
+      - 'node-backend/src/live/merchant-finance-router.ts'
+      - 'node-backend/src/app.ts'
+      - 'node-backend/prisma/**'
+      - 'node-backend/tests/rc9-treasury-*.test.mjs'
+      - 'node-backend/tests/rc9-kali-prepare-release.test.mjs'
+      - 'node-backend/tests/rc9-kali-live-migration.test.mjs'
+      - 'node-backend/scripts/rc9-kali-live-treasury-migration.sh'
+      - 'node-backend/scripts/rc9-kali-live-two-pm2-cutover.sh'
+      - 'node-backend/tests/rc9-kali-live-cutover.test.mjs'
+      - 'node-backend/scripts/rc91-kali-onboarding-two-pm2-cutover.sh'
+      - 'node-backend/tests/rc91-kali-onboarding-cutover.test.mjs'
+      - 'node-backend/scripts/rc91-kali-prepare-release.sh'
+      - 'node-backend/tests/rc91-kali-prepare-release.test.mjs'
+      - 'node-backend/tests/rc9-mobile-connect-wallet-contract.test.mjs'
+      - 'node-backend/scripts/rc9-live-withdrawal-activation-audit.mjs'
+      - 'node-backend/tests/rc9-live-withdrawal-activation-audit.test.mjs'
+      - 'node-backend/scripts/ci-rc9-treasury-*.mjs'
+      - 'node-backend/scripts/rc9-treasury-live-preflight.mjs'
+      - 'node-backend/scripts/rc9-kali-prepare-release.sh'
+      - '.github/workflows/rc9-node-treasury-safe.yml'
+  pull_request:
+    paths:
+      - 'node-backend/src/live/treasury-*.ts'
+      - 'node-backend/src/live/merchant-finance-router.ts'
+      - 'node-backend/src/app.ts'
+      - 'node-backend/prisma/**'
+      - 'node-backend/tests/rc9-treasury-*.test.mjs'
+      - 'node-backend/tests/rc9-kali-prepare-release.test.mjs'
+      - 'node-backend/tests/rc9-kali-live-migration.test.mjs'
+      - 'node-backend/scripts/rc9-kali-live-treasury-migration.sh'
+      - 'node-backend/scripts/rc9-kali-live-two-pm2-cutover.sh'
+      - 'node-backend/tests/rc9-kali-live-cutover.test.mjs'
+      - 'node-backend/scripts/rc91-kali-onboarding-two-pm2-cutover.sh'
+      - 'node-backend/tests/rc91-kali-onboarding-cutover.test.mjs'
+      - 'node-backend/scripts/rc91-kali-prepare-release.sh'
+      - 'node-backend/tests/rc91-kali-prepare-release.test.mjs'
+      - 'node-backend/tests/rc9-mobile-connect-wallet-contract.test.mjs'
+      - 'node-backend/scripts/rc9-live-withdrawal-activation-audit.mjs'
+      - 'node-backend/tests/rc9-live-withdrawal-activation-audit.test.mjs'
+      - 'node-backend/scripts/ci-rc9-treasury-*.mjs'
+      - 'node-backend/scripts/rc9-treasury-live-preflight.mjs'
+      - 'node-backend/scripts/rc9-kali-prepare-release.sh'
+      - '.github/workflows/rc9-node-treasury-safe.yml'
+permissions:
+  contents: read
+jobs:
+  safe-treasury:
+    name: Compile and unit tests — no Stripe LIVE / no Kali
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      NODE_ENV: staging
+      HOST: 127.0.0.1
+      PORT: '18190'
+      DATABASE_URL: postgresql://tala_node_stage:ci-only@127.0.0.1:15435/tala_node_stage
+      REDIS_URL: redis://:ci-only@127.0.0.1:16379/0
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+      STRIPE_LIVE_ENABLED: 'false'
+      STRIPE_CONNECT_TRANSFERS_ENABLED: 'false'
+      STRIPE_REFUNDS_ENABLED: 'false'
+      STRIPE_MANUAL_SETTLEMENT_APPROVED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.11.1'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Frozen install
+        run: npm ci --no-audit --no-fund
+      - name: Prisma validation and TypeScript compilation
+        run: |
+          npm run generate
+          npm run db:validate
+          npm run build
+      - name: All Node tests with money disabled
+        run: npm test
+      - name: Validate RC9 Kali installer syntax and non-production permission guard
+        run: |
+          bash -n scripts/rc9-kali-prepare-release.sh
+          bash -n scripts/rc91-kali-prepare-release.sh
+          bash -n scripts/rc91-kali-onboarding-two-pm2-cutover.sh
+          if bash scripts/rc9-kali-prepare-release.sh --plan "$GITHUB_SHA"; then
+            echo 'RC9_CI_FAIL_INSTALLER_RAN_OUTSIDE_KALI_OPERATOR'; exit 1
+          fi
+      - name: Read-only production source preflight (LIVE stays OFF)
+        run: node scripts/rc9-treasury-live-preflight.mjs
+      - name: Hard release lock remains OFF in source
+        run: |
+          grep -q "LIVE_CONNECT_PAYOUTS_REQUIRE_SEPARATE_AUDIT" src/config.ts
+          grep -q "NODE_TREASURY_LIVE_EXECUTION_ENABLED=false" src/live/treasury-policy.ts
+          node -e "const fs=require('fs');const text=fs.readFileSync('src/live/treasury-router.ts','utf8');if(/\\.transfers\\.create\\(|\\.payouts\\.create\\(/.test(text))process.exit(1)"
+
+  migration-shadow:
+    name: PostgreSQL 15 additive treasury schema — isolated CI only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: rc9_ci
+          POSTGRES_PASSWORD: rc9-only-ci
+          POSTGRES_DB: rc9_ci
+        ports: ['15445:5432']
+        options: >-
+          --health-cmd "pg_isready -U rc9_ci -d rc9_ci"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      DATABASE_URL: postgresql://rc9_ci:rc9-only-ci@127.0.0.1:15445/rc9_ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.11.1'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Apply all migrations against fresh ephemeral PostgreSQL
+        run: |
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:migrate:deploy
+      - name: Verify transactional withdrawal reservations and dual MFA in PostgreSQL
+        run: |
+          npm run build
+          node scripts/ci-rc9-treasury-transactions-pg15.mjs
+          node scripts/ci-rc9-treasury-signed-webhooks-pg15.mjs
+          node scripts/ci-rc9-treasury-unknown-recovery-pg15.mjs
+          node scripts/ci-rc9-treasury-admin-step-up-pg15.mjs
+          node scripts/ci-rc9-treasury-transfers-pg15.mjs
+      - name: Verify unique payee transfer/withdrawal journal indexes
+        run: |
+          node --input-type=module <<'JS'
+          import {Pool} from 'pg';
+          const pool=new Pool({connectionString:process.env.DATABASE_URL});
+          try {
+            const r=await pool.query(`
+              SELECT indexname FROM pg_indexes
+              WHERE tablename IN ('tala_live_treasury_transfers','tala_live_treasury_withdrawals')
+            `);
+            const names=new Set(r.rows.map(x=>x.indexname));
+            for(const name of [
+              'treasury_transfer_unique_payee',
+              'treasury_withdrawal_unique_request',
+              'treasury_withdrawal_unique_otp',
+              'treasury_single_pending_withdrawal'
+            ]) if(!names.has(name))throw Error('MISSING_TREASURY_INDEX:'+name);
+            console.log('TREASURY_PG15_ADDITIVE_MIGRATION_PASS');
+          } finally{await pool.end();}
+          JS

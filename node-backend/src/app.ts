@@ -7,6 +7,9 @@ import {buildIsolatedCheckoutRouter} from './live/checkout-router.js';
 import {pickupCapability,type PickupMerchant} from './live/pickup-readiness.js';
 import {buildLiveMerchantFinanceRouter} from './live/merchant-finance-router.js';
 import {buildPayeeFinanceRouter} from './live/payee-finance-router.js';
+import {buildTreasuryRouter} from './live/treasury-router.js';
+import {buildTreasuryConnectOnboardingRouter} from './live/treasury-connect-onboarding-router.js';
+import {buildTreasuryConnectWebhookRouter} from './live/treasury-connect-webhook.js';
 import {inspectLiveFinancialData} from './live/financial-readiness.js';
 import { db } from './db.js';
 import { config } from './config.js';
@@ -43,6 +46,13 @@ if(live){
     live.stripe,live.pool,live.settings,'/webhook'));
   app.use('/api/v1/webhooks',buildIsolatedWebhookRouter(
     live.stripe,live.pool,live.settings));
+  if(config.TREASURY_CONNECT_WEBHOOK_INGEST_ENABLED==='true'&&
+     config.STRIPE_CONNECT_WEBHOOK_SECRET){
+    // New Connect payout receipts require their OWN signed webhook secret.
+    // Does not activate Stripe transfers or payouts.
+    app.use('/api/v1/webhooks',buildTreasuryConnectWebhookRouter(
+      live.stripe,live.pool,config.STRIPE_CONNECT_WEBHOOK_SECRET));
+  }
 }else{
   app.post('/api/v1/webhooks/stripe',
     express.raw({type:'application/json',limit:'1mb'}),stripeWebhook);
@@ -53,6 +63,9 @@ app.use(express.json({ limit: '128kb' }));
 if(live){
   app.use('/api/v1',buildLiveMerchantFinanceRouter(live.pool,live.stripe));
   app.use('/api/v1',buildPayeeFinanceRouter(live.pool,live.stripe));
+  // Read-only treasury journal for both mobile payees; payout POST is always 503.
+  app.use('/api/v1',buildTreasuryRouter(live.pool,live.stripe));
+  app.use('/api/v1',buildTreasuryConnectOnboardingRouter(live.pool,live.stripe));
   // Read-only, buyer-visible readiness for THIS merchant. Global payment
   // method configuration alone does not mean a particular shop can receive
   // orders. Never echo Stripe account IDs, owner emails, or bank details.

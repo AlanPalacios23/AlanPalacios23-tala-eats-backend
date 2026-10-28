@@ -6,6 +6,8 @@
 import {config} from '../config.js';
 import {buildLiveRuntimeDependencies} from './runtime-dependencies.js';
 import {rc8WorkerIteration} from './worker-runner.js';
+import {drainTreasuryConnectEvents} from './treasury-connect-webhook.js';
+import {scanUnknownTreasuryPayouts} from './treasury-unknown-recovery.js';
 import {deliverWebPushIteration,webPushConfigured} from '../operational/web-push.js';
 import {db} from '../db.js';
 
@@ -20,6 +22,14 @@ const tick=async()=>{
    // Financial data and server invoice/payouts remain on manual review
    // after exceptional chargeback/refund situations.
    const report=await rc8WorkerIteration(stripe,pool,settings,20);
+   if(config.TREASURY_CONNECT_WEBHOOK_INGEST_ENABLED==='true'){
+     const treasury=await drainTreasuryConnectEvents(pool,stripe,10);
+     if(treasury.held)console.error('TREASURY_CONNECT_SIGNED_EVENT_REVIEW_REQUIRED');
+     // Read-only provider recovery of ambiguous payout network timeouts.
+     // Does not submit another payout and cannot post a bank-paid ledger.
+     const recovered=await scanUnknownTreasuryPayouts(pool,stripe,1);
+     if(recovered.held)console.error('TREASURY_UNKNOWN_BANK_PAYOUT_REVIEW_REQUIRED');
+   }
    if(report.held>0||report.suspectPaidOrders>0||
       report.pendingRefundOrDisputeEvents>0)
      console.error('LIVE_FINANCIAL_MANUAL_REVIEW_REQUIRED');
