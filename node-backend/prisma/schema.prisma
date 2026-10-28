@@ -1304,3 +1304,12 @@ model TalaLiveTreasuryAdminStep {
   @@index([actionKind,targetKey,createdAt],map:"treasury_admin_steps_target")
   @@map("tala_live_treasury_admin_steps")
 }
+
+model TalaLiveTreasuryTotpAttempt {
+ id BigInt @id @default(autoincrement())
+ userId Int @map("user_id")
+ actionKind String @map("action_kind") @db.VarChar(32)
+ attemptedAt DateTime @default(now()) @map("attempted_at") @db.Timestamptz(6)
+ @@index([userId,attemptedAt(sort: Desc)],map:"treasury_totp_attempts_recent")
+ @@map("tala_live_treasury_totp_attempts")
+}
