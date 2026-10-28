@@ -19,9 +19,9 @@ export type PayoutReservation={
   accountId:string;bankId:string;amountMinor:number;idempotencyKey:string;
   verifiedWithdrawableMinor:number;approved:DualApproval;
 };
-const assert=(ok:unknown,reason:string):asserts ok=>{
+function assert(ok:unknown,reason:string):asserts ok{
  if(!ok)throw Error('TREASURY_DENIED:'+reason);
-};
+}
 function approved(a:DualApproval){
  assert(Number.isSafeInteger(a.reviewedBy)&&a.reviewedBy>0&&
   Number.isSafeInteger(a.approvedBy)&&a.approvedBy>0&&
