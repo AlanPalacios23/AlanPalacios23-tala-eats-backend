@@ -32,4 +32,11 @@ export async function requireTreasuryBankStepUp(
  const counter=verifiedTotpCounter(session.user.totpSecret,rawOtp,
   Math.floor(Date.now()/1000));
  if(counter===null)throw Error('CONNECT_FRESH_TOTP_INVALID');
+ // Durable replay protection: the same accepted counter cannot approve two
+ // financial identity changes, even across requests or different PM2 workers.
+ // No OTP or TOTP secret is stored, only the user ID and accepted time step.
+ const consumed=await pool.query(
+  "INSERT INTO tala_live_connect_otp_consumptions(user_id,otp_counter,purpose) VALUES($1,$2,'bank_step_up') ON CONFLICT (user_id,otp_counter) DO NOTHING RETURNING id",
+  [session.userId,String(counter)]);
+ if(consumed.rowCount!==1)throw Error('CONNECT_FRESH_TOTP_ALREADY_USED');
 }
