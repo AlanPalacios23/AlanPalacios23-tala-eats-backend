@@ -6,7 +6,9 @@ const bank={id:'ba_MX123',object:'bank_account',country:'MX',currency:'mxn',
 const payout={id:'po_ABC123',amount:5000,currency:'mxn',destination:bank.id,
  automatic:false,livemode:true,metadata:{tala_treasury_withdrawal:'10',tala_payee_kind:'restaurant',tala_payee_id:'8'},status:'paid'};
 const api=({bankData=[bank],bankMore=false,payoutData=[payout],payoutMore=false}={})=>({
- accounts:{listExternalAccounts:async()=>({data:bankData,has_more:bankMore})},
+ accounts:{retrieve:async()=>({id:'acct_TESTMERCHANT',country:'MX',payouts_enabled:true,
+   details_submitted:true,requirements:{currently_due:[],past_due:[],disabled_reason:null}}),
+  listExternalAccounts:async()=>({data:bankData,has_more:bankMore})},
  payouts:{list:async()=>({data:payoutData,has_more:payoutMore})}
 });
 const local=[{id:payout.id,withdrawalId:'10',payeeKind:'restaurant',payeeId:8,bankId:bank.id,amountMinor:'5000',state:'paid'}];
@@ -16,7 +18,7 @@ test('bank and payout reconciliation permits only one verified MXN destination a
 });
 test('unverified or multiple bank destinations always block withdrawability',async()=>{
  for(const args of [
-  {bankData:[{...bank,status:'new'}]}, {bankData:[]},
+  {bankData:[{...bank,status:'errored'}]}, {bankData:[]},
   {bankData:[bank,{...bank,id:'ba_TWO'}]},
   {bankData:[{...bank,currency:'usd'}]}
  ]){
@@ -44,4 +46,16 @@ test('unknown state never silently produces bank credit',async()=>{
  assert.equal(x.verified,true);
  await assert.rejects(inspectConnectedBankAndPayouts(api(),'acct_TESTMERCHANT',
   [{...local,amountMinor:'nonsense'}]),/LOCAL_PAYOUT_AUDIT/);
+});
+
+test('MX bank status new remains payout-capable only when Stripe account itself is payout-enabled',async()=>{
+ const good=await inspectConnectedBankAndPayouts(api({bankData:[{...bank,status:'new'}]}),
+  'acct_TESTMERCHANT',local);
+ assert.equal(good.verified,true);
+ const disabled=api({bankData:[{...bank,status:'new'}]});
+ disabled.accounts.retrieve=async()=>({id:'acct_TESTMERCHANT',country:'MX',payouts_enabled:false,
+  details_submitted:true,requirements:{currently_due:[],past_due:[],disabled_reason:null}});
+ const held=await inspectConnectedBankAndPayouts(disabled,'acct_TESTMERCHANT',local);
+ assert.equal(held.verified,false);
+ assert.equal(held.reason,'CONNECT_PAYOUTS_NOT_AVAILABLE');
 });
