@@ -10,8 +10,15 @@ const validSession={
  user:{isActive:true,twoFactorEnabled:true,totpSecret:'JBSWY3DPEHPK3PXP'}
 };
 const fakePool=()=>{
- const state={attempts:0,inserts:0,commits:0,rollbacks:0};
- return {state,connect:async()=>({
+ const state={attempts:0,inserts:0,commits:0,rollbacks:0,consumed:new Set()};
+ return {state,query:async(sql,params)=>{
+   if(!sql.includes('INSERT INTO tala_live_connect_otp_consumptions'))
+    throw Error('UNEXPECTED_DB_WRITE');
+   const key=params.join(':');
+   if(state.consumed.has(key))return {rowCount:0,rows:[]};
+   state.consumed.add(key);
+   return {rowCount:1,rows:[{id:1}]};
+  },connect:async()=>({
   query:async(sql)=>{
    if(sql.includes('SELECT COUNT(*)::text AS attempts'))return {rows:[{attempts:String(state.attempts)}]};
    if(sql.includes('INSERT INTO tala_live_treasury_totp_attempts')){
@@ -29,6 +36,7 @@ test('RC93 live bank step-up accepts actual fresh TOTP, persists an attempt befo
  await requireTreasuryBankStepUp(p,validSession,totpForTestOnly(validSession.user.totpSecret,now));
  assert.equal(p.state.inserts,1);
  assert.equal(p.state.commits,1);
+ assert.equal(p.state.consumed.size,1);
 });
 test('RC93 rejects invalid TOTP, preserving durable failed attempt',async()=>{
  const p=fakePool();
@@ -38,6 +46,19 @@ test('RC93 rejects invalid TOTP, preserving durable failed attempt',async()=>{
  assert.equal(p.state.inserts,1);
  assert.equal(p.state.commits,1);
 });
+test('RC93 prevents replay of accepted banking OTP across concurrent calls',async()=>{
+ const p=fakePool();
+ const otp=totpForTestOnly(validSession.user.totpSecret,Math.floor(Date.now()/1000));
+ const results=await Promise.allSettled([
+  requireTreasuryBankStepUp(p,validSession,otp),
+  requireTreasuryBankStepUp(p,validSession,otp),
+ ]);
+ assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+ assert.equal(results.filter(r=>r.status==='rejected'&&
+  /CONNECT_FRESH_TOTP_ALREADY_USED/.test(String(r.reason))).length,1);
+ assert.equal(p.state.consumed.size,1);
+});
+
 test('RC93 requires live active user, recent MFA claim and six-digit OTP',async()=>{
  for(const session of [
   {...validSession,mfaVerified:false},
