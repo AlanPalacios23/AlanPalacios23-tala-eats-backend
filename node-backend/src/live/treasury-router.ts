@@ -16,6 +16,7 @@ import {inspectConnectedBankAndPayouts} from './treasury-bank-verification.js';
 import {reserveTreasuryWithdrawal} from './treasury-reservations.js';
 import {approveTreasuryWithdrawal} from './treasury-dual-approval.js';
 import {recordTreasuryTransferReview} from './treasury-transfer-reservations.js';
+import {consumeTreasuryAdminOtp} from './treasury-admin-step-up.js';
 
 const positive=(raw:unknown)=>{
  if(typeof raw!=='string'||!/^[1-9][0-9]{0,9}$/.test(raw))throw Error('PAYEE_ID_INVALID');
@@ -215,7 +216,14 @@ export function buildTreasuryRouter(pool:Pool,stripe:ConnectedReads){
     {res.status(403).json({error:'ADMIN_TREASURY_MFA_REQUIRED'});return;}
    const phase=req.params.phase;
    if(phase!=='review'&&phase!=='approve'){res.status(404).end();return;}
-   const result=await approveTreasuryWithdrawal(pool,req.params.id,session.userId,true,phase);
+   const id=positive(req.params.id);
+   const body=req.body as Record<string,unknown>|undefined;
+   if(!body||Object.keys(body).join(',')!=='totp'||typeof body.totp!=='string'){
+    res.status(422).json({error:'ADMIN_TREASURY_OTP_REQUIRED'});return;
+   }
+   await consumeTreasuryAdminOtp(pool,session.userId,body.totp,
+    phase==='review'?'withdrawal_review':'withdrawal_approve',String(id));
+   const result=await approveTreasuryWithdrawal(pool,String(id),session.userId,true,phase);
    res.status(200).json(result);
   }catch{res.status(409).json({error:'TREASURY_WITHDRAWAL_REVIEW_DENIED'});}
  });
@@ -228,9 +236,16 @@ export function buildTreasuryRouter(pool:Pool,stripe:ConnectedReads){
    const kind=req.params.kind,phase=req.params.phase;
    if((kind!=='restaurant'&&kind!=='driver')||
       (phase!=='review'&&phase!=='approve')){res.status(404).end();return;}
+   const orderId=positive(req.params.orderId),payeeId=positive(req.params.payeeId);
+   const body=req.body as Record<string,unknown>|undefined;
+   if(!body||Object.keys(body).join(',')!=='totp'||typeof body.totp!=='string'){
+    res.status(422).json({error:'ADMIN_TREASURY_OTP_REQUIRED'});return;
+   }
+   await consumeTreasuryAdminOtp(pool,session.userId,body.totp,
+    phase==='review'?'transfer_review':'transfer_approve',
+    orderId+':'+kind+':'+payeeId);
    const result=await recordTreasuryTransferReview(pool,stripe,{
-    orderId:positive(req.params.orderId),kind,payeeId:positive(req.params.payeeId),
-    adminId:session.userId,adminMfaVerified:true,phase});
+    orderId,kind,payeeId,adminId:session.userId,adminMfaVerified:true,phase});
    res.status(200).json({...result,money_moved:false});
   }catch{res.status(409).json({error:'TREASURY_TRANSFER_REVIEW_DENIED'});}
  });
