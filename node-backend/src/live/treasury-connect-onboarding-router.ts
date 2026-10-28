@@ -7,6 +7,7 @@
 import {Router,type Request} from 'express';
 import type {Pool} from 'pg';
 import type Stripe from 'stripe';
+import type {Redis} from 'ioredis';
 import {current} from '../auth/routes.js';
 import {requireTreasuryBankStepUp} from './treasury-connect-step-up.js';
 import {config} from '../config.js';
@@ -86,12 +87,25 @@ async function stripeState(provider:Provider,x:Owner){
  return {status,bankStatus,connectReady:ready,bankVerified:bankPayoutReady,
   payoutSchedule:acct.settings?.payouts?.schedule?.interval??'unknown'};
 }
-export function buildTreasuryConnectOnboardingRouter(pool:Pool,provider:Provider){
+const MAX_STATUS_READS_PER_FIVE_MINUTES=30;
+async function checkConnectStatusRateLimit(redis:Redis,x:Owner):Promise<boolean>{
+ // Distributed, bounded, per owner/payee. Never cache provider bank approval
+ // or wallet funds: Stripe itself stays the source of truth.
+ const key='tala:node:live:connect-status:'+x.ownerId+':'+x.role+':'+x.id;
+ const result=await redis.multi().incr(key).expire(key,300).exec();
+ const count=Number(result?.[0]?.[1]);
+ if(!Number.isSafeInteger(count)||count<1)throw Error('CONNECT_RATE_LIMIT_UNAVAILABLE');
+ return count<=MAX_STATUS_READS_PER_FIVE_MINUTES;
+}
+export function buildTreasuryConnectOnboardingRouter(pool:Pool,provider:Provider,redis:Redis){
  const r=Router();
  r.use((_req,res,next)=>{res.setHeader('Cache-Control','private, no-store');next();});
  r.get('/withdrawals/:role/:id/connect/status',async(req,res)=>{
   try{
    const {role,id}=parse(req),x=await owner(req,pool,role,id);
+   if(!await checkConnectStatusRateLimit(redis,x)){
+    res.status(429).json({error:'CONNECT_STATUS_RATE_LIMITED'});return;
+   }
    const v=await stripeState(provider,x);
    res.json({role,payee_id:id,status:v.status,
     bank:{status:v.bankStatus},
