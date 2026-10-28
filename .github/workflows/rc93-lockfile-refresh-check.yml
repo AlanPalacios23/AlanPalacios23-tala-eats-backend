@@ -1,0 +1,75 @@
+name: RC93 isolated dependency remediation proof
+
+on:
+  push:
+    branches: [feat/rc93-backend-security-hardening-20261028]
+    paths:
+      - '.github/workflows/rc93-lockfile-refresh-check.yml'
+permissions:
+  contents: read
+
+jobs:
+  lockfile-refresh-proof:
+    name: Refresh lockfile in ephemeral runner only (no commits)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      NODE_ENV: staging
+      HOST: '127.0.0.1'
+      PORT: '18190'
+      DATABASE_URL: postgresql://tala_node_stage:ci-only@127.0.0.1:15435/tala_node_stage
+      REDIS_URL: redis://:ci-only@127.0.0.1:16379/0
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+      STRIPE_LIVE_ENABLED: 'false'
+      STRIPE_CONNECT_TRANSFERS_ENABLED: 'false'
+      STRIPE_REFUNDS_ENABLED: 'false'
+      STRIPE_MANUAL_SETTLEMENT_APPROVED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.11.1'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Locally select fixed patch dependencies
+        run: |
+          node --input-type=module <<'JS'
+          import {readFileSync,writeFileSync} from 'node:fs';
+          const path='package.json';
+          const p=JSON.parse(readFileSync(path,'utf8'));
+          p.dependencies['@prisma/adapter-pg']='7.10.1';
+          p.dependencies['@prisma/client']='7.10.1';
+          p.devDependencies.prisma='7.10.1';
+          p.dependencies.zod='4.6.7';
+          writeFileSync(path,JSON.stringify(p,null,2)+'\n');
+          JS
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm audit fix --package-lock-only --ignore-scripts --no-fund || true
+      - name: Verify no HIGH or CRITICAL npm advisories
+        run: npm audit --omit=dev --audit-level=high --no-fund
+      - name: Compile and unit test only with refreshed lock
+        run: |
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:validate
+          npm run build
+          npm test
+      - name: Emit reproducible UTF8 package and lock snapshots
+        run: |
+          node --input-type=module <<'JS'
+          import {readFileSync} from 'node:fs';
+          for(const name of ['package.json','package-lock.json']){
+            const tag=name==='package.json'?'PKG':'LOCK';
+            console.log('RC93_BEGIN_'+tag+'_B64');
+            const b64=readFileSync(name).toString('base64');
+            for(let i=0;i<b64.length;i+=4000){
+              console.log('RC93_'+tag+'_CHUNK_'+(i/4000)+':'+b64.slice(i,i+4000));
+            }
+            console.log('RC93_END_'+tag+'_B64');
+          }
+          JS

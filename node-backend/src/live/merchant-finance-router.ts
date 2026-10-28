@@ -5,6 +5,7 @@ import type {Pool} from 'pg';
 import {current} from '../auth/routes.js';
 import {config} from '../config.js';
 import {settlementEligibility} from './settlement-eligibility.js';
+import {requireTreasuryBankStepUp} from './treasury-connect-step-up.js';
 type Provider=Pick<Stripe,'accounts'|'accountLinks'|'refunds'|'disputes'>;
 const id=(raw:unknown)=>{const s=String(raw??'');if(!/^[1-9][0-9]{0,9}$/.test(s))throw Error('ID_INVALID');return Number(s);};
 const money=(s:string)=>{if(!/^(?:0|[1-9]\d{0,7})\.\d{2}$/.test(s))throw Error('MONEY_INVALID');const [a,b]=s.split('.');return Number(a)*100+Number(b);};
@@ -22,8 +23,10 @@ export function buildLiveMerchantFinanceRouter(pool:Pool,stripe:Provider){
    const account=req.body?.stripe_account_id;
    if(typeof account!=='string'||!/^acct_[A-Za-z0-9]+$/.test(account))throw Error('BAD_ACCT');
    const owners=await pool.query<{owner_id:number;email:string}>(
-    'SELECT r.owner_id,u.email FROM restaurants r JOIN users u ON u.id=r.owner_id WHERE r.id=$1 AND r.owner_id IS NOT NULL',[rid]);
+    "SELECT r.owner_id,u.email FROM restaurants r JOIN users u ON u.id=r.owner_id WHERE r.id=$1 AND r.owner_id IS NOT NULL AND u.is_active=true AND u.role='restaurant'",[rid]);
    if(owners.rows.length!==1){res.status(404).json({error:'SELLER_OWNER_REQUIRED'});return;}
+   const session=await current(req);
+   await requireTreasuryBankStepUp(pool,session,req.body?.totp);
    // Platform funds must never be mapped as a seller's Connect recipient.
    // Both accounts are read through Stripe: IDs aren't trusted from the app.
    if(account===config.STRIPE_PLATFORM_ACCOUNT_ID){
@@ -44,17 +47,41 @@ export function buildLiveMerchantFinanceRouter(pool:Pool,stripe:Provider){
     [rid,account,actor]);
    res.status(created.rowCount===1?201:409).json(created.rowCount===1?
      {restaurant_id:rid,status:'owner_confirmation_required'}:{error:'ACCOUNT_ALREADY_MAPPED'});
-  }catch{res.status(403).json({error:'CONNECT_MAPPING_DENIED'});}
+  }catch(e){
+   const msg=e instanceof Error?e.message:'';
+   if(msg.startsWith('CONNECT_FRESH_TOTP_')||msg==='TREASURY_TOTP_RATE_LIMITED'){
+     res.status(msg==='TREASURY_TOTP_RATE_LIMITED'?429:403).json({error:msg});return;
+   }
+   res.status(403).json({error:'CONNECT_MAPPING_DENIED'});
+  }
  });
  r.post('/owner/finance/connect/:rid/confirm',async(req,res)=>{
   try{
    const s=await current(req),rid=id(req.params.rid);
-   const owner=await pool.query<{owner_id:number}>(
-    'SELECT r.owner_id FROM restaurants r JOIN tala_live_merchant_accounts m ON m.restaurant_id=r.id WHERE r.id=$1',[rid]);
-   if(owner.rows[0]?.owner_id!==s.userId){res.status(403).json({error:'NOT_SELLER_OWNER'});return;}
-   await pool.query('UPDATE tala_live_merchant_accounts SET owner_approved_at=COALESCE(owner_approved_at,NOW()),updated_at=NOW() WHERE restaurant_id=$1',[rid]);
+   if(s.user.role!=='restaurant'||!s.user.isActive){
+    res.status(403).json({error:'NOT_ACTIVE_SELLER_OWNER'});return;
+   }
+   const owner=await pool.query<{owner_id:number;stripe_account_id:string;email:string}>(
+    "SELECT r.owner_id,m.stripe_account_id,u.email FROM restaurants r JOIN tala_live_merchant_accounts m ON m.restaurant_id=r.id JOIN users u ON u.id=r.owner_id WHERE r.id=$1 AND u.is_active=true",[rid]);
+   const mapped=owner.rows[0];
+   if(mapped?.owner_id!==s.userId||mapped.stripe_account_id===config.STRIPE_PLATFORM_ACCOUNT_ID){
+    res.status(403).json({error:'NOT_SELLER_OWNER'});return;
+   }
+   await requireTreasuryBankStepUp(pool,s,req.body?.totp);
+   const remote=await stripe.accounts.retrieve(mapped.stripe_account_id);
+   if(remote.id!==mapped.stripe_account_id||remote.country!=='MX'||
+     remote.email?.trim().toLowerCase()!==mapped.email.trim().toLowerCase()){
+     res.status(409).json({error:'CONNECT_OWNER_MISMATCH'});return;
+   }
+   await pool.query('UPDATE tala_live_merchant_accounts SET owner_approved_at=COALESCE(owner_approved_at,NOW()),updated_at=NOW() WHERE restaurant_id=$1 AND stripe_account_id=$2',[rid,mapped.stripe_account_id]);
    res.json({restaurant_id:rid,owner_confirmed:true});
-  }catch{res.status(403).json({error:'OWNER_CONFIRMATION_DENIED'});}
+  }catch(e){
+   const msg=e instanceof Error?e.message:'';
+   if(msg.startsWith('CONNECT_FRESH_TOTP_')||msg==='TREASURY_TOTP_RATE_LIMITED'){
+     res.status(msg==='TREASURY_TOTP_RATE_LIMITED'?429:403).json({error:msg});return;
+   }
+   res.status(403).json({error:'OWNER_CONFIRMATION_DENIED'});
+  }
  });
  r.get('/admin/finance/connect/:rid/status',async(req,res)=>{
   try{
@@ -104,11 +131,21 @@ export function buildLiveMerchantFinanceRouter(pool:Pool,stripe:Provider){
  r.post('/owner/finance/connect/:rid/onboarding-link',async(req,res)=>{
   try{
    const s=await current(req),rid=id(req.params.rid);
-   const accounts=await pool.query<{owner_id:number;stripe_account_id:string;owner_approved_at:Date|null}>(
-    'SELECT r.owner_id,m.stripe_account_id,m.owner_approved_at FROM restaurants r JOIN tala_live_merchant_accounts m ON r.id=m.restaurant_id WHERE r.id=$1',[rid]);
-   const x=accounts.rows[0];
-   if(!x||x.owner_id!==s.userId||!x.owner_approved_at){
+   if(s.user.role!=='restaurant'||!s.user.isActive){
     res.status(403).json({error:'SELLER_NOT_AUTHORIZED'});return;
+   }
+   const accounts=await pool.query<{owner_id:number;stripe_account_id:string;owner_approved_at:Date|null;email:string}>(
+    "SELECT r.owner_id,m.stripe_account_id,m.owner_approved_at,u.email FROM restaurants r JOIN tala_live_merchant_accounts m ON r.id=m.restaurant_id JOIN users u ON u.id=r.owner_id WHERE r.id=$1 AND u.is_active=true",[rid]);
+   const x=accounts.rows[0];
+   if(!x||x.owner_id!==s.userId||!x.owner_approved_at||
+      x.stripe_account_id===config.STRIPE_PLATFORM_ACCOUNT_ID){
+    res.status(403).json({error:'SELLER_NOT_AUTHORIZED'});return;
+   }
+   await requireTreasuryBankStepUp(pool,s,req.body?.totp);
+   const remote=await stripe.accounts.retrieve(x.stripe_account_id);
+   if(remote.id!==x.stripe_account_id||remote.country!=='MX'||
+      remote.email?.trim().toLowerCase()!==x.email.trim().toLowerCase()){
+    res.status(409).json({error:'SELLER_STRIPE_OWNER_CHANGED'});return;
    }
    const link=await stripe.accountLinks.create({
     account:x.stripe_account_id,type:'account_onboarding',
@@ -116,7 +153,13 @@ export function buildLiveMerchantFinanceRouter(pool:Pool,stripe:Provider){
     return_url:'https://talaeats.alan-palacios-dev.com/api/v1/connect/onboarding/return',
    });
    res.json({url:link.url,expires_at:link.expires_at});
-  }catch{res.status(503).json({error:'ONBOARDING_LINK_UNAVAILABLE'});}
+  }catch(e){
+   const msg=e instanceof Error?e.message:'';
+   if(msg.startsWith('CONNECT_FRESH_TOTP_')||msg==='TREASURY_TOTP_RATE_LIMITED'){
+    res.status(msg==='TREASURY_TOTP_RATE_LIMITED'?429:403).json({error:msg});return;
+   }
+   res.status(503).json({error:'ONBOARDING_LINK_UNAVAILABLE'});
+  }
  });
  // Stripe sends no proof of approval to return_url; NEVER mark the bank
  // verified or write a withdrawal based on this unauthenticated callback.

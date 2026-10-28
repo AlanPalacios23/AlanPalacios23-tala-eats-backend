@@ -7,9 +7,9 @@
 import {Router,type Request} from 'express';
 import type {Pool} from 'pg';
 import type Stripe from 'stripe';
+import type {Redis} from 'ioredis';
 import {current} from '../auth/routes.js';
-import {verifiedTotpCounter} from '../auth/crypto.js';
-import {recordTreasuryOtpAttempt} from './treasury-totp-rate-limit.js';
+import {requireTreasuryBankStepUp} from './treasury-connect-step-up.js';
 import {config} from '../config.js';
 
 type Role='restaurant'|'driver';
@@ -87,12 +87,25 @@ async function stripeState(provider:Provider,x:Owner){
  return {status,bankStatus,connectReady:ready,bankVerified:bankPayoutReady,
   payoutSchedule:acct.settings?.payouts?.schedule?.interval??'unknown'};
 }
-export function buildTreasuryConnectOnboardingRouter(pool:Pool,provider:Provider){
+const MAX_STATUS_READS_PER_FIVE_MINUTES=30;
+export async function checkConnectStatusRateLimit(redis:Redis,x:Pick<Owner,'ownerId'|'role'|'id'>):Promise<boolean>{
+ // Distributed, bounded, per owner/payee. Never cache provider bank approval
+ // or wallet funds: Stripe itself stays the source of truth.
+ const key='tala:node:live:connect-status:'+x.ownerId+':'+x.role+':'+x.id;
+ const result=await redis.multi().incr(key).expire(key,300).exec();
+ const count=Number(result?.[0]?.[1]);
+ if(!Number.isSafeInteger(count)||count<1)throw Error('CONNECT_RATE_LIMIT_UNAVAILABLE');
+ return count<=MAX_STATUS_READS_PER_FIVE_MINUTES;
+}
+export function buildTreasuryConnectOnboardingRouter(pool:Pool,provider:Provider,redis:Redis){
  const r=Router();
  r.use((_req,res,next)=>{res.setHeader('Cache-Control','private, no-store');next();});
  r.get('/withdrawals/:role/:id/connect/status',async(req,res)=>{
   try{
    const {role,id}=parse(req),x=await owner(req,pool,role,id);
+   if(!await checkConnectStatusRateLimit(redis,x)){
+    res.status(429).json({error:'CONNECT_STATUS_RATE_LIMITED'});return;
+   }
    const v=await stripeState(provider,x);
    res.json({role,payee_id:id,status:v.status,
     bank:{status:v.bankStatus},
@@ -116,19 +129,12 @@ export function buildTreasuryConnectOnboardingRouter(pool:Pool,provider:Provider
   try{
    const {role,id}=parse(req);
    const s=await current(req);
-   if(!s.user.twoFactorEnabled||!s.mfaVerified||
-      typeof req.body?.totp!=='string'||!/^[0-9]{6}$/.test(req.body.totp)){
-    res.status(403).json({error:'CONNECT_FRESH_TOTP_REQUIRED'});return;
-   }
+
    const x=await owner(req,pool,role,id);
    if(!x.account||!x.approved){
     res.status(409).json({error:'CONNECT_MAPPING_OR_OWNER_APPROVAL_REQUIRED'});return;
    }
-   // Persist attempts before verification, including failed codes.
-   await recordTreasuryOtpAttempt(pool,s.userId,'withdrawal_request');
-   if(verifiedTotpCounter(s.user.totpSecret,req.body.totp,Math.floor(Date.now()/1000))===null){
-    res.status(403).json({error:'CONNECT_FRESH_TOTP_INVALID'});return;
-   }
+   await requireTreasuryBankStepUp(pool,s,req.body?.totp);
    await stripeState(provider,x); // Re-read live account ownership before issuing link.
    const link=await provider.accountLinks.create({
     account:x.account,type:'account_onboarding',
@@ -141,6 +147,10 @@ export function buildTreasuryConnectOnboardingRouter(pool:Pool,provider:Provider
     withdrawable:false,bank_payout_created:false});
   }catch(err){
    const msg=err instanceof Error?err.message:'';
+   if(msg.startsWith('CONNECT_FRESH_TOTP_')||msg==='TREASURY_TOTP_RATE_LIMITED'){
+    res.status(msg==='TREASURY_TOTP_RATE_LIMITED'?429:403)
+      .json({error:msg});return;
+   }
    res.status(/NOT_OWNER|ROLE_REQUIRED|DRIVER_UNVERIFIED/.test(msg)?403:
     /ROLE_INVALID|PAYEE_ID_INVALID/.test(msg)?404:503)
     .json({error:'CONNECT_ONBOARDING_NOT_AVAILABLE'});

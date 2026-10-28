@@ -65,7 +65,7 @@ if(live){
   app.use('/api/v1',buildPayeeFinanceRouter(live.pool,live.stripe));
   // Read-only treasury journal for both mobile payees; payout POST is always 503.
   app.use('/api/v1',buildTreasuryRouter(live.pool,live.stripe));
-  app.use('/api/v1',buildTreasuryConnectOnboardingRouter(live.pool,live.stripe));
+  app.use('/api/v1',buildTreasuryConnectOnboardingRouter(live.pool,live.stripe,live.redis));
   // Read-only, buyer-visible readiness for THIS merchant. Global payment
   // method configuration alone does not mean a particular shop can receive
   // orders. Never echo Stripe account IDs, owner emails, or bank details.
