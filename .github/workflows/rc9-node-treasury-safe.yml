@@ -84,6 +84,8 @@ jobs:
           cache-dependency-path: node-backend/package-lock.json
       - name: Frozen install
         run: npm ci --no-audit --no-fund
+      - name: Audit production dependency vulnerabilities (HIGH/CRITICAL)
+        run: npm audit --omit=dev --audit-level=high --no-fund
       - name: Prisma validation and TypeScript compilation
         run: |
           npm run generate
