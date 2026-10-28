@@ -47,7 +47,13 @@ export function buildLiveMerchantFinanceRouter(pool:Pool,stripe:Provider){
     [rid,account,actor]);
    res.status(created.rowCount===1?201:409).json(created.rowCount===1?
      {restaurant_id:rid,status:'owner_confirmation_required'}:{error:'ACCOUNT_ALREADY_MAPPED'});
-  }catch{res.status(403).json({error:'CONNECT_MAPPING_DENIED'});}
+  }catch(e){
+   const msg=e instanceof Error?e.message:'';
+   if(msg.startsWith('CONNECT_FRESH_TOTP_')||msg==='TREASURY_TOTP_RATE_LIMITED'){
+     res.status(msg==='TREASURY_TOTP_RATE_LIMITED'?429:403).json({error:msg});return;
+   }
+   res.status(403).json({error:'CONNECT_MAPPING_DENIED'});
+  }
  });
  r.post('/owner/finance/connect/:rid/confirm',async(req,res)=>{
   try{
@@ -69,7 +75,13 @@ export function buildLiveMerchantFinanceRouter(pool:Pool,stripe:Provider){
    }
    await pool.query('UPDATE tala_live_merchant_accounts SET owner_approved_at=COALESCE(owner_approved_at,NOW()),updated_at=NOW() WHERE restaurant_id=$1 AND stripe_account_id=$2',[rid,mapped.stripe_account_id]);
    res.json({restaurant_id:rid,owner_confirmed:true});
-  }catch{res.status(403).json({error:'OWNER_CONFIRMATION_DENIED'});}
+  }catch(e){
+   const msg=e instanceof Error?e.message:'';
+   if(msg.startsWith('CONNECT_FRESH_TOTP_')||msg==='TREASURY_TOTP_RATE_LIMITED'){
+     res.status(msg==='TREASURY_TOTP_RATE_LIMITED'?429:403).json({error:msg});return;
+   }
+   res.status(403).json({error:'OWNER_CONFIRMATION_DENIED'});
+  }
  });
  r.get('/admin/finance/connect/:rid/status',async(req,res)=>{
   try{
