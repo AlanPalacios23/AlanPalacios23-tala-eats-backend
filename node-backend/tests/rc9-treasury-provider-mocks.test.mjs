@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
 import {mockableTransferExecution,mockableBankPayoutExecution} from '../dist/live/treasury-execution.js';
 const transferInput={
  orderId:81,kind:'restaurant',payeeId:12,amountMinor:8500,
@@ -59,4 +60,22 @@ test('bank payout mock cannot exceed verified funds or bypass separate approvers
  const done=await mockableBankPayoutExecution(provider,payout,true);
  assert.equal(done.status,'submitted');
  assert.equal(n,1);
+});
+
+test('production process cannot call Stripe provider even if a caller supplies approval=true',()=>{
+ const inline=`
+  import {mockableBankPayoutExecution} from './dist/live/treasury-execution.js';
+  let calls=0;
+  const provider={payouts:{create(){calls++;throw Error('PROVIDER_CALLED');}}};
+  const row={id:'33',state:'reserved',kind:'driver',payeeId:63,
+    accountId:'acct_DRIVER63',bankId:'ba_BANK63',amountMinor:100,
+    idempotencyKey:'tala:treasury:payout:v1:33',
+    verifiedWithdrawableMinor:100,approved:{reviewedBy:4,approvedBy:5}};
+  try{await mockableBankPayoutExecution(provider,row,true);process.exit(8);}
+  catch(e){if(!String(e).includes('PRODUCTION_FINANCIAL_GATE_LOCKED')||calls!==0)process.exit(9);}
+ `;
+ const child=spawnSync(process.execPath,['--input-type=module','-e',inline],{
+  cwd:process.cwd(),env:{PATH:process.env.PATH??'',NODE_ENV:'production'},
+  encoding:'utf8',timeout:6000});
+ assert.equal(child.status,0,child.stderr);
 });
