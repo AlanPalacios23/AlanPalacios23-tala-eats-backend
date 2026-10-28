@@ -14,7 +14,7 @@ import {calculatePickupQuoteFromCatalog,assertDefaultPickupRates,PickupQuoteErro
 import { previewCancelStage, cancelCashPickupStage, moveCashPickupOwnerStage } from './lifecycle.js';
 import { completeCashPickupStage } from './pickup.js';
 import { driverAvailability, driverAccept, driverStatus, driverGps,
-  driverDashboard, driverComplete, hasReachableStageDriver,
+  driverDashboard, driverComplete, driverPresenceReadiness, hasReachableStageDriver,
   canDriverReachPickup } from './driver.js';
 import { current } from '../auth/routes.js';
 import type { AuthUser, MarketplaceRestaurant, MarketplaceMenuItem,
@@ -822,6 +822,12 @@ stageDriverRouter.get('/available',async(req,res)=>{
       tip:x.tip.toString(),distance_km:x.distanceKm,
       total:x.total.toString(),
     }:orderView(x,false)));
+});
+stageDriverRouter.get('/presence-readiness',async(req,res)=>{
+  const account=await driverAccount(req);
+  const result=await driverPresenceReadiness(account);
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(result);
 });
 stageDriverRouter.get('/profile',async(req,res)=>{
   const account=await driverAccount(req);

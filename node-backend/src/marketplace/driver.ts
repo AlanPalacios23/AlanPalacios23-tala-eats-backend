@@ -6,6 +6,7 @@ import { Redis } from 'ioredis';
 import { db } from '../db.js';
 import { config } from '../config.js';
 import {stageDeliveryTenderAllowed} from './delivery-financial-proof.js';
+import {canOperateDriverPresence,driverLocationKey,driverPersistKey,hasFreshVerifiedDriverGps} from './delivery-runtime.js';
 import type { AuthUser } from '../generated/prisma/client.js';
 
 const ACTIVE=['assigned','picked_up','on_the_way'];
@@ -16,6 +17,14 @@ const fail=(code:number,message:string):never=>{throw new DriverError(code,messa
 const stage=()=>{
   if(config.STAGE_DRIVER_DELIVERY_ENABLED!=='true')
     fail(503,'Entregas Node aún no habilitadas fuera del laboratorio aislado');
+};
+// The live driver-pilot only permits verified online presence and GPS.
+// Accept, pickup, PIN and checkout still use the independent stage() lock.
+const presence=()=>{
+  if(!canOperateDriverPresence(config.NODE_ENV,
+     config.STAGE_DRIVER_DELIVERY_ENABLED==='true',
+     config.LIVE_DRIVER_PRESENCE_ENABLED==='true'))
+    fail(503,'Presencia de repartidor no habilitada en este entorno');
 };
 function redisClient() {
   return new Redis(config.REDIS_URL,{
@@ -74,7 +83,7 @@ export async function hasReachableStageDriver(
     // Single bounded MGET instead of N Redis connects while checkout holds
     // PostgreSQL locks; Redis's 120s key expiry is the heartbeat deadline.
     const values=await redis.mget(
-      ...profiles.map(p=>'tala:node:stage:driver:'+p.userId+':location'));
+      ...profiles.map(p=>driverLocationKey(config.NODE_ENV,p.userId)));
     return values.some(raw=>{
       if(!raw)return false;
       try{
@@ -91,6 +100,44 @@ export async function hasReachableStageDriver(
 const profileByUser=async(userId:number)=>db.marketplaceDriverProfile.upsert({
   where:{userId},create:{userId,isVerified:false},update:{},
 });
+/**
+ * Authenticated driver-only readiness. Publicly expose neither GPS nor
+ * private contact information. Redis TTL proves a recent heartbeat, while
+ * PostgreSQL proves ADMIN-approved active status. Does not accept orders.
+ */
+export async function driverPresenceReadiness(actor:AuthUser){
+  const enabled=canOperateDriverPresence(config.NODE_ENV,
+    config.STAGE_DRIVER_DELIVERY_ENABLED==='true',
+    config.LIVE_DRIVER_PRESENCE_ENABLED==='true');
+  const profile=await db.marketplaceDriverProfile.findUnique({
+    where:{userId:actor.id},select:{isOnline:true,isVerified:true},
+  });
+  const verified=profile?.isVerified===true&&actor.isActive===true;
+  const online=profile?.isOnline===true;
+  let freshGps=false;
+  if(enabled&&verified&&online){
+    const redis=redisClient();
+    try{
+      await redis.connect();
+      const key=driverLocationKey(config.NODE_ENV,actor.id);
+      const [raw,ttl]=await Promise.all([redis.get(key),redis.ttl(key)]);
+      freshGps=hasFreshVerifiedDriverGps(raw,ttl,Date.now());
+    }catch{/* Availability must fail closed on Redis failures. */}
+    finally{redis.disconnect();}
+  }
+  return {
+    environment:config.NODE_ENV,
+    presence_enabled:enabled,
+    admin_verified:verified,
+    online,
+    fresh_gps:freshGps,
+    ready_for_dispatch:enabled&&verified&&online&&freshGps&&
+      // RC9.5 does NOT authorize assignment or LIVE checkout.
+      config.NODE_ENV==='staging'&&config.STAGE_DRIVER_DELIVERY_ENABLED==='true',
+    live_delivery_checkout_enabled:false,
+    live_stripe_delivery_enabled:false,
+  };
+}
 export async function canDriverReachPickup(
  driverId:number,origin:{lat:number;lng:number}):Promise<boolean>{
  if(config.NODE_ENV!=='staging'||!Number.isSafeInteger(driverId)||driverId<1||
@@ -103,7 +150,7 @@ async function redisLocation(driverId:number):Promise<{lat:number;lng:number}|nu
   const redis=redisClient();
   try{
     await redis.connect();
-    const str=await redis.get('tala:node:stage:driver:'+driverId+':location');
+    const str=await redis.get(driverLocationKey(config.NODE_ENV,driverId));
     if(!str)return null;
     const p=JSON.parse(str) as {lat:number;lng:number};
     return typeof p.lat==='number'&&Number.isFinite(p.lat)&&Math.abs(p.lat)<=90&&
@@ -194,8 +241,8 @@ async function withProfileLock<T>(driverId:number,perform:(tx:any)=>Promise<T>):
   },{maxWait:10000,timeout:20000});
 }
 export async function driverAvailability(actor:AuthUser,isOnline:boolean){
-  stage();
-  return withProfileLock(actor.id,async tx=>{
+  presence();
+  const result=await withProfileLock(actor.id,async tx=>{
     const profile=await tx.marketplaceDriverProfile.findUnique({where:{userId:actor.id}});
     if(!profile)return fail(503,'Perfil del repartidor no disponible');
     if(isOnline&&!profile.isVerified)
@@ -207,9 +254,22 @@ export async function driverAvailability(actor:AuthUser,isOnline:boolean){
     await tx.marketplaceDriverProfile.update({
       where:{userId:actor.id},data:{isOnline},
     });
-    if(isOnline)await assign(tx,actor.id);
+    // LIVE check-in never claims or creates an order. Dispatch remains locked.
+    if(isOnline&&config.NODE_ENV==='staging')await assign(tx,actor.id);
     return profilePublic({...profile,isOnline});
   });
+  // On offline, retire fresh GPS presence immediately; a Redis outage does
+  // not change the committed DB offline state, which also gates eligibility.
+  if(!isOnline&&config.NODE_ENV==='production'){
+    const redis=redisClient();
+    try{
+      await redis.connect();
+      await redis.del(driverLocationKey(config.NODE_ENV,actor.id),
+        driverPersistKey(config.NODE_ENV,actor.id));
+    }catch{/* online=false in PostgreSQL is the authoritative exclusion */}
+    finally{redis.disconnect();}
+  }
+  return result;
 }
 export async function driverAccept(actor:AuthUser,orderId:number){
   stage();
@@ -261,15 +321,24 @@ export async function driverStatus(actor:AuthUser,orderId:number,next:string){
   },{maxWait:10000,timeout:20000});
 }
 export async function driverGps(actor:AuthUser,lat:number,lng:number){
-  stage();
-  await profileByUser(actor.id);
+  presence();
+  if(!Number.isFinite(lat)||!Number.isFinite(lng)||
+     Math.abs(lat)>90||Math.abs(lng)>180)
+    fail(422,'Coordenadas de ubicación inválidas');
+  if(config.NODE_ENV==='production'){
+    const p=await db.marketplaceDriverProfile.findUnique({where:{userId:actor.id}});
+    if(!p?.isVerified||!p.isOnline)
+      fail(403,'Debes estar aprobado y conectado para enviar GPS');
+  }else{
+    await profileByUser(actor.id);
+  }
   const redis=redisClient();
   let persist=false;
   try{
     await redis.connect();
     const payload=JSON.stringify({lat,lng,reported_at:new Date().toISOString()});
-    const keys=['tala:node:stage:driver:'+actor.id+':location',
-      'tala:node:stage:driver:'+actor.id+':persist'];
+    const keys=[driverLocationKey(config.NODE_ENV,actor.id),
+      driverPersistKey(config.NODE_ENV,actor.id)];
     const result=await redis.eval(
       "redis.call('SET',KEYS[1],ARGV[1],'EX',120); "+
       "return redis.call('SET',KEYS[2],'1','NX','EX',15)",

@@ -39,6 +39,8 @@ const schema = z.object({
   LIVE_AUTH_EMAIL_RESEND_API_KEY: z.string().min(12).optional(),
   LIVE_AUTH_EMAIL_FROM: z.email().max(220).optional(),
 
+  // RC9.5: separate LIVE driver presence pilot; never enables checkout or dispatch.
+  LIVE_DRIVER_PRESENCE_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_DRIVER_DELIVERY_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_DRIVER_MAX_PICKUP_KM: z.coerce.number().finite().min(1).max(30).default(8),
   STAGE_DELIVERY_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
@@ -73,6 +75,8 @@ if(config.NODE_ENV==='staging'&&config.TREASURY_CONNECT_WEBHOOK_INGEST_ENABLED==
 if(config.WEB_PUSH_ENABLED==='true'&&
    (!config.WEB_PUSH_VAPID_PUBLIC_KEY||!config.WEB_PUSH_VAPID_PRIVATE_KEY||!config.WEB_PUSH_SUBJECT))
   throw new Error('WEB_PUSH_ENABLED_REQUIRES_VALID_VAPID_KEYS_AND_SUBJECT');
+if(config.NODE_ENV==='staging'&&config.LIVE_DRIVER_PRESENCE_ENABLED==='true')
+  throw new Error('STAGING_CANNOT_ENABLE_LIVE_DRIVER_PRESENCE');
 if(config.NODE_ENV==='production'&&config.STAGE_EMAIL_DELIVERY_MODE==='resend')
  throw Error('STAGING_EMAIL_PROVIDER_FORBIDDEN_IN_PRODUCTION');
 if(config.LIVE_AUTH_EMAIL_DELIVERY_MODE==='resend'){
