@@ -1221,3 +1221,58 @@ model TalaLiveCashCustody {
  @@index([status,createdAt],map:"rc85_cash_status_idx")
  @@map("tala_live_cash_custody")
 }
+
+
+/** RC Treasury: journal-only beneficiary transfers (never derives cash from orders). */
+model TalaLiveTreasuryTransfer {
+  id BigInt @id @default(autoincrement())
+  orderId Int @map("order_id")
+  payeeKind String @map("payee_kind") @db.VarChar(12)
+  payeeId Int @map("payee_id")
+  connectedAccountId String @map("connected_account_id") @db.VarChar(120)
+  sourceChargeId String @map("source_charge_id") @db.VarChar(120)
+  amountMinor BigInt @map("amount_minor")
+  currency String @default("mxn") @db.VarChar(3)
+  state String @default("reserved") @db.VarChar(24)
+  idempotencyKey String @unique @map("idempotency_key") @db.VarChar(150)
+  stripeTransferId String? @unique @map("stripe_transfer_id") @db.VarChar(120)
+  reviewedByUserId Int? @map("reviewed_by_user_id")
+  approvedByUserId Int? @map("approved_by_user_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  @@unique([orderId,payeeKind,payeeId],map:"treasury_transfer_unique_payee")
+  @@index([payeeKind,payeeId,state,createdAt],map:"treasury_transfers_recipient")
+  @@map("tala_live_treasury_transfers")
+}
+/** Bank withdrawal reservation. Only verified Connect transfer funds may cover it. */
+model TalaLiveTreasuryWithdrawal {
+  id BigInt @id @default(autoincrement())
+  payeeKind String @map("payee_kind") @db.VarChar(12)
+  payeeId Int @map("payee_id")
+  requestedByUserId Int @map("requested_by_user_id")
+  connectedAccountId String @map("connected_account_id") @db.VarChar(120)
+  bankDestinationId String @map("bank_destination_id") @db.VarChar(120)
+  amountMinor BigInt @map("amount_minor")
+  currency String @default("mxn") @db.VarChar(3)
+  clientKey String @map("client_key") @db.VarChar(96)
+  totpStep BigInt @map("totp_step")
+  state String @default("reserved") @db.VarChar(24)
+  stripePayoutId String? @unique @map("stripe_payout_id") @db.VarChar(120)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  @@unique([payeeKind,payeeId,clientKey],map:"treasury_withdrawal_unique_request")
+  @@unique([requestedByUserId,totpStep],map:"treasury_withdrawal_unique_otp")
+  @@index([payeeKind,payeeId,createdAt(sort: Desc)],map:"treasury_withdrawals_recipient")
+  @@map("tala_live_treasury_withdrawals")
+}
+model TalaLiveTreasuryEvent {
+  eventId String @id @map("event_id") @db.VarChar(180)
+  connectedAccountId String @map("connected_account_id") @db.VarChar(120)
+  eventType String @map("event_type") @db.VarChar(60)
+  stripeObjectId String @map("stripe_object_id") @db.VarChar(120)
+  state String @default("received") @db.VarChar(16)
+  receivedAt DateTime @default(now()) @map("received_at") @db.Timestamptz(6)
+  reconciledAt DateTime? @map("reconciled_at") @db.Timestamptz(6)
+  @@index([state,receivedAt],map:"treasury_events_review")
+  @@map("tala_live_treasury_events")
+}
