@@ -8,7 +8,7 @@
  * No PM2/Stripe/Redis/frontend modifications.
  */
 import {readFileSync,writeFileSync,mkdirSync,statSync,lstatSync,existsSync,
-  openSync,closeSync,rmSync,readdirSync} from 'node:fs';
+  openSync,closeSync,rmSync,readdirSync,createReadStream} from 'node:fs';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {homedir} from 'node:os';
@@ -132,7 +132,11 @@ if(mode==='--plan'){
    throw Error('RC110_SCHEMA_ABORT=BACKUP_OR_MIGRATION_COMMAND_FAILED:'+command);
   return r.stdout;
  };
- const archiveHash=(path)=>createHash('sha256').update(readFileSync(path)).digest('hex');
+ const archiveHash=async(path)=>{
+  const hash=createHash('sha256');
+  for await(const chunk of createReadStream(path))hash.update(chunk);
+  return hash.digest('hex');
+ };
  if(mode==='--backup'){
   if(existsSync(receiptPath))throw Error('RC110_SCHEMA_ABORT=RECEIPT_EXISTS_REVIEW_FIRST');
   const stamp=new Date().toISOString().replaceAll(':','').replaceAll('.','');
@@ -146,7 +150,7 @@ if(mode==='--plan'){
       !listing.includes('_prisma_migrations'))
     throw Error('RC110_SCHEMA_ABORT=INCOMPLETE_ARCHIVE');
    const receipt={sha,archive,created:Date.now(),size:statSync(archive).size,
-    digest:archiveHash(archive)};
+    digest:await archiveHash(archive)};
    writeFileSync(receiptPath,JSON.stringify(receipt),{flag:'wx',mode:0o600});
    console.log('RC110_BACKUP=PASS_VERIFIED_ARCHIVE_LIST');
    console.log('RC110_BACKUP_FILE='+archive);
@@ -160,7 +164,7 @@ if(mode==='--plan'){
   if(!ar.isFile()||ar.isSymbolicLink()||ar.uid!==process.getuid()||
      (ar.mode&0o777)!==0o600||
      receipt.sha!==sha||Date.now()-receipt.created>30*60*1000||
-     receipt.size!==ar.size||receipt.digest!==archiveHash(receipt.archive))
+     receipt.size!==ar.size||receipt.digest!==await archiveHash(receipt.archive))
     throw Error('RC110_SCHEMA_ABORT=INVALID_OR_STALE_BACKUP');
   console.log('RC110_ONE_PENDING_PRISMA_MIGRATION=PASS');
   console.log('RC110_BACKUP_ATTESTED=PASS');
