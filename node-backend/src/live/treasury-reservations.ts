@@ -31,7 +31,7 @@ function requestValid(v:ReserveWithdrawal){
     !['restaurant','driver'].includes(v.snapshot.kind)||
     !/^acct_[A-Za-z0-9]+$/.test(v.snapshot.accountId)||
     !/^ba_[A-Za-z0-9]+$/.test(v.snapshot.bankId)||
-    !/^[a-f0-9-]{36}$/i.test(v.clientKey)||v.clientKey!==v.clientKey.toLowerCase()||
+    !/^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/.test(v.clientKey)||
     !/^[0-9]{6}$/.test(v.totp)||!safeAmount(v.amountMinor))
   throw Error('TREASURY_REQUEST_INVALID');
 }
