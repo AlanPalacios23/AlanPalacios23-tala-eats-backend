@@ -100,6 +100,52 @@ export async function hasReachableStageDriver(
 const profileByUser=async(userId:number)=>db.marketplaceDriverProfile.upsert({
   where:{userId},create:{userId,isVerified:false},update:{},
 });
+/**
+ * Authenticated driver-only readiness. Publicly expose neither GPS nor
+ * private contact information. Redis TTL proves a recent heartbeat, while
+ * PostgreSQL proves ADMIN-approved active status. Does not accept orders.
+ */
+export async function driverPresenceReadiness(actor:AuthUser){
+  const enabled=canOperateDriverPresence(config.NODE_ENV,
+    config.STAGE_DRIVER_DELIVERY_ENABLED==='true',
+    config.LIVE_DRIVER_PRESENCE_ENABLED==='true');
+  const profile=await db.marketplaceDriverProfile.findUnique({
+    where:{userId:actor.id},select:{isOnline:true,isVerified:true},
+  });
+  const verified=profile?.isVerified===true&&actor.isActive===true;
+  const online=profile?.isOnline===true;
+  let freshGps=false;
+  if(enabled&&verified&&online){
+    const redis=redisClient();
+    try{
+      await redis.connect();
+      const key=driverLocationKey(config.NODE_ENV,actor.id);
+      const [raw,ttl]=await Promise.all([redis.get(key),redis.ttl(key)]);
+      if(raw&&ttl>0&&ttl<=120){
+        const parsed=JSON.parse(raw) as {lat?:unknown;lng?:unknown;reported_at?:unknown};
+        const age=typeof parsed.reported_at==='string'
+          ? Date.now()-Date.parse(parsed.reported_at):NaN;
+        freshGps=typeof parsed.lat==='number'&&Number.isFinite(parsed.lat)&&
+          Math.abs(parsed.lat)<=90&&typeof parsed.lng==='number'&&
+          Number.isFinite(parsed.lng)&&Math.abs(parsed.lng)<=180&&
+          Number.isFinite(age)&&age>=0&&age<=120000;
+      }
+    }catch{/* Availability must fail closed on Redis failures. */}
+    finally{redis.disconnect();}
+  }
+  return {
+    environment:config.NODE_ENV,
+    presence_enabled:enabled,
+    admin_verified:verified,
+    online,
+    fresh_gps:freshGps,
+    ready_for_dispatch:enabled&&verified&&online&&freshGps&&
+      // RC9.5 does NOT authorize assignment or LIVE checkout.
+      config.NODE_ENV==='staging'&&config.STAGE_DRIVER_DELIVERY_ENABLED==='true',
+    live_delivery_checkout_enabled:false,
+    live_stripe_delivery_enabled:false,
+  };
+}
 export async function canDriverReachPickup(
  driverId:number,origin:{lat:number;lng:number}):Promise<boolean>{
  if(config.NODE_ENV!=='staging'||!Number.isSafeInteger(driverId)||driverId<1||
