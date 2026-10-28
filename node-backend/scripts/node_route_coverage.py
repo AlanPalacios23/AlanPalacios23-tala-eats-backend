@@ -133,6 +133,12 @@ PASSWORD_RESET_BROWSER_NODE_ONLY = {
     ("POST", "/api/v1/auth/password/reset-page"),
 }
 
+# RC9.5: authenticated driver-only presence inspection (no coordinates,
+# merchant identity, order writes, checkout, or dispatch authorization).
+RC95_DRIVER_READINESS_NODE_ONLY = {
+    ("GET", "/api/v1/driver/presence-readiness"),
+}
+
 def main() -> None:
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check",action="store_true")
@@ -144,7 +150,8 @@ def main() -> None:
                     for x in data["node_routes_without_python_match"]}
         if observed != (ADMIN_NODE_ONLY | STRIPE_TEST_STATUS_NODE_ONLY |
                         PICKUP_PRICE_PREVIEW_NODE_ONLY | STAGE_DELIVERY_QUOTE_NODE_ONLY |
-                        PASSWORD_RESET_BROWSER_NODE_ONLY):
+                        PASSWORD_RESET_BROWSER_NODE_ONLY |
+                        RC95_DRIVER_READINESS_NODE_ONLY):
             raise ValueError("Unapproved Node-only route delta: "+
                              json.dumps(data["node_routes_without_python_match"]))
     if args.json:
