@@ -6,7 +6,7 @@ set -Eeuo pipefail
 set +x
 umask 077
 if [[ $# != 2 || ! "$1" =~ ^--(plan|prepare|verify)$ || ! "$2" =~ ^[a-f0-9]{40}$ ]]; then
-  echo "USAGE: bash scripts/rc9-kali-prepare-release.sh --plan|--prepare|--verify FULL_SHA"
+  echo "USAGE: bash scripts/rc92-kali-prepare-release.sh --plan|--prepare|--verify FULL_SHA"
   exit 2
 fi
 MODE="$1"; SHA="$2"
