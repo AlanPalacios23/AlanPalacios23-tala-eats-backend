@@ -86,9 +86,16 @@ if [[ "$MODE" == '--plan' ]]; then
 fi
 if [[ "$MODE" == '--prepare' ]]; then
   # Inert placeholder build configuration. Never load or print LIVE env.
+  # Source-only build/test with inert credentials matching staging's
+  # strict CONFIG SHAPE. These dummy values cannot authenticate to LIVE.
+  # Never inherit Stripe keys from the operator's shell.
+  unset STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET STRIPE_PUBLISHABLE_KEY
+  unset STRIPE_CONNECT_WEBHOOK_SECRET STRIPE_PLATFORM_ACCOUNT_ID
   export NODE_ENV=staging
-  export DATABASE_URL='postgresql://rc9_build:build_only@127.0.0.1:1/rc9_build'
-  export REDIS_URL='redis://127.0.0.1:1/0'
+  export HOST='127.0.0.1'
+  export PORT='18190'
+  export DATABASE_URL='postgresql://tala_node_stage:rc9-ci-invalid@127.0.0.1:15435/tala_node_stage'
+  export REDIS_URL='redis://:rc9-ci-invalid@127.0.0.1:16379/0'
   export STRIPE_FINANCIAL_WRITES_ENABLED=false
   export STRIPE_LIVE_ENABLED=false
   export STRIPE_LIVE_RELEASE_APPROVED=false
