@@ -73,18 +73,31 @@ export function buildLiveMerchantFinanceRouter(pool:Pool,stripe:Provider){
  r.get('/owner/finance/connect/:rid/status',async(req,res)=>{
   try{
    const s=await current(req),rid=id(req.params.rid);
-   const rows=await pool.query<{owner_id:number;stripe_account_id:string;owner_approved_at:Date|null}>(
-    'SELECT r.owner_id,m.stripe_account_id,m.owner_approved_at FROM restaurants r JOIN tala_live_merchant_accounts m ON m.restaurant_id=r.id WHERE r.id=$1',
+   const rows=await pool.query<{owner_id:number;stripe_account_id:string;owner_approved_at:Date|null;owner_email:string;owner_active:boolean}>(
+    'SELECT r.owner_id,m.stripe_account_id,m.owner_approved_at,u.email AS owner_email,u.is_active AS owner_active FROM restaurants r JOIN tala_live_merchant_accounts m ON m.restaurant_id=r.id JOIN users u ON u.id=r.owner_id WHERE r.id=$1',
     [rid]);
    const x=rows.rows[0];
    if(!x||x.owner_id!==s.userId){
     res.status(403).json({error:'OWNER_CONNECT_NOT_REGISTERED'});return;
    }
    const stripeAccount=await stripe.accounts.retrieve(x.stripe_account_id);
-   res.json({owner_approved:Boolean(x.owner_approved_at),
-    transfers_active:stripeAccount.capabilities?.transfers==='active',
-    payouts_enabled:stripeAccount.payouts_enabled===true,
-    details_submitted:stripeAccount.details_submitted===true,
+   const ownerApproved=Boolean(x.owner_approved_at);
+   const transferActive=stripeAccount.capabilities?.transfers==='active';
+   const payoutsEnabled=stripeAccount.payouts_enabled===true;
+   const submitted=stripeAccount.details_submitted===true;
+   const identityMatches=x.owner_active===true&&
+     stripeAccount.id===x.stripe_account_id&&
+     stripeAccount.id!==config.STRIPE_PLATFORM_ACCOUNT_ID&&
+     stripeAccount.country==='MX'&&
+     typeof stripeAccount.email==='string'&&
+     stripeAccount.email.trim().toLowerCase()===x.owner_email.trim().toLowerCase();
+   const requirementsClear=!stripeAccount.requirements?.disabled_reason&&
+     (stripeAccount.requirements?.currently_due?.length??0)===0&&
+     (stripeAccount.requirements?.past_due?.length??0)===0;
+   res.json({restaurant_id:rid,owner_approved:ownerApproved,
+    transfers_active:transferActive,payouts_enabled:payoutsEnabled,
+    details_submitted:submitted,
+    ready:ownerApproved&&transferActive&&payoutsEnabled&&submitted&&identityMatches&&requirementsClear,
     bank_payout_executed:false});
   }catch{res.status(503).json({error:'OWNER_CONNECT_STATUS_UNAVAILABLE'});}
  });
