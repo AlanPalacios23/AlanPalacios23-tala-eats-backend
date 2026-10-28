@@ -118,9 +118,21 @@ export function buildLiveMerchantFinanceRouter(pool:Pool,stripe:Provider){
    res.json({url:link.url,expires_at:link.expires_at});
   }catch{res.status(503).json({error:'ONBOARDING_LINK_UNAVAILABLE'});}
  });
+ // Stripe sends no proof of approval to return_url; NEVER mark the bank
+ // verified or write a withdrawal based on this unauthenticated callback.
  r.get('/connect/onboarding/:step',(req,res)=>{
-  if(req.params.step!=='return'&&req.params.step!=='refresh'){res.status(404).end();return;}
-  res.type('text/plain').send('Vuelve a Tala Eats, inicia sesión y consulta Connect. Si expiró el enlace, solicita otro desde tu cuenta.');
+  const step=req.params.step;
+  if(step!=='return'&&step!=='refresh'){res.status(404).end();return;}
+  res.setHeader('Cache-Control','no-store');
+  res.setHeader('Referrer-Policy','no-referrer');
+  res.setHeader('X-Content-Type-Options','nosniff');
+  res.setHeader('Content-Security-Policy',"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+  const expired=step==='refresh';
+  const heading=expired?'Tu enlace de Stripe venció':'Volviste desde Stripe';
+  const detail=expired?
+   'Regresa a Tala Eats y solicita un nuevo enlace desde Wallet. No necesitas compartir tus datos bancarios con Tala Eats.':
+   'Stripe ha terminado este paso. Regresa a Tala Eats y abre Wallet: la app consultará el estado actualizado directamente en Stripe. Este retorno no significa que tu banco ya esté aprobado.';
+  res.status(200).type('html').send(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tala Eats | Stripe Connect</title><style>*,*::before,*::after{box-sizing:border-box}body{margin:0;min-height:100svh;display:grid;place-items:center;background:#faf9f6;color:#171717;font-family:system-ui,-apple-system,sans-serif;padding:24px}main{width:100%;max-width:480px;background:white;border-radius:24px;border:1px solid #eee;padding:32px 28px;box-shadow:0 16px 56px #1717170b}h1{font-size:26px;line-height:1.2;margin:0 0 18px}p{font-size:16px;line-height:1.6;margin:0 0 14px;color:#4b4b4b}.brand{font-weight:750;letter-spacing:-.02em;color:#ef7d23;margin:0 0 28px}.note{background:#fff5eb;border-radius:12px;padding:16px;margin-top:20px;color:#5f3b19;font-size:14px}@media(max-width:375px){main{padding:24px}}</style></head><body><main><div class="brand">Tala Eats</div><h1>${heading}</h1><p>${detail}</p><div class="note">En Android, cambia de Chrome a Tala Eats desde tus aplicaciones recientes. En Wallet, consulta el estado del banco o desliza para actualizar.</div></main></body></html>`);
  });
  r.get('/admin/finance/cases',async(req,res)=>{
   try{
