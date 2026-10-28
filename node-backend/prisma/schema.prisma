@@ -700,6 +700,7 @@ model OpsOnboarding {
  businessName String @default("") @map("business_name") @db.VarChar(160)
  taxId String @default("") @map("tax_id") @db.VarChar(60)
  vehicle String @default("") @db.VarChar(100)
+ plate String @default("") @db.VarChar(30)
  documentsJson String @default("[]") @map("documents_json")
  payoutAccountRef String @default("") @map("payout_account_ref") @db.VarChar(180)
  status String @default("pending") @db.VarChar(30)
