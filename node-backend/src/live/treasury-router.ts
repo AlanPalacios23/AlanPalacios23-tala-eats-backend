@@ -12,6 +12,7 @@ import {current} from '../auth/routes.js';
 import {config} from '../config.js';
 import {treasuryBalance,displayMinor,
   NODE_TREASURY_LIVE_EXECUTION_ENABLED,type TreasuryPayee} from './treasury-policy.js';
+import {inspectConnectedBankAndPayouts} from './treasury-bank-verification.js';
 
 const positive=(raw:unknown)=>{
  if(typeof raw!=='string'||!/^[1-9][0-9]{0,9}$/.test(raw))throw Error('PAYEE_ID_INVALID');
@@ -42,7 +43,7 @@ async function identity(req:Request,pool:Pool,kind:TreasuryPayee,payeeId:number)
  if(!x||!x.active)throw Error('DRIVER_NOT_VERIFIED_OR_CONNECT_MISSING');
  return {kind,id:payeeId,account:x.stripe_account_id,approved:Boolean(x.owner_approved_at),ownerEmail:x.email};
 }
-type ConnectedReads=Pick<Stripe,'accounts'|'balance'|'transfers'|'charges'>;
+type ConnectedReads=Pick<Stripe,'accounts'|'balance'|'transfers'|'charges'|'payouts'>;
 async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIdentity){
  if(!/^acct_[A-Za-z0-9]+$/.test(x.account)||x.account===config.STRIPE_PLATFORM_ACCOUNT_ID)
   throw Error('INVALID_CONNECT_RECIPIENT');
@@ -101,20 +102,22 @@ async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIdentity){
  const holdCount=Number(holds.rows[0]?.n??'0');
  const incidentCount=Number(cases.rows[0]?.n??'0');
  const bankSchedule=acct.settings?.payouts?.schedule?.interval==='manual';
- // There is no verified bank destination/complete payout audit in this RC.
- // No amount may be advertised as withdrawable until a separate audited
- // bank-destination and historical-payout reconciliation module is released.
+ const known=await pool.query<{id:string;amount_minor:string;bank_destination_id:string;state:string}>(
+  "SELECT stripe_payout_id AS id,amount_minor::text,bank_destination_id,state FROM tala_live_treasury_withdrawals WHERE connected_account_id=$1 AND stripe_payout_id IS NOT NULL",
+  [x.account]);
+ const bank=await inspectConnectedBankAndPayouts(stripe,x.account,
+  known.rows.map(v=>({id:v.id,amountMinor:v.amount_minor,bankId:v.bank_destination_id,state:v.state})));
  const balance=treasuryBalance({
   amountTransferredMinor:total,committedWithdrawalsMinor:reserved,
   stripeAvailableMinor:available,openFinancialCases:incidentCount,
-  pendingTransferCount:holdCount,unrecognizedProviderPayouts:1,
-  bankVerified:false,scheduleManual:bankSchedule,
+  pendingTransferCount:holdCount,unrecognizedProviderPayouts:bank.unknownPayouts,
+  bankVerified:bank.verified,scheduleManual:bankSchedule,
   ownerApproved:x.approved,connectReady:Boolean(connectReady),
   pendingUnknownWithdrawals:pending
  });
  return {...balance,serverAllowsRequests:false as const,
   payoutExecutionEnabled:NODE_TREASURY_LIVE_EXECUTION_ENABLED,
-  bankStatus:'verification_pending' as const};
+  bankStatus:(bank.verified?'verified':'verification_pending') as 'verified'|'verification_pending'};
 }
 export function buildTreasuryRouter(pool:Pool,stripe:ConnectedReads){
  const router=Router();
