@@ -1,0 +1,162 @@
+/**
+ * Node Treasury v1 — same contract for Restaurant and Driver.
+ * Authenticated READS only. LIVE provider mutations remain intentionally
+ * unavailable until independently reviewed transfer execution, signed Connect
+ * webhook reconciliation, migrations, replay handling and rollout approval.
+ * Never replace a missing Stripe balance with an invented positive balance.
+ */
+import {Router,type Request} from 'express';
+import type {Pool} from 'pg';
+import type Stripe from 'stripe';
+import {current} from '../auth/routes.js';
+import {config} from '../config.js';
+import {treasuryBalance,displayMinor,
+  NODE_TREASURY_LIVE_EXECUTION_ENABLED,type TreasuryPayee} from './treasury-policy.js';
+
+const positive=(raw:unknown)=>{
+ if(typeof raw!=='string'||!/^[1-9][0-9]{0,9}$/.test(raw))throw Error('PAYEE_ID_INVALID');
+ const n=Number(raw);
+ if(!Number.isSafeInteger(n))throw Error('PAYEE_ID_INVALID');
+ return n;
+};
+const minor=(raw:unknown):bigint=>{
+ if(typeof raw!=='string'||!/^\d{1,16}$/.test(raw))throw Error('TREASURY_MINOR_INVALID');
+ return BigInt(raw);
+};
+type RoleIdentity={kind:TreasuryPayee;id:number;account:string;approved:boolean;
+ ownerEmail:string};
+async function identity(req:Request,pool:Pool,kind:TreasuryPayee,payeeId:number):Promise<RoleIdentity>{
+ const s=await current(req);
+ if(kind==='restaurant'){
+  if(s.user.role!=='restaurant')throw Error('RESTAURANT_ROLE_REQUIRED');
+  const a=await pool.query<{owner_id:number;stripe_account_id:string|null;owner_approved_at:Date|null;email:string;active:boolean}>(
+   'SELECT r.owner_id,m.stripe_account_id,m.owner_approved_at,u.email,u.is_active AS active FROM restaurants r JOIN users u ON u.id=r.owner_id LEFT JOIN tala_live_merchant_accounts m ON m.restaurant_id=r.id WHERE r.id=$1',[payeeId]);
+  const x=a.rows[0];
+  if(!x||x.owner_id!==s.userId||!x.active||!x.stripe_account_id)throw Error('MERCHANT_NOT_AUTHORIZED_OR_CONNECT_MISSING');
+  return {kind,id:payeeId,account:x.stripe_account_id,approved:Boolean(x.owner_approved_at),ownerEmail:x.email};
+ }
+ if(s.user.role!=='driver'||s.userId!==payeeId)throw Error('DRIVER_ROLE_REQUIRED');
+ const a=await pool.query<{stripe_account_id:string;owner_approved_at:Date|null;email:string;active:boolean}>(
+  'SELECT d.stripe_account_id,d.owner_approved_at,u.email,u.is_active AS active FROM tala_live_driver_accounts d JOIN users u ON u.id=d.user_id JOIN driver_profiles p ON p.user_id=d.user_id WHERE d.user_id=$1 AND p.is_verified=true',[payeeId]);
+ const x=a.rows[0];
+ if(!x||!x.active)throw Error('DRIVER_NOT_VERIFIED_OR_CONNECT_MISSING');
+ return {kind,id:payeeId,account:x.stripe_account_id,approved:Boolean(x.owner_approved_at),ownerEmail:x.email};
+}
+type ConnectedReads=Pick<Stripe,'accounts'|'balance'|'transfers'|'charges'>;
+async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIdentity){
+ if(!/^acct_[A-Za-z0-9]+$/.test(x.account)||x.account===config.STRIPE_PLATFORM_ACCOUNT_ID)
+  throw Error('INVALID_CONNECT_RECIPIENT');
+ const acct=await stripe.accounts.retrieve(x.account);
+ const connectReady=acct.id===x.account&&acct.country==='MX'&&
+  acct.email?.trim().toLowerCase()===x.ownerEmail.trim().toLowerCase()&&
+  acct.capabilities?.transfers==='active'&&acct.payouts_enabled===true&&
+  acct.details_submitted===true&&!acct.requirements?.disabled_reason&&
+  (acct.requirements?.currently_due?.length??0)===0&&
+  (acct.requirements?.past_due?.length??0)===0;
+ const stripeBalance=await stripe.balance.retrieve({stripeAccount:x.account});
+ const accountAvailable=stripeBalance.available.filter(b=>b.currency==='mxn');
+ if(accountAvailable.length!==1||!accountAvailable[0]?.source_types||
+   !Number.isSafeInteger(accountAvailable[0].source_types.card))
+  throw Error('CONNECT_CARD_BALANCE_UNVERIFIED');
+ const available=BigInt(accountAvailable[0].source_types.card);
+ if(available<0n)throw Error('CONNECT_NEGATIVE_BALANCE');
+ const transferRows=await pool.query<{order_id:number;payee_kind:string;payee_id:number;
+   connected_account_id:string;stripe_transfer_id:string;amount_minor:string;
+   source_charge_id:string}>(
+  "SELECT order_id,payee_kind,payee_id,connected_account_id,stripe_transfer_id,amount_minor::text,source_charge_id FROM tala_live_treasury_transfers WHERE payee_kind=$1 AND payee_id=$2 AND state='completed' ORDER BY id ASC LIMIT 101",
+   [x.kind,x.id]);
+ if(transferRows.rows.length>100)throw Error('TREASURY_TRANSFER_PAGINATION_REQUIRED');
+ let total=0n;
+ for(const row of transferRows.rows){
+  if(row.payee_kind!==x.kind||row.payee_id!==x.id||
+    row.connected_account_id!==x.account||!/^tr_[A-Za-z0-9]+$/.test(row.stripe_transfer_id)||
+    !/^ch_[A-Za-z0-9]+$/.test(row.source_charge_id))
+    throw Error('FOREIGN_STRIPE_TRANSFER');
+  const amount=minor(row.amount_minor);
+  const t=await stripe.transfers.retrieve(row.stripe_transfer_id);
+  if(t.id!==row.stripe_transfer_id||t.destination!==x.account||
+    t.source_transaction!==row.source_charge_id||t.currency!=='mxn'||
+    !t.livemode||t.amount!==Number(amount)||t.amount_reversed!==0)
+    throw Error('PROVIDER_TRANSFER_INCONSISTENT');
+  const charge=await stripe.charges.retrieve(row.source_charge_id);
+  if(!charge.livemode||charge.id!==row.source_charge_id||!charge.paid||
+    charge.refunded||charge.disputed||charge.currency!=='mxn')
+    throw Error('ORIGINAL_CHARGE_REFUND_DISPUTE_HOLD');
+  total+=amount;
+ }
+ const [withdrawals,holds,cases]=await Promise.all([
+  pool.query<{total:string;pending:string}>(
+    "SELECT COALESCE(SUM(amount_minor),0)::text AS total, COALESCE(SUM(CASE WHEN state IN ('reserved','submitted','unknown','review_required') THEN 1 ELSE 0 END),0)::text AS pending FROM tala_live_treasury_withdrawals WHERE payee_kind=$1 AND payee_id=$2 AND state IN ('reserved','submitted','unknown','review_required','paid')",
+    [x.kind,x.id]),
+  pool.query<{n:string}>(
+    "SELECT count(*)::text AS n FROM tala_live_treasury_transfers WHERE payee_kind=$1 AND payee_id=$2 AND state IN ('reserved','submitted','unknown','manual_hold')",
+    [x.kind,x.id]),
+  pool.query<{n:string}>(
+    "SELECT count(*)::text AS n FROM tala_live_payee_allocations a JOIN tala_live_financial_cases f ON f.order_id=a.order_id WHERE a.payee_kind=$1 AND a.payee_id=$2 AND f.status<>'resolved'",
+    [x.kind,x.id])
+ ]);
+ const reserved=minor(withdrawals.rows[0]?.total??'0');
+ const pending=Number(withdrawals.rows[0]?.pending??'0');
+ const holdCount=Number(holds.rows[0]?.n??'0');
+ const incidentCount=Number(cases.rows[0]?.n??'0');
+ const bankSchedule=acct.settings?.payouts?.schedule?.interval==='manual';
+ // There is no verified bank destination/complete payout audit in this RC.
+ // No amount may be advertised as withdrawable until a separate audited
+ // bank-destination and historical-payout reconciliation module is released.
+ const balance=treasuryBalance({
+  amountTransferredMinor:total,committedWithdrawalsMinor:reserved,
+  stripeAvailableMinor:available,openFinancialCases:incidentCount,
+  pendingTransferCount:holdCount,unrecognizedProviderPayouts:1,
+  bankVerified:false,scheduleManual:bankSchedule,
+  ownerApproved:x.approved,connectReady:Boolean(connectReady),
+  pendingUnknownWithdrawals:pending
+ });
+ return {...balance,serverAllowsRequests:false as const,
+  payoutExecutionEnabled:NODE_TREASURY_LIVE_EXECUTION_ENABLED,
+  bankStatus:'verification_pending' as const};
+}
+export function buildTreasuryRouter(pool:Pool,stripe:ConnectedReads){
+ const router=Router();
+ router.use((_req,res,next)=>{res.setHeader('Cache-Control','private, no-store');next();});
+ router.get('/withdrawals/:role/:id/balance',async(req,res)=>{
+  try{
+   const role=req.params.role;
+   if(role!=='restaurant'&&role!=='driver'){res.status(404).json({error:'PAYEE_KIND_INVALID'});return;}
+   const id=positive(req.params.id);
+   const x=await identity(req,pool,role,id);
+   const b=await auditedSnapshot(pool,stripe,x);
+   res.json({payee_kind:role,payee_id:id,currency:'MXN',unit:'centavos',
+    eligible_cents:b.eligibleMinor.toString(),already_requested_cents:b.reservedMinor.toString(),
+    provider_available_cents:b.providerAvailableMinor.toString(),
+    withdrawable_cents:b.withdrawableMinor.toString(),withdrawable:displayMinor(b.withdrawableMinor),
+    bank:{status:b.bankStatus},eligible:b.eligible,blockers:b.blockers,
+    server_allows_requests:false,payout_execution_enabled:false,
+    source:b.source,real_bank_payouts_created:false});
+  }catch(e){
+   if(e instanceof Error&&/NOT_AUTHORIZED|ROLE_REQUIRED|NOT_VERIFIED|CONNECT_MISSING/.test(e.message)){
+    res.status(403).json({error:'PAYEE_NOT_AUTHORIZED'});return;
+   }
+   res.status(503).json({error:'WITHDRAWAL_BALANCE_RECONCILIATION_HOLD'});
+  }
+ });
+ router.get('/withdrawals/:role/:id/history',async(req,res)=>{
+  try{
+   const role=req.params.role;
+   if(role!=='restaurant'&&role!=='driver'){res.status(404).end();return;}
+   const id=positive(req.params.id);
+   await identity(req,pool,role,id);
+   const r=await pool.query<{id:string;amount_minor:string;state:string;created_at:Date}>(
+    'SELECT id::text,amount_minor::text,state,created_at FROM tala_live_treasury_withdrawals WHERE payee_kind=$1 AND payee_id=$2 ORDER BY id DESC LIMIT 50',[role,id]);
+   res.json({payee_kind:role,payee_id:id,currency:'MXN',
+    withdrawals:r.rows.map(w=>({id:w.id,amount_cents:w.amount_minor,status:w.state,created_at:w.created_at})),
+    bank_payouts_not_enabled:true});
+  }catch{res.status(403).json({error:'WITHDRAWAL_HISTORY_NOT_AUTHORIZED'});}
+ });
+ router.post('/withdrawals/:role/:id/request',(_req,res)=>{
+  // No route may create a payout while LIVE release gates reject Connect
+  // transfers, account payout reconciliation and dedicated TOTP reservation.
+  res.status(503).json({error:'TREASURY_WITHDRAWALS_NOT_RELEASED',
+   withdrawals_execution_enabled:false,bank_payout_created:false});
+ });
+ return router;
+}
