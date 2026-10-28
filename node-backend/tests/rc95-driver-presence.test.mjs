@@ -35,3 +35,19 @@ test('LIVE driver check-in never starts dispatch or creates delivery orders',()=
  assert.match(source,/export async function driverComplete\(actor:AuthUser,orderId:number,/);
  assert.match(source,/proof:\{pin:string;photo_url\?:string;lat\?:number\|null;lng\?:number\|null\}\)\{\n  stage\(\);/);
 });
+
+test('driver route exposes own readiness without coordinates or accidental delivery enabling',()=>{
+ const routes=readFileSync(new URL('../src/marketplace/routes.ts',import.meta.url),'utf8');
+ const driver=readFileSync(new URL('../src/marketplace/driver.ts',import.meta.url),'utf8');
+ assert.match(routes,/stageDriverRouter\.get\('\/presence-readiness',async\(req,res\)=>\{/);
+ assert.match(routes,/const account=await driverAccount\(req\);\s+const result=await driverPresenceReadiness\(account\);/);
+ assert.match(routes,/res\.setHeader\('Cache-Control','private, no-store'\);\s+res\.json\(result\);/);
+ assert.match(driver,/export async function driverPresenceReadiness\(actor:AuthUser\)/);
+ assert.match(driver,/profile\?\.isVerified===true&&actor\.isActive===true/);
+ assert.match(driver,/const \[raw,ttl\]=await Promise\.all\(\[redis\.get\(key\),redis\.ttl\(key\)\]\)/);
+ assert.match(driver,/live_delivery_checkout_enabled:false/);
+ assert.match(driver,/live_stripe_delivery_enabled:false/);
+ const section=driver.slice(driver.indexOf('export async function driverPresenceReadiness'),driver.indexOf('export async function canDriverReachPickup'));
+ assert.doesNotMatch(section,/await tx\.marketOrder\.|db\.marketOrder\.|stripe\.|order\.create/);
+ assert.doesNotMatch(section,/currentLat:|currentLng:|reported_at:parsed\.reported_at/);
+});
