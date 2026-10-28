@@ -1,0 +1,64 @@
+name: Tala Eats Node Treasury RC9 — Restaurants and Drivers SAFE QA
+on:
+  push:
+    branches:
+      - feat/node-treasury-restaurant-driver-20261028
+    paths:
+      - 'node-backend/src/live/treasury-*.ts'
+      - 'node-backend/src/live/merchant-finance-router.ts'
+      - 'node-backend/src/app.ts'
+      - 'node-backend/prisma/**'
+      - 'node-backend/tests/rc9-treasury-*.test.mjs'
+      - '.github/workflows/rc9-node-treasury-safe.yml'
+  pull_request:
+    paths:
+      - 'node-backend/src/live/treasury-*.ts'
+      - 'node-backend/src/live/merchant-finance-router.ts'
+      - 'node-backend/src/app.ts'
+      - 'node-backend/prisma/**'
+      - 'node-backend/tests/rc9-treasury-*.test.mjs'
+      - '.github/workflows/rc9-node-treasury-safe.yml'
+permissions:
+  contents: read
+jobs:
+  safe-treasury:
+    name: Compile and unit tests — no Stripe LIVE / no Kali
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      NODE_ENV: staging
+      HOST: 127.0.0.1
+      PORT: '18190'
+      DATABASE_URL: postgresql://tala_node_stage:ci-only@127.0.0.1:15435/tala_node_stage
+      REDIS_URL: redis://:ci-only@127.0.0.1:16379/0
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+      STRIPE_LIVE_ENABLED: 'false'
+      STRIPE_CONNECT_TRANSFERS_ENABLED: 'false'
+      STRIPE_REFUNDS_ENABLED: 'false'
+      STRIPE_MANUAL_SETTLEMENT_APPROVED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.11.1'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Frozen install
+        run: npm ci --no-audit --no-fund
+      - name: Prisma validation and TypeScript compilation
+        run: |
+          npm run generate
+          npm run db:validate
+          npm run build
+      - name: All Node tests with money disabled
+        run: npm test
+      - name: Hard release lock remains OFF in source
+        run: |
+          grep -q "LIVE_CONNECT_PAYOUTS_REQUIRE_SEPARATE_AUDIT" src/config.ts
+          grep -q "NODE_TREASURY_LIVE_EXECUTION_ENABLED=false" src/live/treasury-policy.ts
+          node -e "const fs=require('fs');const text=fs.readFileSync('src/live/treasury-router.ts','utf8');if(/\\.transfers\\.create\\(|\\.payouts\\.create\\(/.test(text))process.exit(1)"
