@@ -101,3 +101,20 @@ CREATE TABLE IF NOT EXISTS tala_live_treasury_ledger (
  CONSTRAINT treasury_ledger_money_chk CHECK(amount_minor>=100 AND currency='mxn')
 );
 CREATE INDEX IF NOT EXISTS treasury_ledger_created ON tala_live_treasury_ledger(created_at);
+
+-- One-time, fresh TOTP step per administrator across BOTH bank and
+-- transfer approvals. Reuse of a login MFA claim is insufficient.
+CREATE TABLE IF NOT EXISTS tala_live_treasury_admin_steps (
+  id BIGSERIAL PRIMARY KEY,
+  admin_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  otp_step BIGINT NOT NULL,
+  action_kind VARCHAR(24) NOT NULL,
+  target_key VARCHAR(120) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT treasury_admin_step_unique UNIQUE(admin_user_id,otp_step),
+  CONSTRAINT treasury_admin_step_action CHECK(action_kind IN
+    ('withdrawal_review','withdrawal_approve','transfer_review','transfer_approve')),
+  CONSTRAINT treasury_admin_step_target CHECK(length(trim(target_key))>0)
+);
+CREATE INDEX IF NOT EXISTS treasury_admin_steps_target
+  ON tala_live_treasury_admin_steps(action_kind,target_key,created_at);
