@@ -7,7 +7,7 @@ umask 077
 MODE="${1:-}"; SHA="${2:-}"; APPROVAL="${3:-}"
 if [[ ! "$MODE" =~ ^--(plan|apply|verify)$ || ! "$SHA" =~ ^[a-f0-9]{40}$ ||
  ( "$MODE" == --apply && ( "$#" != 3 ||
- "$APPROVAL" != I_APPROVE_RC92_ONBOARDING_TWO_PM2_ONLY ) ) ||
+ "$APPROVAL" != I_APPROVE_RC92_STRIPE_RETURN_PM2_ONLY ) ) ||
  ( "$MODE" != --apply && "$#" != 2 ) ]];then
  echo 'RC92_CUTOVER_ABORT=MODE_SHA_OR_APPROVAL';exit 2
 fi
