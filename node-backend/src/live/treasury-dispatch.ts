@@ -22,7 +22,8 @@ const assertLiveGate=()=>{
 type StoredPayout={
  id:string;payee_kind:'restaurant'|'driver';payee_id:number;
  state:string;connected_account_id:string;bank_destination_id:string;
- amount_minor:string;stripe_payout_id:string|null;
+ amount_minor:string;stripe_payout_id:string|null;requested_by_user_id:number;
+ reviewed_by_user_id:number|null;approved_by_user_id:number|null;
 };
 type StoredTransfer={
  id:string;state:string;order_id:number;payee_kind:'restaurant'|'driver';
@@ -43,12 +44,17 @@ export async function dispatchTreasuryWithdrawal(
  try{
   await client.query('BEGIN');began=true;
   const result=await client.query<StoredPayout>(
-   'SELECT id::text,payee_kind,payee_id,state,connected_account_id,bank_destination_id,amount_minor::text,stripe_payout_id FROM tala_live_treasury_withdrawals WHERE id=$1 FOR UPDATE',
+   'SELECT id::text,payee_kind,payee_id,state,connected_account_id,bank_destination_id,amount_minor::text,stripe_payout_id,requested_by_user_id,reviewed_by_user_id,approved_by_user_id FROM tala_live_treasury_withdrawals WHERE id=$1 FOR UPDATE',
    [id]);
   if(result.rows.length!==1||result.rows[0]!.state!=='reserved'||
     result.rows[0]!.stripe_payout_id!==null)
    throw Error('TREASURY_REQUEST_ALREADY_DISPATCHED_OR_UNKNOWN');
   row=result.rows[0]!;
+  if(row.reviewed_by_user_id===null||row.approved_by_user_id===null||
+     row.reviewed_by_user_id===row.approved_by_user_id||
+     row.reviewed_by_user_id===row.requested_by_user_id||
+     row.approved_by_user_id===row.requested_by_user_id)
+   throw Error('TREASURY_BANK_DUAL_APPROVAL_REQUIRED');
   if(integer(row.amount_minor)>verifiedAvailableMinor)
    throw Error('TREASURY_VERIFIED_AVAILABLE_CHANGED');
   // CAS before ANY provider call; retry sees submitted or unknown and will
@@ -61,15 +67,13 @@ export async function dispatchTreasuryWithdrawal(
  }catch(e){if(began)await client.query('ROLLBACK').catch(()=>{});throw e;}
  finally{client.release();}
  const reservation:PayoutReservation={
-  id,row:undefined as never,
-  state:'reserved',kind:row!.payee_kind,payeeId:row!.payee_id,
+  id,state:'reserved',kind:row!.payee_kind,payeeId:row!.payee_id,
   accountId:row!.connected_account_id,bankId:row!.bank_destination_id,
   amountMinor:integer(row!.amount_minor),
   idempotencyKey:'tala:treasury:payout:v1:'+id,
   verifiedWithdrawableMinor:verifiedAvailableMinor,
-  // These are NOT client input: release approval must have been checked by
-  // the caller's dual-admin workflow before reaching this service.
-  approved:{reviewedBy:1,approvedBy:2}
+  // Recorded reviewer + approver from PostgreSQL; never fabricated.
+  approved:{reviewedBy:row!.reviewed_by_user_id!,approvedBy:row!.approved_by_user_id!}
  };
  try{
   const remote=await mockableBankPayoutExecution(provider,reservation,releaseApproved);
