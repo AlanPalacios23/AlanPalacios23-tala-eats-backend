@@ -5,8 +5,10 @@ const get=(p)=>readFileSync(new URL('../src/live/'+p,import.meta.url),'utf8');
 test('mobile restaurant/driver Connect status + bank onboarding mounted and authenticated',()=>{
  const s=get('treasury-connect-onboarding-router.ts');
  const app=readFileSync(new URL('../src/app.ts',import.meta.url),'utf8');
- assert.match(app,/buildTreasuryConnectOnboardingRouter\(live\.pool,live\.stripe\)/);
+ assert.match(app,/buildTreasuryConnectOnboardingRouter\(live\.pool,live\.stripe,live\.redis\)/);
  for(const item of ["'/withdrawals/:role/:id/connect/status'","'/withdrawals/:role/:id/connect/onboarding'",'current(req)','requireTreasuryBankStepUp','stripeState(provider,x)','accountLinks.create'])assert.ok(s.includes(item),item);
+ assert.match(s,/redis\.multi\(\)\.incr\(key\)\.expire\(key,300\)\.exec\(\)/);
+ assert.match(s,/CONNECT_STATUS_RATE_LIMITED/);
  for(const item of ['not_linked','pending_verification','CONNECT_MAPPING_OR_OWNER_APPROVAL_REQUIRED','DRIVER_UNVERIFIED','stripe_bank_payout_created:false','server_allows_requests:false'])assert.ok(s.includes(item),item);
  assert.doesNotMatch(s,/(?:transfers|payouts|charges)\.create\(/);
 });
