@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
 import {validDriverVehiclePlate} from '../src/operational/driver-onboarding-policy.ts';
 
 const routes=readFileSync(new URL('../src/operational/routes.ts',import.meta.url),'utf8');
@@ -59,13 +60,15 @@ test('strict route inventory admits only the read-only driver capabilities endpo
 
 test('LIVE plate migration requires exact target DB, one pending migration and backup receipt',()=>{
  const op=readFileSync(new URL('../scripts/rc110-kali-live-driver-plate-migration.mjs',import.meta.url),'utf8');
+ const syntax=spawnSync(process.execPath,['--check',new URL('../scripts/rc110-kali-live-driver-plate-migration.mjs',import.meta.url).pathname],{encoding:'utf8'});
+ assert.equal(syntax.status,0,syntax.stderr);
  for(const required of [
   "I_APPROVE_RC110_ONE_PLATE_COLUMN_ONLY","process.env.NODE_ENV!=='production'",
   "url.port!=='15445'","url.pathname!=='/tala_node_live'",
   "20261028_rc97_driver_plate_registration",
   "missing.length===1&&missing[0]===name",
   "BEGIN READ ONLY","ROLLBACK","pg_dump","pg_restore",
-  "receipt.sha!==sha","receipt.digest!==archiveHash(receipt.archive)",
+  "receipt.sha!==sha","receipt.digest!==await archiveHash(receipt.archive)",
   "'migrate','deploy'","RC110_SCHEMA_VERIFY=PASS"
  ])assert.ok(op.includes(required),required);
  assert.doesNotMatch(op,/DROP TABLE|DROP DATABASE|prisma migrate reset|stripe\\.transfers\\.create/);
