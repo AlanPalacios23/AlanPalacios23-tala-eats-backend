@@ -1276,3 +1276,16 @@ model TalaLiveTreasuryEvent {
   @@index([state,receivedAt],map:"treasury_events_review")
   @@map("tala_live_treasury_events")
 }
+
+model TalaLiveTreasuryLedger {
+ id BigInt @id @default(autoincrement())
+ withdrawalId BigInt @map("withdrawal_id")
+ eventId String @unique(map:"treasury_ledger_event_unique") @map("event_id") @db.VarChar(180)
+ kind String @db.VarChar(30)
+ amountMinor BigInt @map("amount_minor")
+ currency String @default("mxn") @db.VarChar(3)
+ createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+ @@unique([withdrawalId,kind],map:"treasury_ledger_unique_posting")
+ @@index([createdAt],map:"treasury_ledger_created")
+ @@map("tala_live_treasury_ledger")
+}
