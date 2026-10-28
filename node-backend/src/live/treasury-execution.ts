@@ -51,7 +51,10 @@ export async function mockableTransferExecution(
  assert(plan.eligible,'TRANSFER_PREVIEW_BLOCKED:'+plan.blockers.join(','));
  assert(reservation.idempotencyKey===plan.idempotency_key,'IDEMPOTENCY_MISMATCH');
  const charge=await provider.charges.retrieve(plan.source_transaction!);
- assert(charge.livemode===true&&charge.paid===true&&
+ // Stripe TEST can exercise this adapter ONLY outside production; the
+ // production money switch remains independently hard-locked.
+ const expectedLive=process.env.NODE_ENV==='production';
+ assert(charge.livemode===expectedLive&&charge.paid===true&&
   charge.captured===true&&charge.disputed===false&&
   charge.refunded===false&&charge.amount_refunded===0&&
   charge.currency==='mxn'&&charge.id===plan.source_transaction&&
@@ -64,7 +67,7 @@ export async function mockableTransferExecution(
    tala_payee_kind:reservation.input.kind,tala_payee_id:String(reservation.input.payeeId),
    tala_treasury_reservation:reservation.id},
  },{idempotencyKey:reservation.idempotencyKey});
- assert(created.livemode===true&&created.id.startsWith('tr_')&&
+ assert(created.livemode===expectedLive&&created.id.startsWith('tr_')&&
   created.destination===plan.destination&&created.amount===plan.amount_minor&&
   created.currency==='mxn'&&created.source_transaction===plan.source_transaction,
   'STRIPE_TRANSFER_RESPONSE_INCONSISTENT');
@@ -92,13 +95,14 @@ export async function mockableBankPayoutExecution(
   /^ba_[A-Za-z0-9]+$/.test(reservation.bankId),'UNVERIFIED_BANK_DESTINATION');
  assert(reservation.idempotencyKey==='tala:treasury:payout:v1:'+reservation.id,
   'PAYOUT_IDEMPOTENCY_MISMATCH');
+ const expectedLive=process.env.NODE_ENV==='production';
  const created=await provider.payouts.create({
   amount:reservation.amountMinor,currency:'mxn',method:'standard',source_type:'card',
   destination:reservation.bankId,
   metadata:{tala_treasury_withdrawal:reservation.id,
    tala_payee_kind:reservation.kind,tala_payee_id:String(reservation.payeeId)},
  },{stripeAccount:reservation.accountId,idempotencyKey:reservation.idempotencyKey});
- assert(created.livemode===true&&created.id.startsWith('po_')&&
+ assert(created.livemode===expectedLive&&created.id.startsWith('po_')&&
   created.amount===reservation.amountMinor&&created.currency==='mxn'&&
   created.destination===reservation.bankId&&
   ['pending','in_transit','paid'].includes(created.status)&&
