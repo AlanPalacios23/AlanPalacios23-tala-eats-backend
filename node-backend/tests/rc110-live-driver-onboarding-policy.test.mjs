@@ -41,7 +41,7 @@ test('both applicant and admin approval enforce the same server-side plate polic
 
 test('operator preflight only reads the isolated LIVE schema and cannot change financial flags',()=>{
  const script=readFileSync(new URL('../scripts/rc110-live-driver-onboarding-readonly.mjs',import.meta.url),'utf8');
- for(const required of ["NODE_ENV!=='production'","url.port!=='15445'","url.pathname!=='/talaeats_live'","BEGIN READ ONLY","ROLLBACK","information_schema.columns","RC110_LIVE_DRIVER_SIGNUP=HOLD_SCHEMA_MIGRATION_PENDING"]){
+ for(const required of ["NODE_ENV!=='production'","const LIVE_PORT='15445'","const LIVE_DATABASE='tala_node_live'","url.port!==LIVE_PORT","url.pathname!=='/'+LIVE_DATABASE","BEGIN READ ONLY","ROLLBACK","information_schema.columns","RC110_LIVE_DRIVER_SIGNUP=HOLD_SCHEMA_MIGRATION_PENDING"]){
   assert.ok(script.includes(required),required);
  }
  for(const forbidden of ['ALTER TABLE','DROP TABLE','prisma migrate deploy','pm2 restart','stripe.transfers.create','COMMIT','process.env.LIVE_DELIVERY_DISPATCH_ENABLED=']){
