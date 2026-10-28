@@ -9,6 +9,7 @@
  */
 import type {Pool} from 'pg';
 import {verifiedTotpCounter} from '../auth/crypto.js';
+import {recordTreasuryOtpAttempt} from './treasury-totp-rate-limit.js';
 
 export type TreasuryAdminAction=
  'withdrawal_review'|'withdrawal_approve'|'transfer_review'|'transfer_approve';
@@ -24,6 +25,7 @@ export async function consumeTreasuryAdminOtp(
     !/^[1-9][0-9]{0,15}(?::(?:restaurant|driver):[1-9][0-9]{0,15})?$/.test(target)||
     !Number.isSafeInteger(nowSeconds)||nowSeconds<0)
   throw Error('TREASURY_ADMIN_STEP_UP_INVALID');
+ await recordTreasuryOtpAttempt(pool,adminId,'admin_money_review');
  const client=await pool.connect();let began=false;
  try{
   await client.query('BEGIN');began=true;
