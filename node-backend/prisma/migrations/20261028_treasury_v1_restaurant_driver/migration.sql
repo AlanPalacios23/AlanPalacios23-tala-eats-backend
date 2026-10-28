@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS tala_live_treasury_withdrawals (
   currency VARCHAR(3) NOT NULL DEFAULT 'mxn',
   client_key VARCHAR(96) NOT NULL,
   totp_step BIGINT NOT NULL,
+  reviewed_by_user_id INTEGER REFERENCES users(id) ON DELETE RESTRICT,
+  approved_by_user_id INTEGER REFERENCES users(id) ON DELETE RESTRICT,
   state VARCHAR(24) NOT NULL DEFAULT 'reserved',
   stripe_payout_id VARCHAR(120) UNIQUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -51,6 +53,11 @@ CREATE TABLE IF NOT EXISTS tala_live_treasury_withdrawals (
   CONSTRAINT treasury_withdrawal_unique_otp UNIQUE(requested_by_user_id,totp_step),
   CONSTRAINT treasury_withdrawal_payee_chk CHECK(payee_kind IN ('restaurant','driver') AND payee_id>0),
   CONSTRAINT treasury_withdrawal_money_chk CHECK(amount_minor>=100 AND currency='mxn'),
+  CONSTRAINT treasury_withdrawal_admin_approval_chk CHECK(
+    reviewed_by_user_id IS NULL OR approved_by_user_id IS NULL OR
+    (reviewed_by_user_id<>approved_by_user_id AND
+     reviewed_by_user_id<>requested_by_user_id AND
+     approved_by_user_id<>requested_by_user_id)),
   CONSTRAINT treasury_withdrawal_account_chk CHECK(
     connected_account_id ~ '^acct_[A-Za-z0-9]+$'
     AND bank_destination_id ~ '^ba_[A-Za-z0-9]+$'),
