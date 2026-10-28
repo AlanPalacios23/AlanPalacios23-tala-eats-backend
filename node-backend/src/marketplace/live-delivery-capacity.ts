@@ -22,9 +22,11 @@ export async function hasReachableLiveDriver(origin:{lat:number;lng:number}):Pro
   select:{userId:true},take:MAX_CANDIDATES,orderBy:{userId:'asc'},
  });
  if(!profiles.length)return false;
- const active=await db.marketOrder.findMany({
+ // Group by driver rather than selecting the first N orders: a driver with
+ // many inconsistent old active orders must not hide a different busy driver.
+ const active=await db.marketOrder.groupBy({
+  by:['driverId'],
   where:{driverId:{in:profiles.map(p=>p.userId)},status:{in:[...ACTIVE_STATUSES]}},
-  select:{driverId:true},take:MAX_CANDIDATES,
  });
  const busy=new Set(active.map(o=>o.driverId).filter((id):id is number=>id!==null));
  const eligible=profiles.filter(p=>!busy.has(p.userId));
