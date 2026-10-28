@@ -7,6 +7,10 @@ test('Stripe Connect return never marks a bank verified or processes money',asyn
  const app=express();
  app.use('/api/v1',buildLiveMerchantFinanceRouter({},{}));
  const server=app.listen(0,'127.0.0.1');
+ await new Promise((resolve,reject)=>{
+  server.once('listening',resolve);
+  server.once('error',reject);
+ });
  try{
   const addr=server.address();
   assert.equal(typeof addr,'object');
@@ -26,5 +30,5 @@ test('Stripe Connect return never marks a bank verified or processes money',asyn
   assert.match(await expired.text(),/enlace de Stripe venció/);
   const wrong=await fetch(base+'/api/v1/connect/onboarding/wrong');
   assert.equal(wrong.status,404);
- }finally{await new Promise((resolve,reject)=>server.close(e=>e?reject(e):resolve()));}
+ }finally{if(server.listening)await new Promise((resolve,reject)=>server.close(e=>e?reject(e):resolve()));}
 });
