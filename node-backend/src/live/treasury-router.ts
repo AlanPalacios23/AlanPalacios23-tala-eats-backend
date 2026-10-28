@@ -194,7 +194,15 @@ export function buildTreasuryRouter(pool:Pool,stripe:ConnectedReads){
     amountMinor:BigInt(body.amount_cents),clientKey:body.request_key,
     totp:body.totp
    });
-   res.status(202).json({withdrawal_id:reserved.id,state:reserved.status,
+   // Receipt must echo only persistent server-owned fields, including
+   // replays, so Flutter does not invent time, amount or payment status.
+   const receipt=await pool.query<{id:string;amount_cents:string;currency:string;
+     created_at:Date;state:string}>(
+    "SELECT id::text,amount_minor::text AS amount_cents,currency,created_at,state FROM tala_live_treasury_withdrawals WHERE id=$1 AND payee_kind=$2 AND payee_id=$3 AND requested_by_user_id=$4",
+    [reserved.id,role,payeeId,session.userId]);
+   if(receipt.rows.length!==1||receipt.rows[0]?.amount_cents!==body.amount_cents)
+    {res.status(503).json({error:'TREASURY_RECEIPT_RECONCILIATION_REQUIRED'});return;}
+   res.status(202).json({...receipt.rows[0],withdrawal_id:reserved.id,
      new_reservation:reserved.created,bank_payout_created:false,
      requires_admin_dual_approval:true});
   }catch{res.status(409).json({error:'WITHDRAWAL_IDENTITY_BALANCE_OR_OTP_HOLD'});}
