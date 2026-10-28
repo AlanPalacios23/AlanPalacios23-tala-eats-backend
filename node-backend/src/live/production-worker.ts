@@ -10,6 +10,7 @@ import {drainTreasuryConnectEvents} from './treasury-connect-webhook.js';
 import {scanUnknownTreasuryPayouts} from './treasury-unknown-recovery.js';
 import {deliverWebPushIteration,webPushConfigured} from '../operational/web-push.js';
 import {db} from '../db.js';
+import {deliverAuthMailBatch} from '../email.js';
 
 if(config.NODE_ENV!=='production')throw Error('LIVE_WORKER_ENV_REQUIRED');
 const {settings,pool,redis,stripe}=buildLiveRuntimeDependencies();
@@ -38,6 +39,20 @@ const tick=async()=>{
    console.error('LIVE_FINANCE_WORKER_DEPENDENCY_OR_RECONCILIATION_HOLD');
  }finally{busy=false;}
 };
+// Recovery mail is independently opt-in. A mail provider outage cannot block
+// Stripe processing or prevent the finance worker heartbeat.
+let recoveryMailBusy=false;
+async function recoveryMailTick(){
+ if(stopping||recoveryMailBusy||config.LIVE_AUTH_EMAIL_DELIVERY_MODE!=='resend')return;
+ recoveryMailBusy=true;
+ try{await deliverAuthMailBatch();}
+ catch(err){console.error('LIVE_AUTH_MAIL_DELIVERY_HOLD',
+  err instanceof Error?err.name:'unknown');}
+ finally{recoveryMailBusy=false;}
+}
+const mailTimer=config.LIVE_AUTH_EMAIL_DELIVERY_MODE==='resend'
+ ?setInterval(()=>{void recoveryMailTick();},15000):null;
+if(mailTimer)void recoveryMailTick();
 // Web Push is opt-in, independent of Stripe reconciliation and LIVE finances.
 let pushBusy=false;
 async function pushTick(){
@@ -59,6 +74,7 @@ const shutdown=async()=>{
  stopping=true;
  clearInterval(timer);
  if(pushTimer)clearInterval(pushTimer);
+ if(mailTimer)clearInterval(mailTimer);
  try{await redis.del('tala:node:live:web-push:heartbeat');}catch{/* TTL expires */}
  try{await redis.del(key);}catch{/* TTL expires on outage */}
  redis.disconnect();

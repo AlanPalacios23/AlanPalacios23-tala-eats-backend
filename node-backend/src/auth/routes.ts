@@ -1,6 +1,6 @@
 import { randomBytes, randomInt } from 'node:crypto';
 import { isIP } from 'node:net';
-import { Router, type Request, type Response, type NextFunction } from 'express';
+import { Router, urlencoded, type Request, type Response, type NextFunction } from 'express';
 import { Redis } from 'ioredis';
 import { z } from 'zod';
 import { config } from '../config.js';
@@ -36,7 +36,7 @@ const RESET_GENERIC_REPLY = 'Si el correo está registrado, enviaremos instrucci
 const RESET_INVALID_REPLY = 'El enlace de recuperación es inválido o expiró';
 const RESET_MINUTES = 30; // backend/app/config.py default; staging-only.
 // Registered Android App Link; the staging APK must be installed on the device.
-const RESET_STAGE_FRONTEND = 'https://talaeats.alan-palacios-dev.com';
+const RESET_BROWSER_URL = 'https://talaeats.alan-palacios-dev.com/api/v1/auth/password/reset-page';
 
 const DUMMY_HASH = 'pbkdf2_sha256$600000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 const AUTH_COOKIE = 'talaeats_session';
@@ -113,6 +113,20 @@ async function rateLimit(req: Request, op: string): Promise<void> {
     if (err instanceof HttpFailure) throw err;
     throw new HttpFailure(503, 'Límite de autenticación no disponible');
   }
+}
+// Uniform per-email budget (for existing AND unknown emails). Prevents one
+// attacker from flooding a known account with valid recovery links using
+// many IPs. Redis outage fails closed instead of sending unbounded mail.
+async function allowRecoveryEmail(email:string):Promise<boolean>{
+ if(!limiterClient)throw new HttpFailure(503,'Límite de autenticación no disponible');
+ const key='tala:node:v02:auth:password-reset-email:'+sha256Hex(email);
+ try{
+  const hits=await limiterClient.eval(
+   "local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call('EXPIRE',KEYS[1],900) end; return n",
+   1,key);
+  if(typeof hits!=='number'||hits<1)throw Error('BAD_COUNTER');
+  return hits<=3;
+ }catch{throw new HttpFailure(503,'Recuperación temporalmente no disponible');}
 }
 export async function current(req: Request) {
   const token = suppliedToken(req);
@@ -318,11 +332,17 @@ authRouter.post('/password/forgot', async (req,res) => {
   await rateLimit(req,'password-forgot');
   // Apply the same response for every identity when delivery is unavailable.
   // Never claim a recovery email was sent while staging has no mail provider.
-  if(config.STAGE_EMAIL_DELIVERY_MODE!=='resend' && process.env.CI!=='true')
-    throw new HttpFailure(503,'Recuperación por correo no disponible en staging. Contacta a soporte.');
+  const mailAvailable=config.NODE_ENV==='production'
+    ? config.LIVE_AUTH_EMAIL_DELIVERY_MODE==='resend'&&
+      config.LIVE_AUTH_EMAIL_SENDER_APPROVED==='true'
+    : config.STAGE_EMAIL_DELIVERY_MODE==='resend'||process.env.CI==='true';
+  if(!mailAvailable)
+    throw new HttpFailure(503,'Recuperación por correo no disponible. Contacta a soporte.');
   const parsed = forgotSchema.safeParse(req.body);
   if (!parsed.success) throw new HttpFailure(422, 'Correo inválido');
   const email = normalizedEmail(parsed.data.email);
+  const withinBudget=await allowRecoveryEmail(email);
+  if(!withinBudget){res.status(202).json({message:RESET_GENERIC_REPLY});return;}
   const user = await db.authUser.findUnique({where:{email}});
   if (user?.isActive && user.passwordHash) {
     const raw = randomBytes(40).toString('base64url');
@@ -338,7 +358,7 @@ authRouter.post('/password/forgot', async (req,res) => {
           toEmail:user.email,subject:'Restablece tu contraseña de Tala Eats',
           textBody:'Hola '+user.name+',\n\nRecibimos una solicitud para cambiar tu contraseña. '+
             'Abre este enlace antes de '+RESET_MINUTES+' minutos:\n\n'+
-            RESET_STAGE_FRONTEND+'/restablecer?token='+raw+
+            RESET_BROWSER_URL+'?token='+encodeURIComponent(raw)+
             '\n\nSi no fuiste tú, ignora este mensaje.',
         },
       });
@@ -351,13 +371,10 @@ authRouter.post('/password/forgot', async (req,res) => {
   // Identical response for existing/unknown/disabled/Google-only accounts.
   res.status(202).json({message:RESET_GENERIC_REPLY});
 });
-authRouter.post('/password/reset', async (req,res) => {
-  await rateLimit(req,'password-reset');
-  const parsed = resetSchema.safeParse(req.body);
-  if (!parsed.success) throw new HttpFailure(422, 'Datos de recuperación inválidos');
-  const tokenHash = sha256Hex(parsed.data.token);
+async function completePasswordReset(rawToken:string,password:string):Promise<void>{
+  const tokenHash=sha256Hex(rawToken);
   const now = new Date();
-  const hashedPassword = await hashPassword(parsed.data.password);
+  const hashedPassword = await hashPassword(password);
   await db.$transaction(async tx => {
     const record = await tx.authPasswordResetToken.findUnique({where:{tokenHash}});
     if (!record || record.usedAt !== null || record.expiresAt <= now) {
@@ -394,7 +411,75 @@ authRouter.post('/password/reset', async (req,res) => {
         message:'Tu contraseña de Tala Eats fue cambiada correctamente.'},
     });
   });
-  res.json({message:'Contraseña actualizada. Ya puedes iniciar sesión.'});
+}
+authRouter.post('/password/reset', async (req,res) => {
+ await rateLimit(req,'password-reset');
+ const parsed=resetSchema.safeParse(req.body);
+ if(!parsed.success)throw new HttpFailure(422,'Datos de recuperación inválidos');
+ await completePasswordReset(parsed.data.token,parsed.data.password);
+ res.json({message:'Contraseña actualizada. Ya puedes iniciar sesión.'});
+});
+// Same secure server-hosted reset form for Customer, Restaurant and Driver.
+// A browser is a reliable fallback when Android App Links are unavailable.
+function browserHeaders(res:Response):void{
+ res.setHeader('Cache-Control','no-store, max-age=0');
+ res.setHeader('Pragma','no-cache');
+ res.setHeader('Referrer-Policy','no-referrer');
+ res.setHeader('X-Content-Type-Options','nosniff');
+ res.setHeader('Content-Security-Policy',
+  "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
+}
+const safeToken=(v:unknown):v is string=>typeof v==='string'&&
+ /^[A-Za-z0-9_-]{40,150}$/.test(v);
+function resetPage(token:string|null,notice:string|null,success=false):string{
+ const form=success?'':token?
+  '<form method="post" action="/api/v1/auth/password/reset-page">'+
+  '<input type="hidden" name="token" value="'+token+'">'+
+  '<label for="password">Nueva contraseña (mínimo 8 caracteres)</label>'+
+  '<input id="password" type="password" name="password" autocomplete="new-password" minlength="8" maxlength="128" required>'+
+  '<label for="confirm">Confirmar nueva contraseña</label>'+
+  '<input id="confirm" type="password" name="confirm" autocomplete="new-password" minlength="8" maxlength="128" required>'+
+  '<button type="submit">Actualizar contraseña</button></form>':
+  '<p>Solicita un enlace nuevo desde Tala Eats.</p>';
+ const message=notice?'<p role="alert">'+notice+'</p>':'';
+ return '<!doctype html><html lang="es"><head><meta charset="utf-8">'+
+  '<meta name="viewport" content="width=device-width,initial-scale=1">'+
+  '<title>Recuperar contraseña | Tala Eats</title>'+
+  '<style>*{box-sizing:border-box}body{margin:0;padding:24px;min-height:100svh;display:grid;place-items:center;'+
+  'background:#faf9f7;font:16px system-ui,-apple-system,sans-serif;color:#191919}main{max-width:440px;width:100%;'+
+  'padding:32px;background:#fff;border:1px solid #eee;border-radius:22px;box-shadow:0 10px 35px #0000000a}'+
+  'h1{font-size:26px;line-height:1.2;margin:0 0 24px}label{display:block;margin:16px 0 6px}'+
+  'input{width:100%;padding:14px;border:1px solid #bbb;border-radius:10px;font:inherit}'+
+  'button{margin-top:24px;background:#ef7928;border:0;border-radius:12px;padding:15px;width:100%;font:inherit;'+
+  'font-weight:700;color:white;cursor:pointer}p{line-height:1.6}.brand{font-weight:700;color:#ef7928}</style></head><body>'+
+  '<main><p class="brand">Tala Eats</p><h1>'+(success?'Contraseña actualizada':'Recupera tu cuenta')+
+  '</h1>'+message+form+'</main></body></html>';
+}
+authRouter.get('/password/reset-page',(req,res)=>{
+ browserHeaders(res);
+ const token=req.query.token;
+ if(!safeToken(token)){
+  res.status(400).type('html').send(resetPage(null,'El enlace es inválido o expiró.'));return;
+ }
+ res.type('html').send(resetPage(token,null));
+});
+authRouter.post('/password/reset-page',urlencoded({extended:false,limit:'2kb'}),async(req,res)=>{
+ browserHeaders(res);
+ await rateLimit(req,'password-reset');
+ const parsed=resetSchema.safeParse({token:req.body?.token,password:req.body?.password});
+ if(!parsed.success||typeof req.body?.confirm!=='string'||
+    parsed.data.password!==req.body.confirm){
+  res.status(422).type('html').send(resetPage(null,'Las contraseñas no coinciden o el enlace no es válido.'));return;
+ }
+ try{
+  await completePasswordReset(parsed.data.token,parsed.data.password);
+  res.type('html').send(resetPage(null,'Ya puedes iniciar sesión en cualquiera de las tres aplicaciones.',true));
+ }catch(err){
+  if(err instanceof HttpFailure&&err.code===400){
+   res.status(400).type('html').send(resetPage(null,'El enlace es inválido, venció o ya fue utilizado.'));return;
+  }
+  throw err;
+ }
 });
 
 authRouter.use((error:unknown, _req:Request, res:Response, _next:NextFunction)=>{

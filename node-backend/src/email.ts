@@ -2,10 +2,17 @@ import { z } from 'zod';
 import { config } from './config.js';
 import { db } from './db.js';
 
-// Staging-only restricted transactional mail. No payment credentials, no
-// arbitrary recipient or URL, and no recovery token is ever written to logs.
+// Transactional authentication mail. STAGING is allowlisted; LIVE is independently
+// opt-in with an operator-approved Resend sender. No Stripe dependencies,
+// no request-supplied recipient or URL, and no token/PII in logs.
 // The outbox is protected by a PG row lock across the short provider request
 // so multiple PM2 workers cannot send the same entry concurrently.
+const live=config.NODE_ENV==='production';
+const enabled=live
+  ? config.LIVE_AUTH_EMAIL_DELIVERY_MODE==='resend'&&config.LIVE_AUTH_EMAIL_SENDER_APPROVED==='true'
+  : config.STAGE_EMAIL_DELIVERY_MODE==='resend';
+const apiKey=live?config.LIVE_AUTH_EMAIL_RESEND_API_KEY:config.STAGE_EMAIL_RESEND_API_KEY;
+const sender=live?config.LIVE_AUTH_EMAIL_FROM:config.STAGE_EMAIL_FROM;
 const allowed = new Set((config.STAGE_EMAIL_ALLOWED_RECIPIENTS ?? '')
   .split(',').map(s=>s.trim().toLowerCase()).filter(s=>z.email().safeParse(s).success));
 
@@ -13,12 +20,12 @@ async function transmit(id:number,email:string,subject:string,body:string):Promi
   const response=await fetch('https://api.resend.com/emails',{
     method:'POST',
     headers:{
-      'Authorization':'Bearer '+config.STAGE_EMAIL_RESEND_API_KEY!,
+      'Authorization':'Bearer '+apiKey!,
       'Content-Type':'application/json',
-      'Idempotency-Key':'tala-node-stage-email-'+id,
+      'Idempotency-Key':(live?'tala-node-live-auth-email-':'tala-node-stage-email-')+id,
     },
     body:JSON.stringify({
-      from:config.STAGE_EMAIL_FROM,
+      from:sender,
       to:[email],
       subject,
       text:body,
@@ -28,12 +35,13 @@ async function transmit(id:number,email:string,subject:string,body:string):Promi
   if(!response.ok)throw new Error('MAIL_PROVIDER_HTTP_'+response.status);
 }
 
-export async function deliverStageMailBatch():Promise<number>{
- if(config.STAGE_EMAIL_DELIVERY_MODE!=='resend')return 0;
+export async function deliverAuthMailBatch():Promise<number>{
+ if(!enabled)return 0;
  const expiry=new Date(Date.now()-25*60_000);
  // Purge expiring password links instead of mailing unusable credentials.
  await db.authEmailOutbox.updateMany({
-  where:{status:'pending',createdAt:{lt:expiry}},
+  where:{status:'pending',createdAt:{lt:expiry},
+   ...(live?{subject:'Restablece tu contraseña de Tala Eats'}:{})},
   data:{status:'expired',textBody:'[redacted: expired staging mail]'},
  });
  let completed=0;
@@ -42,15 +50,17 @@ export async function deliverStageMailBatch():Promise<number>{
    const ids=await tx.$queryRaw<Array<{id:number}>>`
      SELECT id FROM email_outbox
      WHERE status='pending' AND attempts < 3
+       AND (${live}::boolean = false OR subject = 'Restablece tu contraseña de Tala Eats')
      ORDER BY created_at, id
      FOR UPDATE SKIP LOCKED LIMIT 1
    `;
    if(ids.length===0)return false;
    const mail=await tx.authEmailOutbox.findUnique({where:{id:ids[0]!.id}});
    if(!mail)return false;
-   if(!allowed.has(mail.toEmail.trim().toLowerCase())){
+   if((!live&&!allowed.has(mail.toEmail.trim().toLowerCase()))||
+      (live&&mail.subject!=='Restablece tu contraseña de Tala Eats')){
     await tx.authEmailOutbox.update({where:{id:mail.id},data:{
-      status:'blocked',lastError:'STAGING_RECIPIENT_NOT_ALLOWED',
+      status:'blocked',lastError:live?'LIVE_ONLY_PASSWORD_RECOVERY_EMAIL_ALLOWED':'STAGING_RECIPIENT_NOT_ALLOWED',
       textBody:'[redacted: unapproved recipient]',
     }});
     return true;
@@ -78,3 +88,6 @@ export async function deliverStageMailBatch():Promise<number>{
  }
  return completed;
 }
+
+// Preserve the existing staging worker API for compatibility.
+export const deliverStageMailBatch=deliverAuthMailBatch;
