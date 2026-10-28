@@ -105,6 +105,7 @@ jobs:
           node scripts/ci-rc9-treasury-transactions-pg15.mjs
           node scripts/ci-rc9-treasury-signed-webhooks-pg15.mjs
           node scripts/ci-rc9-treasury-unknown-recovery-pg15.mjs
+          node scripts/ci-rc9-treasury-admin-step-up-pg15.mjs
           node scripts/ci-rc9-treasury-transfers-pg15.mjs
       - name: Verify unique payee transfer/withdrawal journal indexes
         run: |
