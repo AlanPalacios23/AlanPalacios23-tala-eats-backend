@@ -118,3 +118,16 @@ CREATE TABLE IF NOT EXISTS tala_live_treasury_admin_steps (
 );
 CREATE INDEX IF NOT EXISTS treasury_admin_steps_target
   ON tala_live_treasury_admin_steps(action_kind,target_key,created_at);
+
+-- Durable per-user OTP attempt rate limit for withdrawals and admin reviews.
+-- Failed attempts are retained even when an authorization is rejected.
+CREATE TABLE IF NOT EXISTS tala_live_treasury_totp_attempts (
+ id BIGSERIAL PRIMARY KEY,
+ user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+ action_kind VARCHAR(32) NOT NULL,
+ attempted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ CONSTRAINT treasury_totp_attempt_action CHECK(action_kind IN
+   ('withdrawal_request','admin_money_review'))
+);
+CREATE INDEX IF NOT EXISTS treasury_totp_attempts_recent
+ ON tala_live_treasury_totp_attempts(user_id,attempted_at DESC);
