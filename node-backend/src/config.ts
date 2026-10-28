@@ -41,6 +41,10 @@ const schema = z.object({
 
   // RC9.5: separate LIVE driver presence pilot; never enables checkout or dispatch.
   LIVE_DRIVER_PRESENCE_ENABLED: z.enum(['false','true']).default('false'),
+  // RC9.6: future independent delivery release, all OFF; never reuse stage flags.
+  LIVE_DELIVERY_DISPATCH_ENABLED: z.enum(['false','true']).default('false'),
+  LIVE_DELIVERY_CARD_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
+  LIVE_DELIVERY_RELEASE_APPROVED: z.enum(['false','true']).default('false'),
   STAGE_DRIVER_DELIVERY_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_DRIVER_MAX_PICKUP_KM: z.coerce.number().finite().min(1).max(30).default(8),
   STAGE_DELIVERY_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
@@ -59,6 +63,10 @@ const schema = z.object({
   WEB_PUSH_SUBJECT: z.string().regex(/^(mailto:.+@.+|https:\/\/[^/]+.*)$/).optional(),
 });
 // Stripe is the only online payment provider in this Node release.
+if(['LIVE_DELIVERY_DISPATCH_ENABLED','LIVE_DELIVERY_CARD_CHECKOUT_ENABLED',
+    'LIVE_DELIVERY_RELEASE_APPROVED'].some(k=>process.env[k]==='true'))
+ throw new Error('RC96_LIVE_DELIVERY_NOT_RELEASED_STRIPE_TEST_REQUIRED');
+
 // Reject accidentally imported Mercado Pago secrets even with writes off.
 const forbiddenPaymentKeys = Object.keys(process.env).filter(k =>
   /^MERCADOPAGO_/i.test(k) || /^(MP_ACCESS_TOKEN|MP_PUBLIC_KEY|MP_WEBHOOK_SECRET)$/i.test(k));

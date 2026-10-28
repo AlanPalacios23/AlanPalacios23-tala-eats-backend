@@ -3,6 +3,7 @@
 // No LIVE, no PSP, no customer wallet or driver/dispatch writes.
 import { db } from '../db.js';
 import {dispatchStageDeliveryReady} from './driver.js';
+import {liveDispatchReleased,liveDeliveryTenderAllowed} from './live-delivery-payment.js';
 import { config } from '../config.js';
 import {cancelUnpaidStripeTestIntent} from '../stage-stripe-test.js';
 import type { AuthUser, MarketOrder } from '../generated/prisma/client.js';
@@ -288,13 +289,17 @@ export async function moveStagePickupOwner(orderId:number,actor:AuthUser,
         config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'));
     const stripe=(order.orderType==='pickup'||
       (order.orderType==='delivery'&&
-       config.NODE_ENV==='staging'&&
-       config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'))&&
+       ((config.NODE_ENV==='staging'&&
+         config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true')||
+        (config.NODE_ENV==='production'&&liveDispatchReleased()))))&&
       order.paymentMethod==='stripe'&&
       order.paymentStatus==='paid'&&
       (config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'||liveCardEnabled);
     if(!cash&&!stripe)fail(503,'Pago no conciliado o método no disponible');
     if(stripe){
+      if(order.orderType==='delivery'&&config.NODE_ENV==='production'&&
+         !await liveDeliveryTenderAllowed(tx,order))
+        fail(503,'Entrega sin cobro Stripe firmado y conciliado o con riesgo abierto');
       const live=liveCardEnabled;
       const verified=await tx.stageFinancialLedgerEntry.findFirst({
         where:{orderId:order.id,
@@ -346,8 +351,9 @@ export async function moveStagePickupOwner(orderId:number,actor:AuthUser,
     }});
     return order.id;
   },{maxWait:10_000,timeout:20_000});
-  if(next==='ready'&&config.NODE_ENV==='staging'&&
-     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'){
+  if(next==='ready'&&((config.NODE_ENV==='staging'&&
+     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true')||
+     (config.NODE_ENV==='production'&&liveDispatchReleased()))){
     await dispatchStageDeliveryReady(resultId);
   }
   return resultId;

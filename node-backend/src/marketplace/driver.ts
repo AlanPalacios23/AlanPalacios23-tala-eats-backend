@@ -6,6 +6,7 @@ import { Redis } from 'ioredis';
 import { db } from '../db.js';
 import { config } from '../config.js';
 import {stageDeliveryTenderAllowed} from './delivery-financial-proof.js';
+import {liveDispatchReleased,liveDeliveryTenderAllowed} from './live-delivery-payment.js';
 import {canOperateDriverPresence,driverLocationKey,driverPersistKey,hasFreshVerifiedDriverGps} from './delivery-runtime.js';
 import type { AuthUser } from '../generated/prisma/client.js';
 
@@ -20,6 +21,11 @@ const stage=()=>{
 };
 // The live driver-pilot only permits verified online presence and GPS.
 // Accept, pickup, PIN and checkout still use the independent stage() lock.
+const deliveryActions=()=>{
+ if(config.NODE_ENV==='production'){
+  if(!liveDispatchReleased())fail(503,'Reparto LIVE pendiente de pruebas y autorización financiera');
+ }else stage();
+};
 const presence=()=>{
   if(!canOperateDriverPresence(config.NODE_ENV,
      config.STAGE_DRIVER_DELIVERY_ENABLED==='true',
@@ -160,6 +166,7 @@ async function redisLocation(driverId:number):Promise<{lat:number;lng:number}|nu
 // All driver claims use profile-row lock FIRST (same driver) then SKIP LOCKED
 // on each order. Different drivers never both claim a single order.
 async function assign(tx:any,driverId:number,forcedOrderId?:number):Promise<number|null>{
+  if(config.NODE_ENV==='production'&&!liveDispatchReleased())return null;
   const p=await tx.marketplaceDriverProfile.findUnique({where:{userId:driverId}});
   if(!p?.isOnline||!p.isVerified)return null;
   const active=await tx.marketOrder.findFirst({where:{
@@ -170,10 +177,10 @@ async function assign(tx:any,driverId:number,forcedOrderId?:number):Promise<numb
   const lat=fresh?.lat??p.currentLat,lng=fresh?.lng??p.currentLng;
   const candidates=await tx.marketOrder.findMany({
     where:{status:'ready',driverId:null,orderType:'delivery',
-      OR:[
-        {paymentMethod:'cash',paymentStatus:'pending'},
-        {paymentMethod:'stripe',paymentStatus:'paid'},
-      ],
+      OR:config.NODE_ENV==='production'?
+        [{paymentMethod:'stripe',paymentStatus:'paid'}]:
+        [{paymentMethod:'cash',paymentStatus:'pending'},
+         {paymentMethod:'stripe',paymentStatus:'paid'}],
       ...(forcedOrderId?{id:forcedOrderId}:{})},
     include:{restaurant:true},take:forcedOrderId?1:25,
     orderBy:[{readyAt:'asc'},{updatedAt:'asc'},{id:'asc'}],
@@ -191,8 +198,12 @@ async function assign(tx:any,driverId:number,forcedOrderId?:number):Promise<numb
       row.id,'ready',
     );
     if(!lock.length)continue;
-    if(!await fixture(tx,row.id))continue;
-    if(!await stageDeliveryTenderAllowed(tx,row))continue;
+    if(config.NODE_ENV==='production'){
+      if(!await liveDeliveryTenderAllowed(tx,row))continue;
+    }else{
+      if(!await fixture(tx,row.id))continue;
+      if(!await stageDeliveryTenderAllowed(tx,row))continue;
+    }
     // Prevent dispatch to a stale online flag. Synthetic D2 fixtures retain
     // their older isolated test behavior, but real customer orders must have
     // a fresh Redis location heartbeat from the driver app.
@@ -203,6 +214,7 @@ async function assign(tx:any,driverId:number,forcedOrderId?:number):Promise<numb
     let actualCustomerDelivery=false;
     try{actualCustomerDelivery=JSON.parse(received?.metadataJson??'{}')
       .stage_delivery_customer_v1===true;}catch{}
+    if(config.NODE_ENV==='production')actualCustomerDelivery=true;
     if(actualCustomerDelivery&&(!fresh||
        haversine(fresh.lat,fresh.lng,row.restaurant.lat,row.restaurant.lng)>
           config.STAGE_DRIVER_MAX_PICKUP_KM))continue;
@@ -272,7 +284,7 @@ export async function driverAvailability(actor:AuthUser,isOnline:boolean){
   return result;
 }
 export async function driverAccept(actor:AuthUser,orderId:number){
-  stage();
+  deliveryActions();
   return withProfileLock(actor.id,async tx=>{
     const p=await tx.marketplaceDriverProfile.findUnique({where:{userId:actor.id}});
     if(!p?.isOnline||!p.isVerified)fail(400,'Debes estar disponible y verificado');
@@ -288,7 +300,7 @@ export async function driverAccept(actor:AuthUser,orderId:number){
   });
 }
 export async function driverStatus(actor:AuthUser,orderId:number,next:string){
-  stage();
+  deliveryActions();
   return db.$transaction(async tx=>{
     const locked=await tx.$queryRawUnsafe(
       'SELECT id FROM orders WHERE id=$1 FOR UPDATE',orderId,
@@ -299,9 +311,10 @@ export async function driverStatus(actor:AuthUser,orderId:number,next:string){
     if(o.driverId!==actor.id)fail(403,'Pedido no asignado');
     const allowed:{[k:string]:string}={assigned:'picked_up',picked_up:'on_the_way'};
     if(allowed[o.status]!==next)fail(409,'Transición inválida: '+o.status+' → '+next);
-    if(o.orderType!=='delivery'||!await fixture(tx,orderId)||
-       !await stageDeliveryTenderAllowed(tx,o))
-      fail(503,'Pedido fuera de los contratos del laboratorio');
+    if(o.orderType!=='delivery'||!(config.NODE_ENV==='production'?
+       await liveDeliveryTenderAllowed(tx,o):
+       await fixture(tx,orderId)&&await stageDeliveryTenderAllowed(tx,o)))
+      fail(503,'Pedido sin prueba de pago autorizada para reparto');
     await tx.marketOrder.update({where:{id:orderId},data:{
       status:next,...(next==='picked_up'?{pickedUpAt:new Date()}:{})
     }});
@@ -352,6 +365,10 @@ export async function driverGps(actor:AuthUser,lat:number,lng:number){
       data:{currentLat:lat,currentLng:lng}}):
     await db.marketplaceDriverProfile.findUnique({where:{userId:actor.id}});
   if(!profile)return fail(503,'Perfil del repartidor no encontrado');
+  if(liveDispatchReleased()){
+    try{await withProfileLock(actor.id,tx=>assign(tx,actor.id));}
+    catch{/* Recovery worker will retry READY. GPS commit remains valid. */}
+  }
   return {...profilePublic(profile),current_lat:lat,current_lng:lng};
 }
 function deliveryPayload(o:any){
@@ -417,8 +434,9 @@ async function throttlePin(orderId:number,actorId:number){
   const redis=redisClient();
   try{
     await redis.connect();
-    const a='tala:node:stage:delivery:pin:'+orderId+':'+actorId;
-    const b='tala:node:stage:delivery:pin:order:'+orderId;
+    const prefix=config.NODE_ENV==='production'?'tala:node:live':'tala:node:stage';
+    const a=prefix+':delivery:pin:'+orderId+':'+actorId;
+    const b=prefix+':delivery:pin:order:'+orderId;
     const count=await redis.eval(
       "local a=redis.call('INCR',KEYS[1]); if a==1 then redis.call('EXPIRE',KEYS[1],900) end; "+
       "local b=redis.call('INCR',KEYS[2]); if b==1 then redis.call('EXPIRE',KEYS[2],900) end; "+
@@ -439,7 +457,7 @@ const pointValue=(value:string)=>{
 };
 export async function driverComplete(actor:AuthUser,orderId:number,
   proof:{pin:string;photo_url?:string;lat?:number|null;lng?:number|null}){
-  stage();
+  deliveryActions();
   const candidate=await db.marketOrder.findUnique({
     where:{id:orderId},select:{driverId:true,orderType:true,paymentMethod:true},
   });
@@ -464,9 +482,14 @@ export async function driverComplete(actor:AuthUser,orderId:number,
       return orderId;
     }
     if(o.status!=='on_the_way')fail(409,'Primero marca el pedido como en camino');
-    if(!await fixture(tx,orderId))fail(503,'Entrega fuera de contrato de staging');
-    if(!await stageDeliveryTenderAllowed(tx,o))
-      fail(503,'Pago digital sin recibo Stripe TEST firmado o efectivo inválido');
+    if(config.NODE_ENV==='production'){
+      if(!await liveDeliveryTenderAllowed(tx,o))
+        fail(503,'Entrega LIVE sin captura Stripe conciliada, o con reembolso/disputa');
+    }else{
+      if(!await fixture(tx,orderId))fail(503,'Entrega fuera de contrato de staging');
+      if(!await stageDeliveryTenderAllowed(tx,o))
+        fail(503,'Pago digital sin recibo Stripe TEST firmado o efectivo inválido');
+    }
     if(!/^\d{4}$/.test(o.deliveryPin)||!/^\d{4}$/.test(proof.pin)||
       !timingSafeEqual(Buffer.from(o.deliveryPin),Buffer.from(proof.pin)))
       fail(400,'PIN incorrecto');
@@ -523,7 +546,8 @@ export async function driverComplete(actor:AuthUser,orderId:number,
     await tx.authLoyaltyAccount.update({where:{userId:o.userId},data:{points,tier,streakDays:streak}});
     await tx.stageOrderEvent.create({data:{
       orderId,status:'delivered',actorUserId:actor.id,
-      metadataJson:JSON.stringify({source:'delivery_pin',stage_only:true}),
+      metadataJson:JSON.stringify({source:'delivery_pin',
+        stage_only:config.NODE_ENV==='staging'}),
     }});
     await tx.stageEventOutbox.create({data:{
       eventKey:'order:'+orderId+':delivered',aggregateType:'order',
@@ -555,9 +579,10 @@ export async function driverComplete(actor:AuthUser,orderId:number,
  * Never called for test fixtures or production while the new flag is off.
  */
 export async function dispatchStageDeliveryReady(orderId:number):Promise<boolean>{
-  if(config.NODE_ENV!=='staging'||
-     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED!=='true'||
-     config.STAGE_DRIVER_DELIVERY_ENABLED!=='true')
+  if(!((config.NODE_ENV==='staging'&&
+        config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
+        config.STAGE_DRIVER_DELIVERY_ENABLED==='true')||
+       (config.NODE_ENV==='production'&&liveDispatchReleased())))
     return false;
   if(!Number.isSafeInteger(orderId)||orderId<=0)return false;
   const profiles=await db.marketplaceDriverProfile.findMany({

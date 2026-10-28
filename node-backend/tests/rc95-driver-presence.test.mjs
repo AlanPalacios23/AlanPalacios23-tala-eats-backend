@@ -27,13 +27,16 @@ test('LIVE driver check-in never starts dispatch or creates delivery orders',()=
  assert.match(source,/if\(isOnline&&config\.NODE_ENV==='staging'\)await assign/);
  assert.match(source,/const presence=\(\)=>/);
  assert.match(source,/const stage=\(\)=>/);
+ assert.match(source,/const deliveryActions=\(\)=>/);
+ assert.match(source,/if\(!liveDispatchReleased\(\)\)fail\(503/);
+ assert.match(config,/RC96_LIVE_DELIVERY_NOT_RELEASED_STRIPE_TEST_REQUIRED/);
  assert.match(source,/if\(!p\?\.isVerified\|\|!p\.isOnline\)/);
  assert.match(source,/driverLocationKey\(config.NODE_ENV,actor.id\)/);
  assert.match(source,/driverPersistKey\(config.NODE_ENV,actor.id\)/);
- assert.match(source,/export async function driverAccept\(actor:AuthUser,orderId:number\)\{\n  stage\(\);/);
- assert.match(source,/export async function driverStatus\(actor:AuthUser,orderId:number,next:string\)\{\n  stage\(\);/);
+ assert.match(source,/export async function driverAccept\(actor:AuthUser,orderId:number\)\{\n  deliveryActions\(\);/);
+ assert.match(source,/export async function driverStatus\(actor:AuthUser,orderId:number,next:string\)\{\n  deliveryActions\(\);/);
  assert.match(source,/export async function driverComplete\(actor:AuthUser,orderId:number,/);
- assert.match(source,/proof:\{pin:string;photo_url\?:string;lat\?:number\|null;lng\?:number\|null\}\)\{\n  stage\(\);/);
+ assert.match(source,/proof:\{pin:string;photo_url\?:string;lat\?:number\|null;lng\?:number\|null\}\)\{\n  deliveryActions\(\);/);
 });
 
 test('driver route exposes own readiness without coordinates or accidental delivery enabling',()=>{
