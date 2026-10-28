@@ -6,6 +6,7 @@ import {Router,type Request} from 'express';
 import type {Pool,PoolClient} from 'pg';
 import type Stripe from 'stripe';
 import {current} from '../auth/routes.js';
+import {verifyTotp} from '../auth/crypto.js';
 import {config} from '../config.js';
 import {buildMoneyPlan,cashCollectorWhoMaySubmit} from './payee-allocation.js';
 import {buildTransferProposal} from './transfer-planning.js';
@@ -95,7 +96,14 @@ export function buildPayeeFinanceRouter(pool:Pool,stripe:StripeRead){
  });
  r.post('/driver/finance/connect/onboarding-link',async(req,res)=>{
   try{
-   const userId=await driver(req);
+   const session=await current(req);
+   if(session.user.role!=='driver'||!session.user.twoFactorEnabled||
+      !session.mfaVerified||typeof req.body?.totp!=='string'||
+      !/^[0-9]{6}$/.test(req.body.totp)||
+      !verifyTotp(session.user.totpSecret,req.body.totp)){
+     res.status(403).json({error:'DRIVER_CONNECT_FRESH_2FA_REQUIRED'});return;
+   }
+   const userId=session.userId;
    const x=await pool.query<{stripe_account_id:string;owner_approved_at:Date|null}>(
      'SELECT stripe_account_id,owner_approved_at FROM tala_live_driver_accounts WHERE user_id=$1',[userId]);
    if(!x.rows[0]?.owner_approved_at){res.status(403).json({error:'OWNER_CONFIRMATION_REQUIRED'});return;}
