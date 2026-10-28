@@ -48,17 +48,15 @@ record('LIVE_GPS_NAMESPACE',
  /driverPersistKey\(config\.NODE_ENV/.test(driverSrc)&&
  /'live'/.test(gpsRuntimeSrc),
  'Driver GPS heartbeat keys are isolated by environment; no LIVE dispatch enabled');
-record('LIVE_READY_DISPATCH',
- !/if\(next==='ready'&&config\.NODE_ENV==='staging'/.test(lifecycleSrc),
- 'Restaurant READY dispatch is staging-only');
+record('LIVE_READY_DISPATCH',false,
+ 'RC9.6 READY dispatch code exists but the independent LIVE release gate is hard-locked OFF');
 record('LIVE_DRIVER_TENDER_PROOF',
  !/config\.NODE_ENV!=='staging'/.test(financialSrc),
  'Cash and card handoff must use verified LIVE-specific tender and ledger');
 record('LIVE_DRIVER_PRESENCE_MOBILE_E2E',false,
  'No verified connected driver or device GPS evidence; LIVE presence opt-in must stay off');
-record('LIVE_DISPATCH_WORKER',
- /dispatchStageDeliveryReady|dispatchLiveDeliveryReady|dispatchReadyDelivery/.test(workerSrc),
- 'Production worker currently runs finance, mail and web push but no READY recovery');
+record('LIVE_DISPATCH_WORKER',false,
+ 'RC9.6 worker recovery exists but remains disabled until external Stripe TEST and operator approval');
 record('DELIVERY_EXTERNAL_PROVIDER_AND_DEVICE_E2E',false,
  'Needs independently attested real Stripe TEST signed webhook, 3 Android devices, GPS, PIN and incident recovery');
 record('LIVE_RECONCILIATION_AND_OPERATOR_RELEASE',false,
