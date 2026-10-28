@@ -24,6 +24,9 @@ on:
       - 'node-backend/scripts/ci-rc9-treasury-*.mjs'
       - 'node-backend/scripts/ci-rc93-connect-otp-replay-pg15.mjs'
       - 'node-backend/tests/rc93-connect-step-up.test.mjs'
+      - 'node-backend/scripts/rc93-kali-*.sh'
+      - 'node-backend/tests/rc93-kali-hardening-gate.test.mjs'
+      - 'node-backend/tests/rc93-connect-status-rate-limit.test.mjs'
       - 'node-backend/scripts/rc9-treasury-live-preflight.mjs'
       - 'node-backend/scripts/rc9-kali-prepare-release.sh'
       - '.github/workflows/rc9-node-treasury-safe.yml'
@@ -49,6 +52,9 @@ on:
       - 'node-backend/scripts/ci-rc9-treasury-*.mjs'
       - 'node-backend/scripts/ci-rc93-connect-otp-replay-pg15.mjs'
       - 'node-backend/tests/rc93-connect-step-up.test.mjs'
+      - 'node-backend/scripts/rc93-kali-*.sh'
+      - 'node-backend/tests/rc93-kali-hardening-gate.test.mjs'
+      - 'node-backend/tests/rc93-connect-status-rate-limit.test.mjs'
       - 'node-backend/scripts/rc9-treasury-live-preflight.mjs'
       - 'node-backend/scripts/rc9-kali-prepare-release.sh'
       - '.github/workflows/rc9-node-treasury-safe.yml'
@@ -98,6 +104,9 @@ jobs:
           bash -n scripts/rc9-kali-prepare-release.sh
           bash -n scripts/rc91-kali-prepare-release.sh
           bash -n scripts/rc91-kali-onboarding-two-pm2-cutover.sh
+          bash -n scripts/rc93-kali-prepare-release.sh
+          bash -n scripts/rc93-kali-live-connect-otp-migration.sh
+          bash -n scripts/rc93-kali-hardening-two-pm2-cutover.sh
           if bash scripts/rc9-kali-prepare-release.sh --plan "$GITHUB_SHA"; then
             echo 'RC9_CI_FAIL_INSTALLER_RAN_OUTSIDE_KALI_OPERATOR'; exit 1
           fi
