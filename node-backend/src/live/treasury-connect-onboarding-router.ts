@@ -8,8 +8,7 @@ import {Router,type Request} from 'express';
 import type {Pool} from 'pg';
 import type Stripe from 'stripe';
 import {current} from '../auth/routes.js';
-import {verifiedTotpCounter} from '../auth/crypto.js';
-import {recordTreasuryOtpAttempt} from './treasury-totp-rate-limit.js';
+import {requireTreasuryBankStepUp} from './treasury-connect-step-up.js';
 import {config} from '../config.js';
 
 type Role='restaurant'|'driver';
@@ -116,19 +115,12 @@ export function buildTreasuryConnectOnboardingRouter(pool:Pool,provider:Provider
   try{
    const {role,id}=parse(req);
    const s=await current(req);
-   if(!s.user.twoFactorEnabled||!s.mfaVerified||
-      typeof req.body?.totp!=='string'||!/^[0-9]{6}$/.test(req.body.totp)){
-    res.status(403).json({error:'CONNECT_FRESH_TOTP_REQUIRED'});return;
-   }
+
    const x=await owner(req,pool,role,id);
    if(!x.account||!x.approved){
     res.status(409).json({error:'CONNECT_MAPPING_OR_OWNER_APPROVAL_REQUIRED'});return;
    }
-   // Persist attempts before verification, including failed codes.
-   await recordTreasuryOtpAttempt(pool,s.userId,'withdrawal_request');
-   if(verifiedTotpCounter(s.user.totpSecret,req.body.totp,Math.floor(Date.now()/1000))===null){
-    res.status(403).json({error:'CONNECT_FRESH_TOTP_INVALID'});return;
-   }
+   await requireTreasuryBankStepUp(pool,s,req.body?.totp);
    await stripeState(provider,x); // Re-read live account ownership before issuing link.
    const link=await provider.accountLinks.create({
     account:x.account,type:'account_onboarding',
@@ -141,6 +133,10 @@ export function buildTreasuryConnectOnboardingRouter(pool:Pool,provider:Provider
     withdrawable:false,bank_payout_created:false});
   }catch(err){
    const msg=err instanceof Error?err.message:'';
+   if(msg.startsWith('CONNECT_FRESH_TOTP_')||msg==='TREASURY_TOTP_RATE_LIMITED'){
+    res.status(msg==='TREASURY_TOTP_RATE_LIMITED'?429:403)
+      .json({error:msg});return;
+   }
    res.status(/NOT_OWNER|ROLE_REQUIRED|DRIVER_UNVERIFIED/.test(msg)?403:
     /ROLE_INVALID|PAYEE_ID_INVALID/.test(msg)?404:503)
     .json({error:'CONNECT_ONBOARDING_NOT_AVAILABLE'});
