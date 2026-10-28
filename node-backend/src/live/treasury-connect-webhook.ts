@@ -51,7 +51,9 @@ type EventRow={event_id:string;event_type:string;connected_account_id:string;
  stripe_object_id:string;state:string};
 type WithdrawalRow={id:string;payee_kind:'restaurant'|'driver';payee_id:number;
  connected_account_id:string;bank_destination_id:string;amount_minor:string;
- state:TreasuryPayoutState;stripe_payout_id:string|null};
+ state:TreasuryPayoutState;stripe_payout_id:string|null;
+ requested_by_user_id:number;reviewed_by_user_id:number|null;
+ approved_by_user_id:number|null};
 export async function reconcileOneTreasuryEvent(
  pool:Pool,provider:Pick<Stripe,'payouts'>,eventId:string
 ):Promise<'processed'|'review_required'>{
@@ -77,10 +79,15 @@ export async function reconcileOneTreasuryEvent(
   if(!/^[1-9][0-9]{0,15}$/.test(withdrawalId))
    throw Error('TREASURY_WITHDRAWAL_METADATA_INVALID');
   const rows=await client.query<WithdrawalRow>(
-   'SELECT id::text,payee_kind,payee_id,connected_account_id,bank_destination_id,amount_minor::text,state,stripe_payout_id FROM tala_live_treasury_withdrawals WHERE id=$1 FOR UPDATE',
+   'SELECT id::text,payee_kind,payee_id,connected_account_id,bank_destination_id,amount_minor::text,state,stripe_payout_id,requested_by_user_id,reviewed_by_user_id,approved_by_user_id FROM tala_live_treasury_withdrawals WHERE id=$1 FOR UPDATE',
    [withdrawalId]);
   const w=rows.rows[0];
   if(!w)throw Error('TREASURY_UNKNOWN_BANK_PAYOUT_HOLD');
+  if(w.reviewed_by_user_id===null||w.approved_by_user_id===null||
+     w.reviewed_by_user_id===w.approved_by_user_id||
+     w.reviewed_by_user_id===w.requested_by_user_id||
+     w.approved_by_user_id===w.requested_by_user_id)
+   throw Error('TREASURY_UNAPPROVED_BANK_PAYOUT_HOLD');
   const decision=decideConnectedPayoutEvent({
    eventId:e.event_id,eventType:e.event_type,
    livemode:payout.livemode,accountId:e.connected_account_id,
