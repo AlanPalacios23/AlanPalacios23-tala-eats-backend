@@ -62,3 +62,58 @@ jobs:
           grep -q "LIVE_CONNECT_PAYOUTS_REQUIRE_SEPARATE_AUDIT" src/config.ts
           grep -q "NODE_TREASURY_LIVE_EXECUTION_ENABLED=false" src/live/treasury-policy.ts
           node -e "const fs=require('fs');const text=fs.readFileSync('src/live/treasury-router.ts','utf8');if(/\\.transfers\\.create\\(|\\.payouts\\.create\\(/.test(text))process.exit(1)"
+
+  migration-shadow:
+    name: PostgreSQL 15 additive treasury schema — isolated CI only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: rc9_ci
+          POSTGRES_PASSWORD: rc9-only-ci
+          POSTGRES_DB: rc9_ci
+        ports: ['15445:5432']
+        options: >-
+          --health-cmd "pg_isready -U rc9_ci -d rc9_ci"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      DATABASE_URL: postgresql://rc9_ci:rc9-only-ci@127.0.0.1:15445/rc9_ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.11.1'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Apply all migrations against fresh ephemeral PostgreSQL
+        run: |
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:migrate:deploy
+      - name: Verify unique payee transfer/withdrawal journal indexes
+        run: |
+          node --input-type=module <<'JS'
+          import {Pool} from 'pg';
+          const pool=new Pool({connectionString:process.env.DATABASE_URL});
+          try {
+            const r=await pool.query(`
+              SELECT indexname FROM pg_indexes
+              WHERE tablename IN ('tala_live_treasury_transfers','tala_live_treasury_withdrawals')
+            `);
+            const names=new Set(r.rows.map(x=>x.indexname));
+            for(const name of [
+              'treasury_transfer_unique_payee',
+              'treasury_withdrawal_unique_request',
+              'treasury_withdrawal_unique_otp',
+              'treasury_single_pending_withdrawal'
+            ]) if(!names.has(name))throw Error('MISSING_TREASURY_INDEX:'+name);
+            console.log('TREASURY_PG15_ADDITIVE_MIGRATION_PASS');
+          } finally{await pool.end();}
+          JS
