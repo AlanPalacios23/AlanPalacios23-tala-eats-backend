@@ -78,3 +78,19 @@ CREATE TABLE IF NOT EXISTS tala_live_treasury_events (
 CREATE INDEX IF NOT EXISTS treasury_events_review ON tala_live_treasury_events(state,received_at);
 -- Never re-label held allocations as paid, create synthetic Connect balances,
 -- enable auto payouts, call Stripe or mutate existing live orders here.
+
+-- Append-only bank payout posting. A paid event is posted ONCE per request.
+CREATE TABLE IF NOT EXISTS tala_live_treasury_ledger (
+ id BIGSERIAL PRIMARY KEY,
+ withdrawal_id BIGINT NOT NULL REFERENCES tala_live_treasury_withdrawals(id) ON DELETE RESTRICT,
+ event_id VARCHAR(180) NOT NULL REFERENCES tala_live_treasury_events(event_id) ON DELETE RESTRICT,
+ kind VARCHAR(30) NOT NULL,
+ amount_minor BIGINT NOT NULL,
+ currency VARCHAR(3) NOT NULL DEFAULT 'mxn',
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ CONSTRAINT treasury_ledger_unique_posting UNIQUE(withdrawal_id,kind),
+ CONSTRAINT treasury_ledger_event_unique UNIQUE(event_id),
+ CONSTRAINT treasury_ledger_kind_chk CHECK(kind='bank_payout_paid'),
+ CONSTRAINT treasury_ledger_money_chk CHECK(amount_minor>=100 AND currency='mxn')
+);
+CREATE INDEX IF NOT EXISTS treasury_ledger_created ON tala_live_treasury_ledger(created_at);
