@@ -48,3 +48,11 @@ test('operator preflight only reads the isolated LIVE schema and cannot change f
   assert.ok(!script.includes(forbidden),forbidden);
  }
 });
+
+test('strict route inventory admits only the read-only driver capabilities endpoint',()=>{
+ const inventory=readFileSync(new URL('../scripts/node_route_coverage.py',import.meta.url),'utf8');
+ assert.match(inventory,/RC110_ONBOARDING_CAPABILITIES_NODE_ONLY/);
+ assert.match(inventory,/\("GET", "\/api\/v1\/operations\/onboarding-capabilities"\)/);
+ assert.match(inventory,/observed != \(ADMIN_NODE_ONLY/);
+ assert.match(inventory,/Unapproved Node-only route delta/);
+});
