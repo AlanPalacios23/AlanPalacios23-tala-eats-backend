@@ -5,7 +5,7 @@
 import {Pool} from 'pg';
 import {randomUUID} from 'node:crypto';
 import assert from 'node:assert/strict';
-import {totpForTestOnly} from '../dist/auth/crypto.js';
+import {totpForTestOnly,verifiedTotpCounter} from '../dist/auth/crypto.js';
 import {consumeTreasuryAdminOtp} from '../dist/live/treasury-admin-step-up.js';
 const pool=new Pool({connectionString:process.env.DATABASE_URL,max:5});
 const secret='JBSWY3DPEHPK3PXP';
@@ -44,6 +44,21 @@ try{
  assert.equal(result.rows.length,2);
  assert.equal(result.rows[0].action_kind,'withdrawal_review');
  assert.equal(result.rows[1].action_kind,'transfer_review');
+ const blocked=await make();
+ const wrong=Array.from({length:100},(_,i)=>String(i).padStart(6,'0'))
+  .find(code=>verifiedTotpCounter(secret,code,now)===null);
+ assert.ok(wrong);
+ for(let i=0;i<5;i++){
+  await assert.rejects(consumeTreasuryAdminOtp(
+   pool,blocked,wrong,'withdrawal_review','500',now),/TOTP_INVALID/);
+ }
+ await assert.rejects(consumeTreasuryAdminOtp(
+  pool,blocked,otp,'withdrawal_review','500',now),/TOTP_RATE_LIMITED/);
+ const attempts=await pool.query(
+  'SELECT COUNT(*)::int AS total FROM tala_live_treasury_totp_attempts WHERE user_id=$1',
+  [blocked]);
+ assert.equal(attempts.rows[0].total,5,'failed OTP checks must not vanish on rollback');
  console.log('TREASURY_ADMIN_FRESH_TOTP_PG15_PASS');
+ console.log('TREASURY_OTP_BRUTE_FORCE_LIMIT_PG15_PASS');
  console.log('REPLAY_ACROSS_ENDPOINTS=BLOCKED SESSION_ONLY_MFA=INSUFFICIENT');
 }finally{await pool.end();}
