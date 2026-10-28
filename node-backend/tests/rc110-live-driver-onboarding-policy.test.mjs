@@ -56,3 +56,17 @@ test('strict route inventory admits only the read-only driver capabilities endpo
  assert.match(inventory,/observed != \(ADMIN_NODE_ONLY/);
  assert.match(inventory,/Unapproved Node-only route delta/);
 });
+
+test('LIVE plate migration requires exact target DB, one pending migration and backup receipt',()=>{
+ const op=readFileSync(new URL('../scripts/rc110-kali-live-driver-plate-migration.mjs',import.meta.url),'utf8');
+ for(const required of [
+  "I_APPROVE_RC110_ONE_PLATE_COLUMN_ONLY","process.env.NODE_ENV!=='production'",
+  "url.port!=='15445'","url.pathname!=='/tala_node_live'",
+  "20261028_rc97_driver_plate_registration",
+  "missing.length===1&&missing[0]===name",
+  "BEGIN READ ONLY","ROLLBACK","pg_dump","pg_restore",
+  "receipt.sha!==sha","receipt.digest!==archiveHash(receipt.archive)",
+  "'migrate','deploy'","RC110_SCHEMA_VERIFY=PASS"
+ ])assert.ok(op.includes(required),required);
+ assert.doesNotMatch(op,/DROP TABLE|DROP DATABASE|prisma migrate reset|stripe\\.transfers\\.create/);
+});
