@@ -80,6 +80,6 @@ export async function inspectConnectedBankAndPayouts(
  if(seen.size!==known.size)throw Error('LOCAL_PAYOUT_NOT_PRESENT_AT_STRIPE');
  return {verified:true,bankId:chosen.id,unknownPayouts:0,reason:null,
   bankName:typeof chosen.bank_name==='string'?chosen.bank_name.slice(0,48):null,
-  last4:typeof chosen.last4==='string'&&/^\\d{4}$/.test(chosen.last4)?
+  last4:typeof chosen.last4==='string'&&/^\d{4}$/.test(chosen.last4)?
    chosen.last4:null};
 }
