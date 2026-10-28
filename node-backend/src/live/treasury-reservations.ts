@@ -6,7 +6,7 @@
  */
 import type {Pool,PoolClient} from 'pg';
 import {randomUUID} from 'node:crypto';
-import {verifyTotp} from '../auth/crypto.js';
+import {verifiedTotpCounter} from '../auth/crypto.js';
 import {treasuryCanRequest,treasuryBalance,type TreasuryPayee} from './treasury-policy.js';
 
 type VerifiedSnapshot={
@@ -35,20 +35,9 @@ function requestValid(v:ReserveWithdrawal){
   throw Error('TREASURY_REQUEST_INVALID');
 }
 function acceptedOtpStep(secret:string,otp:string,nowSeconds:number):bigint{
- // Determine the exact matched TOTP 30s counter, never record the server's
- // current step blindly: +/-30s clock skew must not enable code reuse.
- const candidates=[-1,0,1];
- for(const skew of candidates){
-  const second=nowSeconds+skew*30;
-  if(second>=0&&verifyTotp(secret,otp,second)){
-   // verifyTotp accepts +/-1. Reconfirm which exact step generated OTP
-   // by comparing it against a zero-window implementation below.
-   const counter=Math.floor(second/30);
-   if(counter>=0&&verifyTotp(secret,otp,counter*30+15))
-    return BigInt(counter);
-  }
- }
- throw Error('TREASURY_TOTP_INVALID');
+ const counter=verifiedTotpCounter(secret,otp,nowSeconds);
+ if(counter===null)throw Error('TREASURY_TOTP_INVALID');
+ return BigInt(counter);
 }
 export async function reserveTreasuryWithdrawal(pool:Pool,v:ReserveWithdrawal){
  requestValid(v);
