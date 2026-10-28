@@ -314,6 +314,7 @@ const boardUser=async(who:number,fn:(tx:any)=>Promise<any>)=>db.$transaction(asy
 const stageSafe=(key:string)=>key.startsWith('stage.')||key==='v11.canary_percent';
 const onboardPublic=(o:any)=>({id:o.id,user_id:o.userId,entity_type:o.entityType,
  business_name:o.businessName,tax_id:o.taxId,vehicle:o.vehicle,
+ plate:o.plate,
  payout_account_ref:o.payoutAccountRef,status:o.status,notes:o.notes,
  created_at:o.createdAt.toISOString(),updated_at:o.updatedAt.toISOString()});
 const onboardingSchema=z.strictObject({
@@ -321,6 +322,7 @@ const onboardingSchema=z.strictObject({
  business_name:z.string().max(160).default(''),
  tax_id:z.string().max(60).default(''),
  vehicle:z.string().max(100).default(''),
+ plate:z.string().trim().max(30).regex(/^[A-Za-z0-9 -]*$/,'Formato de placas inválido').default(''),
  payout_account_ref:z.string().max(180).default(''),
  documents:z.array(z.string().max(250)).max(15).default([]),
 });
@@ -354,7 +356,10 @@ operationsRouter.post('/onboarding',async(req,res)=>{
    status:{in:['pending','needs_info','approved']},
   },orderBy:{createdAt:'desc'}});
   if(old?.status==='approved')return bad(409,'Solicitud aprobada previamente');
+  // Plate belongs to the pending admin-reviewed application; never create
+  // a verified driver profile just because a public account submitted it.
   const data={businessName:p.business_name,taxId:p.tax_id,vehicle:p.vehicle,
+   plate:p.entity_type==='driver'?p.plate.toUpperCase():'',
    payoutAccountRef:p.payout_account_ref,documentsJson:JSON.stringify(p.documents),
    status:'pending'};
   const row=old?await tx.opsOnboarding.update({where:{id:old.id},data}):
@@ -397,8 +402,8 @@ operationsRouter.patch('/admin/onboarding/:applicationId',async(req,res)=>{
    if(old.entityType==='driver'){
     await tx.marketplaceDriverProfile.upsert({
      where:{userId:account.id},
-     create:{userId:account.id,vehicle:old.vehicle||'Motocicleta',isVerified:true},
-     update:{vehicle:old.vehicle||'Motocicleta',isVerified:true}});
+     create:{userId:account.id,vehicle:old.vehicle||'Motocicleta',plate:old.plate,isVerified:true},
+     update:{vehicle:old.vehicle||'Motocicleta',plate:old.plate,isVerified:true}});
    }else{
     const existing=await tx.marketplaceRestaurant.findFirst({where:{ownerId:account.id}});
     if(existing?.verificationStatus==='archived')
