@@ -102,11 +102,12 @@ async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIdentity){
  const holdCount=Number(holds.rows[0]?.n??'0');
  const incidentCount=Number(cases.rows[0]?.n??'0');
  const bankSchedule=acct.settings?.payouts?.schedule?.interval==='manual';
- const known=await pool.query<{id:string;amount_minor:string;bank_destination_id:string;state:string}>(
-  "SELECT stripe_payout_id AS id,amount_minor::text,bank_destination_id,state FROM tala_live_treasury_withdrawals WHERE connected_account_id=$1 AND stripe_payout_id IS NOT NULL",
+ const known=await pool.query<{id:string;withdrawal_id:string;payee_kind:'restaurant'|'driver';payee_id:number;amount_minor:string;bank_destination_id:string;state:string}>(
+  "SELECT stripe_payout_id AS id,id::text AS withdrawal_id,payee_kind,payee_id,amount_minor::text,bank_destination_id,state FROM tala_live_treasury_withdrawals WHERE connected_account_id=$1 AND stripe_payout_id IS NOT NULL",
   [x.account]);
  const bank=await inspectConnectedBankAndPayouts(stripe,x.account,
-  known.rows.map(v=>({id:v.id,amountMinor:v.amount_minor,bankId:v.bank_destination_id,state:v.state})));
+  known.rows.map(v=>({id:v.id,withdrawalId:v.withdrawal_id,payeeKind:v.payee_kind,
+    payeeId:v.payee_id,amountMinor:v.amount_minor,bankId:v.bank_destination_id,state:v.state})));
  const balance=treasuryBalance({
   amountTransferredMinor:total,committedWithdrawalsMinor:reserved,
   stripeAvailableMinor:available,openFinancialCases:incidentCount,
