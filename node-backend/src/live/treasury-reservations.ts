@@ -7,6 +7,7 @@
 import type {Pool,PoolClient} from 'pg';
 import {randomUUID} from 'node:crypto';
 import {verifiedTotpCounter} from '../auth/crypto.js';
+import {recordTreasuryOtpAttempt} from './treasury-totp-rate-limit.js';
 import {treasuryCanRequest,treasuryBalance,type TreasuryPayee} from './treasury-policy.js';
 
 type VerifiedSnapshot={
@@ -41,6 +42,7 @@ function acceptedOtpStep(secret:string,otp:string,nowSeconds:number):bigint{
 }
 export async function reserveTreasuryWithdrawal(pool:Pool,v:ReserveWithdrawal){
  requestValid(v);
+ await recordTreasuryOtpAttempt(pool,v.actorUserId,'withdrawal_request');
  const client=await pool.connect();
  let began=false;
  try{
