@@ -1,0 +1,38 @@
+name: RC95 Delivery LIVE release gate (NO-GO)
+on:
+  push:
+    branches: [feat/rc95-live-delivery-readiness-20261028]
+    paths:
+      - 'node-backend/scripts/rc95-live-delivery-readiness-audit.mjs'
+      - 'node-backend/tests/rc95-live-delivery-audit.test.mjs'
+      - '.github/workflows/rc95-delivery-live-nogo.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  safe-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Source syntax
+        working-directory: node-backend
+        run: node --check scripts/rc95-live-delivery-readiness-audit.mjs
+      - name: Fail-closed source audit regression
+        working-directory: node-backend
+        run: node --test tests/rc95-live-delivery-audit.test.mjs
+      - name: NO-GO state is deliberate
+        working-directory: node-backend
+        run: |
+          set +e
+          node scripts/rc95-live-delivery-readiness-audit.mjs --source > audit.log
+          status=$?
+          set -e
+          if [[ $status -ne 2 ]]; then cat audit.log; exit 1; fi
+          grep -q '^RC95_DELIVERY_SOURCE_READINESS=NO_GO$' audit.log
+          echo 'RC95_NOT_PREMATURELY_ENABLED=PASS'
