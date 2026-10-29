@@ -14,11 +14,11 @@ type TransferRow={
  amount_minor:string;source_charge_id:string;
 };
 const amount=(s:string):bigint=>{
- if(!/^\\d{1,16}$/.test(s))throw Error('TREASURY_TRANSFER_MINOR_INVALID');
+ if(!/^\d{1,16}$/.test(s))throw Error('TREASURY_TRANSFER_MINOR_INVALID');
  return BigInt(s);
 };
 const count=(s:string):number=>{
- if(!/^\\d{1,10}$/.test(s))throw Error('TREASURY_TRANSFER_COUNT_INVALID');
+ if(!/^\d{1,10}$/.test(s))throw Error('TREASURY_TRANSFER_COUNT_INVALID');
  const n=Number(s);
  if(!Number.isSafeInteger(n)||n>LIMIT)
   throw Error('TREASURY_TRANSFER_AUDIT_LIMIT_EXCEEDED');
@@ -51,7 +51,7 @@ export async function auditCompletedTreasuryTransfers(
   if(data.rows.length===0||data.rows.length>PAGE)
    throw Error('TREASURY_TRANSFER_PAGINATION_INCONSISTENT');
   for(const row of data.rows){
-   if(!/^[1-9]\\d{0,18}$/.test(row.id)||BigInt(row.id)<=last||
+   if(!/^[1-9]\d{0,18}$/.test(row.id)||BigInt(row.id)<=last||
       row.payee_kind!==kind||row.payee_id!==payeeId||
       row.connected_account_id!==account||
       !/^tr_[A-Za-z0-9]+$/.test(row.stripe_transfer_id)||
