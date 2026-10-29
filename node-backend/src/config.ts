@@ -116,6 +116,9 @@ if(liveCashPickupValues.every(Boolean)&&(
 const liveCashKeys=['LIVE_DELIVERY_CASH_CHECKOUT_ENABLED',
  'LIVE_DELIVERY_CASH_DISPATCH_ENABLED','LIVE_DELIVERY_CASH_RELEASE_APPROVED'] as const;
 const liveCashValues=liveCashKeys.map(k=>process.env[k]==='true');
+// Prevent release of the legacy driver-retains-cash path without merchant handoff.
+if(liveCashValues.every(Boolean)&&process.env.LIVE_CASH_HANDOFF_V2_ENABLED!=='true')
+ throw Error('RC135_CASH_DELIVERY_REQUIRES_MERCHANT_HANDOFF');
 if(liveCashValues.some(Boolean)&&!liveCashValues.every(Boolean))
  throw Error('RC112_PARTIAL_LIVE_CASH_DELIVERY_RELEASE_FORBIDDEN');
 if(liveCashValues.every(Boolean)&&(
