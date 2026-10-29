@@ -1,0 +1,48 @@
+name: Tala Eats RC12.7 | Existing Wallet Transfer Audit QA (NO MONEY)
+on:
+  push:
+    branches:
+      - fix/rc127-treasury-wallet-transfer-pagination-20261029
+permissions:
+  contents: read
+jobs:
+  treasury-wallet-regression:
+    name: Node24 compile and financial-readonly regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      NODE_ENV: staging
+      HOST: 127.0.0.1
+      PORT: '18190'
+      DATABASE_URL: postgresql://tala_node_stage:ci-only@127.0.0.1:15435/tala_node_stage
+      REDIS_URL: redis://:ci-only@127.0.0.1:16379/0
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+      STRIPE_LIVE_ENABLED: 'false'
+      STRIPE_CONNECT_TRANSFERS_ENABLED: 'false'
+      STRIPE_REFUNDS_ENABLED: 'false'
+      STRIPE_MANUAL_SETTLEMENT_APPROVED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Frozen dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Prisma generate validate and TypeScript compile
+        run: |
+          npm run generate
+          npm run db:validate
+          npm run build
+      - name: Complete Node tests (including RC12.7 read-only multi-page wallet)
+        run: npm test
+      - name: Kill switches and no money movement from added auditor
+        run: |
+          grep -q "NODE_TREASURY_LIVE_EXECUTION_ENABLED=false" src/live/treasury-policy.ts
+          ! grep -E '\.(create|update|delete|insert|commit)\(' src/live/treasury-transfer-audit.ts

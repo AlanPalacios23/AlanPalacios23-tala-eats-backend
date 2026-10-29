@@ -66,7 +66,9 @@ test('both role endpoints are authenticated, payouts and LIVE transfers are not 
  assert.match(route,/const s=await current\(req\)/);
  assert.match(route,/s\.user\.role!=='restaurant'/);
  assert.match(route,/s\.user\.role!=='driver'/);
- assert.match(route,/stripe\.transfers\.retrieve/);
+ const audit=readFileSync(new URL('../src/live/treasury-transfer-audit.ts',import.meta.url),'utf8');
+ assert.match(route,/auditCompletedTreasuryTransfers/);
+ assert.match(audit,/provider\.transfers\.retrieve/);
  assert.match(route,/stripe\.balance\.retrieve/);
  assert.match(route,/status\(503\)\.json\(\{error:'TREASURY_WITHDRAWALS_NOT_RELEASED'/);
  assert.doesNotMatch(route,/\.transfers\.create\(|\.payouts\.create\(/);
