@@ -81,6 +81,7 @@ if(liveCashValues.some(Boolean)&&!liveCashValues.every(Boolean))
 if(liveCashValues.every(Boolean)&&(
  process.env.NODE_ENV!=='production'||process.env.LIVE_DRIVER_PRESENCE_ENABLED!=='true'||
  process.env.MERCHANT_MANAGED_DELIVERY==='true'||process.env.MARKETPLACE_B_ENABLED!=='true'||
+ process.env.COMMERCIAL_PRICING_V162_ENABLED==='true'||
  process.env.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'||
  process.env.STAGE_DRIVER_DELIVERY_ENABLED==='true'))
  throw Error('RC112_LIVE_CASH_DELIVERY_REQUIRES_APPROVED_PRODUCTION_PRESENCE');
