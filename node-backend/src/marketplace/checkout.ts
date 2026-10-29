@@ -144,6 +144,8 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
     throw new CheckoutError(503,'Checkout efectivo o Stripe no autorizado');
   if(!['customer','admin'].includes(account.role))
     throw new CheckoutError(403,'No tienes permisos para crear pedidos');
+  if(liveCashDelivery&&account.role!=='customer')
+    throw new CheckoutError(403,'Domicilio LIVE requiere comprador autenticado');
   // Administrators may create synthetic CASH fixtures, but never PaymentIntents
   // they cannot authorize as the actual cardholder.
   if(cardStripe&&account.role!=='customer')
