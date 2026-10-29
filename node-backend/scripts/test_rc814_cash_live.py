@@ -17,7 +17,9 @@ GOOD={
  "STAGE_DELIVERY_CASH_CHECKOUT_ENABLED":"false",
  "STAGE_DELIVERY_STRIPE_TEST_ENABLED":"false",
  "STRIPE_CONNECT_TRANSFERS_ENABLED":"false",
- "STAGE_PICKUP_CASH_CHECKOUT_ENABLED":"false",
+ "STAGE_PICKUP_CASH_CHECKOUT_ENABLED":"true",
+ "LIVE_PICKUP_CASH_CHECKOUT_ENABLED":"false",
+ "LIVE_PICKUP_CASH_RELEASE_APPROVED":"false",
 }
 class CashLiveContractTests(unittest.TestCase):
  def test_production_cash_flag_can_only_change_with_real_live_financial_mode(self):
@@ -35,16 +37,18 @@ class CashLiveContractTests(unittest.TestCase):
      cash.preconditions({**GOOD,name:value})
  def test_env_parser_does_not_tolerate_duplicate_flag_override(self):
   with self.assertRaises(SystemExit):
-   cash.settings("STAGE_PICKUP_CASH_CHECKOUT_ENABLED=false\nSTAGE_PICKUP_CASH_CHECKOUT_ENABLED=true")
+   cash.settings("LIVE_PICKUP_CASH_CHECKOUT_ENABLED=false\nLIVE_PICKUP_CASH_CHECKOUT_ENABLED=true")
  def test_source_has_no_provider_writes_or_unreviewed_prod_mutations(self):
   s=FILE.read_text()
   for required in [
    "I_APPROVE_RC814_PRODUCTION_CASH_PICKUP_ONLY",
-   "STAGE_PICKUP_CASH_CHECKOUT_ENABLED=true",
+   "LIVE_PICKUP_CASH_CHECKOUT_ENABLED",
+   "LIVE_PICKUP_CASH_RELEASE_APPROVED",
+   "RC122_PAIR_NOT_ATOMIC",
    "rc814-pre-live-cash-",
    "BEGIN TRANSACTION READ ONLY",
    "tala_node_live",
-   "LIVE_CASH_PICKUP_ALREADY_ENABLED=PASS",
+   "RC122_LIVE_CASH_PICKUP_ALREADY_ENABLED=PASS",
    "RC814_CASH_ENV_ROLLBACK_ATTEMPTED_OPERATOR_REVIEW_REQUIRED",
    "RC814_NO_STRIPE_CHARGE_OR_CONNECT_PAYOUT=YES",
   ]:self.assertIn(required,s)

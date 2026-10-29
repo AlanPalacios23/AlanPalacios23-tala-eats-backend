@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Opt-in RC8.14 production CASH pickup flag only after approved real merchant.
+"""Opt-in RC12.2 CASH pickup LIVE release only after approved real merchant.
 
-Only updates STAGE_PICKUP_CASH_CHECKOUT_ENABLED in the private LIVE env.
+Only updates the paired LIVE_PICKUP_CASH_* flags in the private LIVE env.
 Never writes PG, changes Stripe keys, alters Cloudflare, creates money or
 touches the worker. Service operator must run AFTER backend pickup promotion.
 """
@@ -143,11 +143,12 @@ def main():
  v=settings(old);preconditions(v)
  current_release(sha);verify_site()
  qty=eligible_owner_count()
- if v.get("STAGE_PICKUP_CASH_CHECKOUT_ENABLED")=="true":
-  print("RC814_LIVE_CASH_PICKUP_ALREADY_ENABLED=PASS")
+ keys=("LIVE_PICKUP_CASH_CHECKOUT_ENABLED","LIVE_PICKUP_CASH_RELEASE_APPROVED")
+ if all(v.get(k,"false")=="true" for k in keys):
+  print("RC122_LIVE_CASH_PICKUP_ALREADY_ENABLED=PASS")
   return
- if v.get("STAGE_PICKUP_CASH_CHECKOUT_ENABLED","false")!="false":
-  hold("CASH_FLAG_UNKNOWN")
+ if any(v.get(k,"false")!="false" for k in keys):
+  hold("RC122_PARTIAL_CASH_PICKUP_RELEASE_FORBIDDEN")
  if qty<1:hold("REAL_VERIFIED_APPROVED_OPEN_MERCHANT_REQUIRED")
  if mode=="--plan":
   print("RC814_LIVE_CASH_FLAG_PLAN=PASS_NO_WRITES")
@@ -162,12 +163,18 @@ def main():
  with os.fdopen(handle,"w") as f:
   f.write(old);f.flush();os.fsync(f.fileno())
  print("RC814_CASH_ENV_BACKUP=PASS")
- changed=re.sub(r"(?m)^STAGE_PICKUP_CASH_CHECKOUT_ENABLED=.*$",
-   "STAGE_PICKUP_CASH_CHECKOUT_ENABLED=true",old)
- if changed==old:changed=old.rstrip("\n")+"\nSTAGE_PICKUP_CASH_CHECKOUT_ENABLED=true\n"
+ changed=old
+ for key in keys:
+  if re.search(r"(?m)^"+key+r"=",changed):
+   changed=re.sub(r"(?m)^"+key+r"=.*$",key+"=true",changed)
+  else:
+   changed=changed.rstrip("\n")+"\n"+key+"=true\n"
+ updated=settings(changed)
  for key,value in v.items():
-  if key!="STAGE_PICKUP_CASH_CHECKOUT_ENABLED" and settings(changed).get(key)!=value:
+  if key not in keys and updated.get(key)!=value:
    hold("UNRELATED_LIVE_FLAG_CHANGE")
+ if any(updated.get(k)!="true" for k in keys):
+  hold("RC122_PAIR_NOT_ATOMIC")
  try:
   atomic_write(changed)
   run(["pm2","restart","tala-node-stage-api","--update-env"],env=app_environment(),timeout=30)
@@ -178,6 +185,6 @@ def main():
   except Exception:pass
   print("RC814_CASH_ENV_ROLLBACK_ATTEMPTED_OPERATOR_REVIEW_REQUIRED")
   raise
- print("RC814_PICKUP_CASH_LIVE_ENABLED=PASS")
+ print("RC122_PICKUP_CASH_LIVE_ENABLED=PASS")
  print("RC814_NO_STRIPE_CHARGE_OR_CONNECT_PAYOUT=YES")
 if __name__=="__main__":main()

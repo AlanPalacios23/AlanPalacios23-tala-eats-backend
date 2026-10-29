@@ -5,6 +5,21 @@
 import {config} from '../config.js';
 import {isLiveCashCheckoutProvenance} from './live-cash-delivery-policy.js';
 export {isLiveCashCheckoutProvenance} from './live-cash-delivery-policy.js';
+/** Cash at the restaurant is NOT a stage-only toggle in production.
+ * No Stripe charge is created; owner approval and immutable handoff proof are
+ * separately checked at checkout/complete. Cash is not a Connect balance. */
+export const cashPickupReleased=():boolean=>
+ (config.NODE_ENV==='staging'&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true')||
+ (config.NODE_ENV==='production'&&
+  config.LIVE_PICKUP_CASH_CHECKOUT_ENABLED==='true'&&
+  config.LIVE_PICKUP_CASH_RELEASE_APPROVED==='true'&&
+  config.STRIPE_LIVE_ENABLED==='true'&&
+  config.STRIPE_LIVE_RELEASE_APPROVED==='true'&&
+  config.STRIPE_FINANCIAL_WRITES_ENABLED==='true'&&
+  config.STRIPE_MANUAL_SETTLEMENT_APPROVED==='true');
+export const liveCashPickupReleased=():boolean=>
+ config.NODE_ENV==='production'&&cashPickupReleased();
+
 export const liveCashDeliveryReleased=():boolean=>
  config.NODE_ENV==='production'&&
  config.LIVE_DRIVER_PRESENCE_ENABLED==='true'&&
