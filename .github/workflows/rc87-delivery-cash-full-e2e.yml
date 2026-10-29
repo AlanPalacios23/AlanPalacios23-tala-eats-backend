@@ -1,7 +1,7 @@
 name: TALA EATS RC8.7 | Cash Delivery Full E2E (CI ONLY)
 on:
   push:
-    branches: [feat/rc87-delivery-cash-stage-flow-20261024]
+    branches: [feat/rc87-delivery-cash-stage-flow-20261024, fix/rc126-real-onboarding-role-isolation-20261029]
 permissions:
   contents: read
 jobs:
