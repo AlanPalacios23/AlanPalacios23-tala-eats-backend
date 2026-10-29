@@ -47,6 +47,7 @@ async function run(){
       deliveryFee:true,tip:true,serviceFee:true,platformCommission:true,
       restaurantPayout:true,driverEarning:true,platformRevenue:true,
       cashCollected:true,refundedAmount:true,
+      paymentProcessingFee:true,contributionMargin:true,
     }});
  if(orders.length!==count)return abort('CONCURRENT_ORDER_SET_CHANGED');
  const ids=orders.map(o=>o.id);
