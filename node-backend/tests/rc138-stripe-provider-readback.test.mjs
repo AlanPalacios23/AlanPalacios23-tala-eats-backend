@@ -50,8 +50,8 @@ test('RC13.8 wrong charge, wrong mode, wrong capture or wrong PI hold',()=>{
 
 test('RC13.8 live auditor checks real provider fee with GET-only SDK',()=>{
  const s=readFileSync(new URL('../scripts/rc114-kali-live-stripe-pickup-audit.mjs',import.meta.url),'utf8');
- assert.match(s,/provider\\.charges\\.retrieve/);
- assert.match(s,/provider\\.balanceTransactions\\.retrieve/);
+ assert.match(s,/provider\.charges\.retrieve/);
+ assert.match(s,/provider\.balanceTransactions\.retrieve/);
  assert.match(s,/auditStripeCapturedBalance/);
- assert.doesNotMatch(s,/provider\\.(?:transfers|payouts|refunds|paymentIntents)\\.create\\(/);
+ assert.doesNotMatch(s,/provider\.(?:transfers|payouts|refunds|paymentIntents)\.create\(/);
 });
