@@ -43,7 +43,7 @@ export function buildCashHandoffV2Router(pool:Pool){
     'round(o.refunded_amount*100)::text AS refunded_minor,c.collector_kind,'+
     'c.collector_id,c.collected_minor::text AS custody_minor '+
     'FROM orders o JOIN tala_live_cash_custody c ON c.order_id=o.id '+
-    'WHERE o.id=$1 FOR UPDATE OF o',[orderId]);
+    'WHERE o.id=$1 AND o.delivered_at>NOW()-INTERVAL \'24 hours\' FOR UPDATE OF o',[orderId]);
    const o=rows.rows[0];
    if(!o||o.driver_id!==actor.userId||o.status!=='delivered'||
     o.payment_method!=='cash'||o.payment_status!=='paid'||
