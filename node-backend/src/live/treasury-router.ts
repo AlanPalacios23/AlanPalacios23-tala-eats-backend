@@ -13,6 +13,7 @@ import {config} from '../config.js';
 import {treasuryBalance,displayMinor,
   NODE_TREASURY_LIVE_EXECUTION_ENABLED,type TreasuryPayee} from './treasury-policy.js';
 import {inspectConnectedBankAndPayouts} from './treasury-bank-verification.js';
+import {auditCompletedTreasuryTransfers} from './treasury-transfer-audit.js';
 import {reserveTreasuryWithdrawal} from './treasury-reservations.js';
 import {approveTreasuryWithdrawal} from './treasury-dual-approval.js';
 import {recordTreasuryTransferReview} from './treasury-transfer-reservations.js';
@@ -66,30 +67,7 @@ async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIdentity){
   throw Error('CONNECT_CARD_BALANCE_UNVERIFIED');
  const available=BigInt(cardMinor);
  if(available<0n)throw Error('CONNECT_NEGATIVE_BALANCE');
- const transferRows=await pool.query<{order_id:number;payee_kind:string;payee_id:number;
-   connected_account_id:string;stripe_transfer_id:string;amount_minor:string;
-   source_charge_id:string}>(
-  "SELECT order_id,payee_kind,payee_id,connected_account_id,stripe_transfer_id,amount_minor::text,source_charge_id FROM tala_live_treasury_transfers WHERE payee_kind=$1 AND payee_id=$2 AND state='completed' ORDER BY id ASC LIMIT 101",
-   [x.kind,x.id]);
- if(transferRows.rows.length>100)throw Error('TREASURY_TRANSFER_PAGINATION_REQUIRED');
- let total=0n;
- for(const row of transferRows.rows){
-  if(row.payee_kind!==x.kind||row.payee_id!==x.id||
-    row.connected_account_id!==x.account||!/^tr_[A-Za-z0-9]+$/.test(row.stripe_transfer_id)||
-    !/^ch_[A-Za-z0-9]+$/.test(row.source_charge_id))
-    throw Error('FOREIGN_STRIPE_TRANSFER');
-  const amount=minor(row.amount_minor);
-  const t=await stripe.transfers.retrieve(row.stripe_transfer_id);
-  if(t.id!==row.stripe_transfer_id||t.destination!==x.account||
-    t.source_transaction!==row.source_charge_id||t.currency!=='mxn'||
-    !t.livemode||t.amount!==Number(amount)||t.amount_reversed!==0)
-    throw Error('PROVIDER_TRANSFER_INCONSISTENT');
-  const charge=await stripe.charges.retrieve(row.source_charge_id);
-  if(!charge.livemode||charge.id!==row.source_charge_id||!charge.paid||
-    charge.refunded||charge.disputed||charge.currency!=='mxn')
-    throw Error('ORIGINAL_CHARGE_REFUND_DISPUTE_HOLD');
-  total+=amount;
- }
+ const total=await auditCompletedTreasuryTransfers(pool,stripe,x.kind,x.id,x.account);
  const [withdrawals,holds,cases,daily]=await Promise.all([
   pool.query<{total:string;pending:string}>(
     "SELECT COALESCE(SUM(amount_minor),0)::text AS total, COALESCE(SUM(CASE WHEN state IN ('reserved','submitted','unknown','review_required') THEN 1 ELSE 0 END),0)::text AS pending FROM tala_live_treasury_withdrawals WHERE payee_kind=$1 AND payee_id=$2 AND state IN ('reserved','submitted','unknown','review_required','paid')",
