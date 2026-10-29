@@ -21,6 +21,9 @@ export type PublicPaymentOptions = {
   stagingDeliveryStripeTestEnabled?:boolean;
   // Server-owned, audited cash-at-door release; NEVER enables Stripe card delivery.
   liveCashDeliveryEnabled?:boolean;
+  liveCashPickupEnabled?:boolean;
+  // Separately authorized card-to-door is never implied by pickup Stripe LIVE.
+  liveCardDeliveryEnabled?:boolean;
 };
 
 export function buildPublicPaymentContracts(o:PublicPaymentOptions){
@@ -31,17 +34,19 @@ export function buildPublicPaymentContracts(o:PublicPaymentOptions){
       Boolean(o.publishableKey?.startsWith('pk_live_'))
     : o.stripeTestEnabled&&Boolean(o.publishableKey?.startsWith('pk_test_'));
   // No checkout whatsoever in production standby with only test merchants.
-  const cashEnabled=o.cashEnabled&&(!live||enabled);
+  const cashEnabled=(live?o.liveCashPickupEnabled===true:o.cashEnabled)&&(!live||enabled);
   const liveDeliveryCash=live&&cashEnabled&&o.liveCashDeliveryEnabled===true&&
     o.pricingV162Enabled!==true;
   const stageDeliveryCash=!live&&o.stagingDeliveryCashEnabled===true;
-  const mode=live?'live-pickup-only':'test-pickup-only';
+  const liveDeliveryStripe=live&&enabled&&o.liveCardDeliveryEnabled===true;
+  const stageDeliveryStripe=!live&&o.stagingDeliveryCashEnabled===true&&
+    o.stagingDeliveryStripeTestEnabled===true&&enabled;
+  const mode=live?'live-pickup-card':'test-pickup-card';
   const key=enabled?o.publishableKey??null:null;
   return {
     methods:{
-      // Server-computed delivery quote is cash-only in LIVE when its separate
-      // runtime/driver/finance release gate is approved. Stripe LIVE delivery
-      // remains hard-locked until signed capture and reconciliation are built.
+      // A LIVE delivery method is advertised only after its independent release.
+      // No frontend or customer role can turn these server-owned gates on.
       commercial_pricing_version:o.pricingV162Enabled?'1.6.2':'1.5.2',
       service_fee_rate:'0.07',
       ...(o.pricingV162Enabled?{
@@ -52,11 +57,10 @@ export function buildPublicPaymentContracts(o:PublicPaymentOptions){
       }:{
         delivery_base_fee:'39.00',
       }),
-      delivery_checkout_supported:stageDeliveryCash||liveDeliveryCash,
+      delivery_checkout_supported:stageDeliveryCash||liveDeliveryCash||stageDeliveryStripe||liveDeliveryStripe,
       delivery_cash_supported:stageDeliveryCash||liveDeliveryCash,
-      delivery_stripe_supported:!live&&o.stagingDeliveryCashEnabled===true&&
-        o.stagingDeliveryStripeTestEnabled===true&&enabled,
-      delivery_quote_supported:stageDeliveryCash||liveDeliveryCash,
+      delivery_stripe_supported:stageDeliveryStripe||liveDeliveryStripe,
+      delivery_quote_supported:stageDeliveryCash||liveDeliveryCash||stageDeliveryStripe||liveDeliveryStripe,
       pickup_checkout_supported:true,
       pickup_quote_supported:true, // POST /orders/quote, non-binding server-side price preview
       digital_provider:'stripe',
