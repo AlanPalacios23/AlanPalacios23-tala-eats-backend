@@ -1,7 +1,7 @@
 name: TALA EATS RC8.10 | Synthetic Paid Delivery Safety E2E
 on:
   push:
-    branches: [feat/rc810-stripe-test-delivery-verified-chain-20261024]
+    branches: [feat/rc810-stripe-test-delivery-verified-chain-20261024, fix/rc126-real-onboarding-role-isolation-20261029]
 permissions:
   contents: read
 jobs:
