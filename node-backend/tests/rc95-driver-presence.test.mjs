@@ -28,7 +28,7 @@ test('LIVE driver check-in never starts dispatch or creates delivery orders',()=
  assert.match(source,/const presence=\(\)=>/);
  assert.match(source,/const stage=\(\)=>/);
  assert.match(source,/const deliveryActions=\(\)=>/);
- assert.match(source,/if\(!liveDispatchReleased\(\)\)fail\(503/);
+ assert.match(source,/if\(!liveDispatchReleased\(\)&&!liveCashDeliveryReleased\(\)\)fail\(503/);
  assert.match(config,/RC96_LIVE_DELIVERY_NOT_RELEASED_STRIPE_TEST_REQUIRED/);
  assert.match(source,/if\(!p\?\.isVerified\|\|!p\.isOnline\)/);
  assert.match(source,/driverLocationKey\(config.NODE_ENV,actor.id\)/);
