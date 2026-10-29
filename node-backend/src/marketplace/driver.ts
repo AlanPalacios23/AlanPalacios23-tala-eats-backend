@@ -143,8 +143,9 @@ export async function driverPresenceReadiness(actor:AuthUser){
       ((config.NODE_ENV==='staging'&&config.STAGE_DRIVER_DELIVERY_ENABLED==='true')||
        (config.NODE_ENV==='production'&&
          (liveCashDeliveryReleased()||liveDispatchReleased()))),
-    live_delivery_checkout_enabled:false,
-    live_stripe_delivery_enabled:false,
+    live_delivery_checkout_enabled:liveCashDeliveryReleased()||liveDispatchReleased(),
+    live_cash_delivery_checkout_enabled:liveCashDeliveryReleased(),
+    live_stripe_delivery_enabled:liveDispatchReleased(),
   };
 }
 export async function canDriverReachPickup(
