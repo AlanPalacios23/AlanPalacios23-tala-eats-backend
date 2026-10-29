@@ -400,8 +400,10 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
   const parsed=schema.safeParse(req.body);
   if(!parsed.success)throw new RouteError(422,'Datos de cotización inválidos');
   const data=parsed.data;
-  if(livePreview&&data.payment_method==='stripe')
+  if(livePreview&&data.payment_method==='stripe'&&!liveDispatchReleased())
     throw new RouteError(503,'Tarjeta a domicilio LIVE pendiente de autorización financiera');
+  if(livePreview&&data.payment_method==='cash'&&!liveCashDeliveryReleased())
+    throw new RouteError(503,'Efectivo a domicilio LIVE pendiente de autorización logística');
   if(stagePreview&&data.payment_method==='stripe'&&
      (config.STAGE_DELIVERY_STRIPE_TEST_ENABLED!=='true'||
       config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true'))
