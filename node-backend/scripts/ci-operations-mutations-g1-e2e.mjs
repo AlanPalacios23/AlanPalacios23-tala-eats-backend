@@ -62,6 +62,33 @@ const ownedShop=(await db.query('SELECT id,is_open FROM restaurants WHERE owner_
 assert.equal(ownedShop.length,1);assert.equal(ownedShop[0].is_open,false);
 // Approval changed the account role and intentionally invalidated its old JWT.
 await promote(alice,'restaurant');
+// A merchant must not turn its existing identity into a courier.
+const crossDriver={entity_type:'driver',vehicle:'Motocicleta',plate:'JAL1234',
+ documents:[]};
+assert.equal((await req(alice,'/operations/onboarding','POST',crossDriver)).status,409);
+assert.equal((await req(admin,'/operations/onboarding','POST',profile)).status,409);
+// A customer can submit two separate requests before either is reviewed.
+// Once one role has been approved, the other approval MUST fail transactionally.
+const doubleApplicant=await user('doubleApplicant');
+const doubleMerchant=await req(doubleApplicant,'/operations/onboarding','POST',profile);
+const doubleCourier=await req(doubleApplicant,'/operations/onboarding','POST',crossDriver);
+assert.equal(doubleMerchant.status,201,JSON.stringify(doubleMerchant.json));
+assert.equal(doubleCourier.status,201,JSON.stringify(doubleCourier.json));
+const approvedMerchant=await req(admin,
+ '/operations/admin/onboarding/'+doubleMerchant.json.id,'PATCH',
+ {status:'approved',notes:'Approved in disposable CI'});
+assert.equal(approvedMerchant.status,200,JSON.stringify(approvedMerchant.json));
+const forbiddenApprove=await req(admin,
+ '/operations/admin/onboarding/'+doubleCourier.json.id,'PATCH',
+ {status:'approved',notes:'Must not cross-change roles'});
+assert.equal(forbiddenApprove.status,409,JSON.stringify(forbiddenApprove.json));
+const unchanged=(await db.query(
+ 'SELECT role FROM users WHERE id=$1',[doubleApplicant.id])).rows[0];
+assert.equal(unchanged.role,'restaurant');
+const noCourier=(await db.query(
+ 'SELECT count(*)::int AS n FROM driver_profiles WHERE user_id=$1',
+ [doubleApplicant.id])).rows[0];
+assert.equal(noCourier.n,0);
 // Revocation and re-approval must keep the shop closed until the merchant
 // explicitly reopens; orders and existing invoices are not deleted.
 await db.query('UPDATE restaurants SET is_open=true WHERE id=$1',[ownedShop[0].id]);
