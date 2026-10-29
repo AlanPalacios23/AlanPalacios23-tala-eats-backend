@@ -44,13 +44,13 @@ test('cash pickup: seller custodian owes platform $44, but bank settlement not i
    state:'awaiting_evidence'
  });
 });
-test('platform delivery paid in cash: courier keeps $32 and owes platform $221',()=>{
+test('platform delivery paid in cash: courier holds full $253, no driver wage retained',()=>{
  const p=buildMoneyPlan({...base,tender:'cash',paymentStatus:'pending',
    captured:false,orderType:'delivery',driverUserId:9,
    totalMinor:25300,driverBaseMinor:3200});
  assert.deepEqual(p.cash,{
    collectorKind:'driver',collectorId:9,
-   collectedMinor:25300,retainedMinor:3200,duePlatformMinor:22100,
+   collectedMinor:25300,retainedMinor:0,duePlatformMinor:25300,
    state:'awaiting_evidence'});
  assert.equal(p.grossPlatformMinor,5100);
 });

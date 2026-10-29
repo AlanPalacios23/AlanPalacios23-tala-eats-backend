@@ -55,6 +55,7 @@ const schema = z.object({
   LIVE_DELIVERY_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
   LIVE_DELIVERY_CASH_DISPATCH_ENABLED: z.enum(['false','true']).default('false'),
   LIVE_DELIVERY_CASH_RELEASE_APPROVED: z.enum(['false','true']).default('false'),
+  LIVE_CASH_HANDOFF_V2_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_DRIVER_DELIVERY_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_DRIVER_MAX_PICKUP_KM: z.coerce.number().finite().min(1).max(30).default(8),
   STAGE_DELIVERY_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
@@ -115,6 +116,9 @@ if(liveCashPickupValues.every(Boolean)&&(
 const liveCashKeys=['LIVE_DELIVERY_CASH_CHECKOUT_ENABLED',
  'LIVE_DELIVERY_CASH_DISPATCH_ENABLED','LIVE_DELIVERY_CASH_RELEASE_APPROVED'] as const;
 const liveCashValues=liveCashKeys.map(k=>process.env[k]==='true');
+// Prevent release of the legacy driver-retains-cash path without merchant handoff.
+if(liveCashValues.every(Boolean)&&process.env.LIVE_CASH_HANDOFF_V2_ENABLED!=='true')
+ throw Error('RC135_CASH_DELIVERY_REQUIRES_MERCHANT_HANDOFF');
 if(liveCashValues.some(Boolean)&&!liveCashValues.every(Boolean))
  throw Error('RC112_PARTIAL_LIVE_CASH_DELIVERY_RELEASE_FORBIDDEN');
 if(liveCashValues.every(Boolean)&&(

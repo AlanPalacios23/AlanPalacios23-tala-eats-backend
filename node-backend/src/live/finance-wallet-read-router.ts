@@ -94,13 +94,16 @@ export function buildFinanceWalletReadRouter(pool:Pool){
    }
    const rows=await pool.query<WeeklyLedgerRow>(
     'SELECT a.order_id,a.amount_minor::text,a.state,a.tender,a.fulfillment,'+
-    'o.delivered_at,c.collector_kind AS custody_collector_kind,'+
-    'c.collector_id AS custody_collector_id,'+
+    'o.delivered_at,'+
+    "CASE WHEN h.order_id IS NOT NULL THEN 'restaurant' ELSE c.collector_kind END AS custody_collector_kind,"+
+    'CASE WHEN h.order_id IS NOT NULL THEN h.restaurant_id ELSE c.collector_id END AS custody_collector_id,'+
     'c.collected_minor::text AS custody_collected_minor,'+
-    'c.status AS custody_status,'+
+    "CASE WHEN h.order_id IS NOT NULL THEN 'merchant_acknowledged_not_bank_settled' ELSE c.status END AS custody_status,"+
     '(SELECT COUNT(*)::text FROM tala_live_financial_cases fc WHERE fc.order_id=o.id AND fc.status<>\'resolved\') AS open_financial_cases '+
     'FROM tala_live_payee_allocations a JOIN orders o ON o.id=a.order_id '+
     'LEFT JOIN tala_live_cash_custody c ON c.order_id=o.id '+
+    "LEFT JOIN finance_cash_handoffs_v2 h ON h.order_id=o.id AND h.status='confirmed' "+
+    'AND h.expected_minor=c.collected_minor AND h.driver_user_id=o.driver_id '+
     'WHERE a.payee_kind=$1 AND a.payee_id=$2 '+
     "AND o.delivered_at>=($3::date AT TIME ZONE 'America/Mexico_City') "+
     "AND o.delivered_at<(($3::date+INTERVAL '7 days') AT TIME ZONE 'America/Mexico_City') "+

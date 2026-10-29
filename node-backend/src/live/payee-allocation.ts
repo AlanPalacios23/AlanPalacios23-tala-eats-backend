@@ -64,9 +64,14 @@ export function buildMoneyPlan(o:OrderAmounts):MoneyPlan{
  }
  const cashCollector:CashCustody|null=o.tender==='cash'?(()=>{
    const collector=fulfillment==='platform_delivery'?obligations[1]!:obligations[0]!;
+   // A platform courier is a temporary cash CUSTODIAN, never the payee
+   // of his delivery wage out of customer money. Entire amount must be
+   // handed to the restaurant and independently acknowledged under RC13.5.
+   // This obligation is custody before handoff, NOT platform revenue.
+   const retained=fulfillment==='platform_delivery'?0:collector.amountMinor;
    return {collectorKind:collector.party,collectorId:collector.payeeId,
-     collectedMinor:o.totalMinor,retainedMinor:collector.amountMinor,
-     duePlatformMinor:o.totalMinor-collector.amountMinor,state:'awaiting_evidence'};
+     collectedMinor:o.totalMinor,retainedMinor:retained,
+     duePlatformMinor:o.totalMinor-retained,state:'awaiting_evidence'};
  })():null;
  return {orderId:o.orderId,fulfillment,tender:o.tender,
    totalMinor:o.totalMinor,obligations,
