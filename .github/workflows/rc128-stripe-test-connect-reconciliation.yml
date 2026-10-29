@@ -60,3 +60,51 @@ jobs:
           grep -q "NODE_TREASURY_LIVE_EXECUTION_ENABLED=false" src/live/treasury-policy.ts
           ! grep -E 'transfers.create|payouts.create' src/live/treasury-connect-webhook.ts
           ! grep -E 'transfers.create|payouts.create' src/live/treasury-webhook-policy.ts
+
+  compile-and-guards:
+    name: All Node tests and TEST-only script refusal gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      NODE_ENV: staging
+      HOST: 127.0.0.1
+      PORT: '18190'
+      DATABASE_URL: postgresql://tala_node_stage:non-live-ci@127.0.0.1:15435/tala_node_stage
+      REDIS_URL: redis://:non-live-ci@127.0.0.1:16379/0
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+      STRIPE_LIVE_ENABLED: 'false'
+      STRIPE_LIVE_RELEASE_APPROVED: 'false'
+      STRIPE_CONNECT_TRANSFERS_ENABLED: 'false'
+      STRIPE_MANUAL_SETTLEMENT_APPROVED: 'false'
+      STRIPE_REFUNDS_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Frozen deps and compile
+        run: |
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:validate
+          npm run build
+      - name: Full Node regression suite
+        run: npm test
+      - name: Strictly refuse unsigned or unauthorized REAL provider test operations
+        run: |
+          node --check scripts/rc128-stripe-test-treasury-execution.mjs
+          node --check scripts/rc128-stripe-test-connect-webhook-listener.mjs
+          if node scripts/rc128-stripe-test-treasury-execution.mjs --execute-test transfer 1 NOT_APPROVED; then
+            echo 'RC128_UNAUTHORIZED_TEST_PROVIDER_CALL_NOT_BLOCKED'; exit 1
+          fi
+          if node scripts/rc128-stripe-test-connect-webhook-listener.mjs --listen-test NOT_APPROVED; then
+            echo 'RC128_UNAUTHORIZED_TEST_WEBHOOK_NOT_BLOCKED'; exit 1
+          fi
+          grep -q "NODE_TREASURY_LIVE_EXECUTION_ENABLED=false" src/live/treasury-policy.ts
