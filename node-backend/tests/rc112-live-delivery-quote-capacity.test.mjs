@@ -41,7 +41,7 @@ test('LIVE route returns genuine server quote but cannot create a paid delivery 
  assert.ok(section.includes('await hasReachableLiveDriver('));
  assert.ok(section.includes('calculatePickupQuoteFromCatalog('));
  assert.ok(section.includes('calculateDefaultCommercial('));
- assert.ok(section.includes("if(livePreview&&data.payment_method==='stripe')"));
+ assert.ok(section.includes("if(livePreview&&data.payment_method==='stripe'&&!liveDispatchReleased())"));
  assert.ok(section.includes("delivery_checkout_supported:stagePreview||(livePreview&&"));
  assert.ok(section.includes("(liveCashDeliveryReleased()||liveDispatchReleased())"));
  assert.ok(section.includes("live_stripe_delivery_supported:livePreview&&liveDispatchReleased()"));
