@@ -21,12 +21,12 @@ export type TreasuryPayoutDecision={
  ledgerEffect:'none'|'bank_payout_paid'|'bank_payout_reversed';
 };
 export function decideConnectedPayoutEvent(
- e:StripePayoutUpdate,w:TreasuryPayoutRecord
+ e:StripePayoutUpdate,w:TreasuryPayoutRecord,expectedLivemode=true
 ):TreasuryPayoutDecision{
  if(!/^evt_[A-Za-z0-9]+$/.test(e.eventId)||
    !/^po_[A-Za-z0-9]+$/.test(e.payoutId)||
    !/^acct_[A-Za-z0-9]+$/.test(e.accountId)||e.accountId!==w.accountId||
-   !e.livemode||e.currency!=='mxn'||e.providerDestination!==w.bankDestination||
+   e.livemode!==expectedLivemode||e.currency!=='mxn'||e.providerDestination!==w.bankDestination||
    !Number.isSafeInteger(e.amountMinor)||e.amountMinor!==w.amountMinor||
    !Number.isSafeInteger(w.payeeId)||w.payeeId<1||
    e.metadata.withdrawalId!==w.id||e.metadata.payeeKind!==w.payeeKind||
