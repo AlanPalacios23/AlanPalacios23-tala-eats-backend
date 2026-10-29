@@ -16,6 +16,7 @@ const read=(p)=>readFileSync(path.join(root,p),'utf8');
 const config=read('src/config.ts');
 const app=read('src/app.ts');
 const checkout=read('src/marketplace/checkout.ts');
+const cashPickupPolicy=read('src/marketplace/live-cash-delivery.ts');
 const driver=read('src/marketplace/driver.ts');
 const worker=read('src/worker.ts');
 const webhook=read('src/webhook.ts');
@@ -69,9 +70,10 @@ const stageChecks=[
  {id:'multipart-exact-closure',
   ok:media.includes("tail!==close&&tail!==close+'\\r\\n'"),
   detail:'Archivos malformados se rechazan después del cierre multipart'},
- {id:'checkout-narrow',ok:checkout.includes("STAGE_PICKUP_CASH_CHECKOUT_ENABLED")&&
+ {id:'checkout-narrow',ok:checkout.includes('cashPickupReleased()')&&
+     cashPickupPolicy.includes("config.NODE_ENV==='staging'&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true'")&&
      checkout.includes("order_type:z.literal('pickup')"),
-  detail:'Checkout experimental limitado a efectivo/recoger'},
+  detail:'Efectivo staging autorizado solo en staging; LIVE exige liberación independiente'},
  {id:'driver-synthetic-only',ok:driver.includes('stage_driver_fixture')&&
      driver.includes('STAGE_DRIVER_DELIVERY_ENABLED'),
   detail:'Entregas reales no habilitadas por error'},
