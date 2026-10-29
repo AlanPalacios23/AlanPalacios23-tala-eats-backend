@@ -1,9 +1,9 @@
 name: TALA EATS | Node Cash Pickup Atomic PG15 Redis8 E2E
 on:
   push:
-    branches: [feat/node-cash-pickup-atomic-checkout-20261019]
+    branches: [feat/node-cash-pickup-atomic-checkout-20261019, fix/rc126-real-onboarding-role-isolation-20261029]
   pull_request:
-    branches: [feat/node-marketplace-parity-stage-b-20261019]
+    branches: [feat/node-marketplace-parity-stage-b-20261019, feat/rc125-python-delivery-offers-parity-20261029]
 permissions:
   contents: read
 jobs:
