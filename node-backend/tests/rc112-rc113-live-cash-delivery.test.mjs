@@ -40,7 +40,7 @@ test('RC11.2 LIVE cash order reuses a single idempotent inventory+ledger transac
  for(const value of [
   'const liveCashDelivery=liveCashDeliveryReleased()&&isStageCashDeliveryIntent(raw)',
   'const delivery=stageDelivery||liveCashDelivery',
-  "if(liveCashDelivery&&account.role!=='customer')",
+  "if((liveCashDelivery||(cash&&liveCashPickupReleased()))&&account.role!=='customer')",
   "await hasReachableLiveDriver({lat:restaurant.lat,lng:restaurant.lng})",
   'live_delivery_cash_v1:true',
   'clientReference:data.client_reference','checkout_intent_hmac:fingerprint',
