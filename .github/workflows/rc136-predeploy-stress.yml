@@ -48,6 +48,7 @@ jobs:
       GITHUB_ACTIONS: "true"
       RC136_FINANCE_STRESS: "true"
       RC133_FINANCE_DB_TEST: "true"
+      AUTH_JWT_SECRET: "ci-finance-only-a93f0b6ac7e54dcb8fbe2795c30188d6d71b"
       NODE_ENV: staging
       HOST: "127.0.0.1"
       PORT: "18190"
