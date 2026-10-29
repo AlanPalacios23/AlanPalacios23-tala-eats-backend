@@ -8,6 +8,7 @@ import { config } from '../config.js';
 import {stageDeliveryTenderAllowed} from './delivery-financial-proof.js';
 import {liveDispatchReleased,liveDeliveryTenderAllowed} from './live-delivery-payment.js';
 import {liveCashDeliveryReleased,liveCashDeliveryTenderAllowed} from './live-cash-delivery.js';
+import {pilotDriverAllowed} from './live-delivery-pilot.js';
 import {canOperateDriverPresence,driverLocationKey,driverPersistKey,hasFreshVerifiedDriverGps,rankFreshLiveDrivers} from './delivery-runtime.js';
 import type { AuthUser } from '../generated/prisma/client.js';
 
@@ -173,6 +174,8 @@ async function redisLocation(driverId:number):Promise<{lat:number;lng:number}|nu
 // on each order. Different drivers never both claim a single order.
 async function assign(tx:any,driverId:number,forcedOrderId?:number):Promise<number|null>{
   if(config.NODE_ENV==='production'&&!liveDispatchReleased()&&!liveCashDeliveryReleased())return null;
+  if(config.NODE_ENV==='production'&&!pilotDriverAllowed(
+    config.NODE_ENV,driverId,config.LIVE_DELIVERY_PILOT_DRIVER_ID))return null;
   const p=await tx.marketplaceDriverProfile.findUnique({
     where:{userId:driverId},include:{user:true},
   });
@@ -193,6 +196,9 @@ async function assign(tx:any,driverId:number,forcedOrderId?:number):Promise<numb
            [{paymentMethod:'stripe',paymentStatus:'paid'}]:[])]:
         [{paymentMethod:'cash',paymentStatus:'pending'},
          {paymentMethod:'stripe',paymentStatus:'paid'}],
+      ...(config.NODE_ENV==='production'?{
+        userId:config.LIVE_DELIVERY_PILOT_CUSTOMER_ID,
+        restaurantId:config.LIVE_DELIVERY_PILOT_RESTAURANT_ID}:{}),
       ...(forcedOrderId?{id:forcedOrderId}:{})},
     include:{restaurant:true},take:forcedOrderId?1:25,
     orderBy:[{readyAt:'asc'},{updatedAt:'asc'},{id:'asc'}],
@@ -309,6 +315,7 @@ export async function liveCashDriverOffers(actor:AuthUser,limit:number){
  const cashReleased=liveCashDeliveryReleased();
  const cardReleased=liveDispatchReleased();
  if(!cashReleased&&!cardReleased)return [];
+ if(!pilotDriverAllowed(config.NODE_ENV,actor.id,config.LIVE_DELIVERY_PILOT_DRIVER_ID))return [];
  if(!Number.isSafeInteger(limit)||limit<1||limit>100)fail(422,'Límite inválido');
  const profile=await db.marketplaceDriverProfile.findUnique({where:{userId:actor.id}});
  if(!profile?.isVerified||!profile.isOnline||!actor.isActive)return [];
@@ -323,7 +330,9 @@ export async function liveCashDriverOffers(actor:AuthUser,limit:number){
   ...(cardReleased?[{paymentMethod:'stripe',paymentStatus:'paid'}]:[]),
  ];
  const orders=await db.marketOrder.findMany({
-  where:{orderType:'delivery',status:'ready',driverId:null,OR:tenders},
+  where:{orderType:'delivery',status:'ready',driverId:null,OR:tenders,
+    restaurantId:config.LIVE_DELIVERY_PILOT_RESTAURANT_ID,
+    userId:config.LIVE_DELIVERY_PILOT_CUSTOMER_ID},
   include:{restaurant:true},take:limit,
   orderBy:[{readyAt:'asc'},{id:'asc'}],
  });
