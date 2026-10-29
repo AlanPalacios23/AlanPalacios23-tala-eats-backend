@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {buildPublicPaymentContracts} from '../dist/payments/public-contract.js';
 
 const live={
- environment:'production',cashEnabled:true,
+ environment:'production',cashEnabled:true,liveCashPickupEnabled:true,
  stripeTestEnabled:false,stripeLiveEnabled:true,financialWritesEnabled:true,
  releaseApproved:true,refundsEnabled:true,manualSettlementApproved:true,
  publishableKey:'pk_live_public1234567890123456789012',pricingV162Enabled:false,
@@ -32,7 +32,7 @@ test('RC11.4 advertises cash LIVE delivery only after all production capabilitie
 });
 test('RC11.4 preserves fail-closed when cash approval or financial identity is incomplete',()=>{
  for(const change of [
-  {cashEnabled:false},
+  {liveCashDeliveryEnabled:false},
   {stripeLiveEnabled:false},
   {releaseApproved:false},
   {financialWritesEnabled:false},
@@ -58,7 +58,7 @@ test('RC11.4 PWA capability is derived from actual triple-flag LIVE release func
  assert.ok(liveSrc.includes("config.LIVE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'"));
  assert.ok(liveSrc.includes("config.LIVE_DELIVERY_CASH_DISPATCH_ENABLED==='true'"));
  assert.ok(liveSrc.includes("config.LIVE_DELIVERY_CASH_RELEASE_APPROVED==='true'"));
- assert.ok(contract.includes('delivery_checkout_supported:stageDeliveryCash||liveDeliveryCash'));
+ assert.ok(contract.includes('delivery_checkout_supported:stageDeliveryCash||liveDeliveryCash||stageDeliveryStripe||liveDeliveryStripe'));
  assert.ok(contract.includes('delivery_cash_supported:stageDeliveryCash||liveDeliveryCash'));
- assert.ok(contract.includes('delivery_quote_supported:stageDeliveryCash||liveDeliveryCash'));
+ assert.ok(contract.includes('delivery_quote_supported:stageDeliveryCash||liveDeliveryCash||stageDeliveryStripe||liveDeliveryStripe'));
 });
