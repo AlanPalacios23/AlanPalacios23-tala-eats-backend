@@ -5,6 +5,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import { db } from '../db.js';
 import { validDriverVehiclePlate } from './driver-onboarding-policy.js';
+import { canUseCommercialOnboardingRole } from './onboarding-role-policy.js';
 import { current } from '../auth/routes.js';
 export const operationsRouter=Router();
 export const adminRouter=Router();
@@ -359,6 +360,8 @@ operationsRouter.get('/onboarding-capabilities',async(_req,res)=>{
 operationsRouter.post('/onboarding',async(req,res)=>{
  const who=await account(req);
  const p=payload(onboardingSchema,req.body);
+ if(!canUseCommercialOnboardingRole(who.role,p.entity_type))
+  return bad(409,'La cuenta ya tiene otro rol comercial');
  if(p.entity_type==='driver'&&!validDriverVehiclePlate(p.vehicle,p.plate))
   return bad(422,'Vehículo o placas inválidas para registro de repartidor');
  // Only attach an exact private onboarding upload belonging to this account.
@@ -423,13 +426,27 @@ operationsRouter.patch('/admin/onboarding/:applicationId',async(req,res)=>{
  const p=payload(z.strictObject({status:z.enum(['approved','rejected','needs_info','suspended']),
   notes:z.string().max(2000).default('')}),req.body);
  const row=await db.$transaction(async tx=>{
+  // Serialize role transitions across DIFFERENT applications for the same
+  // user. Match boardUser() users-first locking to avoid lock inversions.
+  const application=await tx.opsOnboarding.findUnique({
+   where:{id},select:{userId:true},
+  });
+  if(!application)return bad(404,'Solicitud no encontrada');
+  const applicantLocks=await tx.$queryRawUnsafe(
+   'SELECT id FROM users WHERE id=$1 FOR UPDATE',application.userId);
+  if(!Array.isArray(applicantLocks)||applicantLocks.length!==1)
+   return bad(404,'Cuenta de solicitante no encontrada');
   const locks=await tx.$queryRawUnsafe(
    'SELECT id FROM onboarding_applications WHERE id=$1 FOR UPDATE',id);
   if(!Array.isArray(locks)||!locks.length)return bad(404,'Solicitud no encontrada');
   const old=await tx.opsOnboarding.findUnique({where:{id}});
-  if(!old)return bad(404,'Solicitud no encontrada');
+  if(!old||old.userId!==application.userId)
+   return bad(409,'Solicitud de identidad modificada');
   const account=await tx.authUser.findUnique({where:{id:old.userId}});
   if(!account)return bad(404,'Cuenta de solicitante no encontrada');
+  if(p.status==='approved'&&
+    !canUseCommercialOnboardingRole(account.role,old.entityType))
+   return bad(409,'No se permite reemplazar el rol comercial existente');
   if(p.status==='approved'){
    if(old.entityType==='driver'){
     if(!validDriverVehiclePlate(old.vehicle,old.plate))
