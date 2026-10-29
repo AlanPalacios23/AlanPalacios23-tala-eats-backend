@@ -303,7 +303,12 @@ export async function driverAvailability(actor:AuthUser,isOnline:boolean){
  * atomically claimed the delivery. The worker may auto-assign first.
  */
 export async function liveCashDriverOffers(actor:AuthUser,limit:number){
- if(!liveCashDeliveryReleased())return [];
+ // Legacy export name retained for existing PWA contracts. Both independently
+ // approved LIVE tenders are eligible; payment_status='paid' ALONE is never
+ // evidence that the Stripe order can enter a courier's queue.
+ const cashReleased=liveCashDeliveryReleased();
+ const cardReleased=liveDispatchReleased();
+ if(!cashReleased&&!cardReleased)return [];
  if(!Number.isSafeInteger(limit)||limit<1||limit>100)fail(422,'Límite inválido');
  const profile=await db.marketplaceDriverProfile.findUnique({where:{userId:actor.id}});
  if(!profile?.isVerified||!profile.isOnline||!actor.isActive)return [];
@@ -313,9 +318,12 @@ export async function liveCashDriverOffers(actor:AuthUser,limit:number){
  if(busy>0)return [];
  const fresh=await redisLocation(actor.id);
  if(!fresh)return [];
+ const tenders=[
+  ...(cashReleased?[{paymentMethod:'cash',paymentStatus:'pending'}]:[]),
+  ...(cardReleased?[{paymentMethod:'stripe',paymentStatus:'paid'}]:[]),
+ ];
  const orders=await db.marketOrder.findMany({
-  where:{orderType:'delivery',status:'ready',driverId:null,
-   paymentMethod:'cash',paymentStatus:'pending'},
+  where:{orderType:'delivery',status:'ready',driverId:null,OR:tenders},
   include:{restaurant:true},take:limit,
   orderBy:[{readyAt:'asc'},{id:'asc'}],
  });
@@ -323,7 +331,10 @@ export async function liveCashDriverOffers(actor:AuthUser,limit:number){
  for(const order of orders){
   if(haversine(fresh.lat,fresh.lng,order.restaurant.lat,order.restaurant.lng)>
      config.STAGE_DRIVER_MAX_PICKUP_KM)continue;
-  if(!await liveCashDeliveryTenderAllowed(db,order))continue;
+  const valid=order.paymentMethod==='cash'
+    ?await liveCashDeliveryTenderAllowed(db,order)
+    :await liveDeliveryTenderAllowed(db,order);
+  if(!valid)continue;
   offers.push({
    id:order.id,status:'ready',order_type:'delivery',
    restaurant_id:order.restaurantId,
