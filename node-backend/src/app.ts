@@ -23,6 +23,7 @@ import { stripeWebhook } from './webhook.js';
 import { authRouter,current } from './auth/routes.js';
 import { platformRouter, platformErrors } from './platform/routes.js';
 import { adminRouter, operationsRouter, opsErrors } from './operational/routes.js';
+import { onboardingUploadRouter } from './operational/onboarding-uploads.js';
 import { v9Router, v10Router, v11Router } from './versions/routes.js';
 import { resilienceRouter, resilienceErrors } from './resilience/routes.js';
 import { parityRouter, parityErrors } from './parity/routes.js';
@@ -285,6 +286,8 @@ if (config.MARKETPLACE_B_ENABLED === 'true') {
   app.use('/api/v1/platform', platformRouter);
   app.use('/api/v1/admin', adminRouter);
   app.use('/api/v1/operations', operationsRouter);
+  // RC136 private media endpoint: registered users only, no public static assets.
+  app.use('/api/v1/uploads', onboardingUploadRouter);
   app.use('/api/v1/v9', v9Router);
   app.use('/api/v1/v10', v10Router);
   app.use('/api/v1/v11', v11Router);
