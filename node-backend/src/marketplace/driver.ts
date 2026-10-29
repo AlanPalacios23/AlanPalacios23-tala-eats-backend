@@ -8,7 +8,7 @@ import { config } from '../config.js';
 import {stageDeliveryTenderAllowed} from './delivery-financial-proof.js';
 import {liveDispatchReleased,liveDeliveryTenderAllowed} from './live-delivery-payment.js';
 import {liveCashDeliveryReleased,liveCashDeliveryTenderAllowed} from './live-cash-delivery.js';
-import {canOperateDriverPresence,driverLocationKey,driverPersistKey,hasFreshVerifiedDriverGps} from './delivery-runtime.js';
+import {canOperateDriverPresence,driverLocationKey,driverPersistKey,hasFreshVerifiedDriverGps,rankFreshLiveDrivers} from './delivery-runtime.js';
 import type { AuthUser } from '../generated/prisma/client.js';
 
 const ACTIVE=['assigned','picked_up','on_the_way'];
@@ -303,7 +303,12 @@ export async function driverAvailability(actor:AuthUser,isOnline:boolean){
  * atomically claimed the delivery. The worker may auto-assign first.
  */
 export async function liveCashDriverOffers(actor:AuthUser,limit:number){
- if(!liveCashDeliveryReleased())return [];
+ // Legacy export name retained for existing PWA contracts. Both independently
+ // approved LIVE tenders are eligible; payment_status='paid' ALONE is never
+ // evidence that the Stripe order can enter a courier's queue.
+ const cashReleased=liveCashDeliveryReleased();
+ const cardReleased=liveDispatchReleased();
+ if(!cashReleased&&!cardReleased)return [];
  if(!Number.isSafeInteger(limit)||limit<1||limit>100)fail(422,'Límite inválido');
  const profile=await db.marketplaceDriverProfile.findUnique({where:{userId:actor.id}});
  if(!profile?.isVerified||!profile.isOnline||!actor.isActive)return [];
@@ -313,9 +318,12 @@ export async function liveCashDriverOffers(actor:AuthUser,limit:number){
  if(busy>0)return [];
  const fresh=await redisLocation(actor.id);
  if(!fresh)return [];
+ const tenders=[
+  ...(cashReleased?[{paymentMethod:'cash',paymentStatus:'pending'}]:[]),
+  ...(cardReleased?[{paymentMethod:'stripe',paymentStatus:'paid'}]:[]),
+ ];
  const orders=await db.marketOrder.findMany({
-  where:{orderType:'delivery',status:'ready',driverId:null,
-   paymentMethod:'cash',paymentStatus:'pending'},
+  where:{orderType:'delivery',status:'ready',driverId:null,OR:tenders},
   include:{restaurant:true},take:limit,
   orderBy:[{readyAt:'asc'},{id:'asc'}],
  });
@@ -323,7 +331,10 @@ export async function liveCashDriverOffers(actor:AuthUser,limit:number){
  for(const order of orders){
   if(haversine(fresh.lat,fresh.lng,order.restaurant.lat,order.restaurant.lng)>
      config.STAGE_DRIVER_MAX_PICKUP_KM)continue;
-  if(!await liveCashDeliveryTenderAllowed(db,order))continue;
+  const valid=order.paymentMethod==='cash'
+    ?await liveCashDeliveryTenderAllowed(db,order)
+    :await liveDeliveryTenderAllowed(db,order);
+  if(!valid)continue;
   offers.push({
    id:order.id,status:'ready',order_type:'delivery',
    restaurant_id:order.restaurantId,
@@ -645,18 +656,40 @@ export async function dispatchStageDeliveryReady(orderId:number):Promise<boolean
          (liveDispatchReleased()||liveCashDeliveryReleased()))))
     return false;
   if(!Number.isSafeInteger(orderId)||orderId<=0)return false;
+  // Python owner._assign_best_available_driver selects the nearest online
+  // eligible courier. Reproduce that behavior using ONLY recent Redis GPS.
+  // PostgreSQL's stale currentLat/currentLng are never dispatch proof.
+  const order=await db.marketOrder.findUnique({
+    where:{id:orderId},select:{restaurant:{select:{lat:true,lng:true}}},
+  });
+  if(!order)return false;
   const profiles=await db.marketplaceDriverProfile.findMany({
     where:{isVerified:true,isOnline:true,
       user:{is:{role:'driver',isActive:true}}},
     select:{userId:true},orderBy:{userId:'asc'},take:100,
   });
-  for(const p of profiles){
+  if(!profiles.length)return false;
+  // One bounded Redis MGET, not a separate connection for every driver.
+  // assign() then rechecks real TTL and performs the atomic claim.
+  const redis=redisClient();
+  let nearby:{userId:number;distance:number}[]=[];
+  try{
+    await redis.connect();
+    const locations=await redis.mget(
+      ...profiles.map(p=>driverLocationKey(config.NODE_ENV,p.userId)));
+    nearby=rankFreshLiveDrivers(
+      profiles.map(p=>p.userId),locations,
+      {lat:order.restaurant.lat,lng:order.restaurant.lng},
+      Date.now(),config.STAGE_DRIVER_MAX_PICKUP_KM);
+  }catch{return false;}finally{redis.disconnect();}
+  for(const p of nearby){
     try{
+      // assign() re-checks GPS TTL, signed payment/cash origin and acquires
+      // profile+order locks. Proximity sorting is NOT a substitute for CAS.
       const id=await withProfileLock(p.userId,tx=>assign(tx,p.userId,orderId));
       if(id===orderId)return true;
     }catch{
-      // Failed driver must never fail merchant READY transaction or
-      // duplicate an assignment to a second driver.
+      // Retry from worker on the same READY order without double assignment.
     }
   }
   return false;
