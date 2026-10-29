@@ -129,7 +129,9 @@ export async function reconcileOneTreasuryEvent(
  finally{client.release();}
 }
 export async function drainTreasuryConnectEvents(pool:Pool,provider:Pick<Stripe,'payouts'>,
- max=10):Promise<{checked:number;processed:number;held:number}>{
+ max=10,expectedLivemode=true):Promise<{checked:number;processed:number;held:number}>{
+ if(!expectedLivemode&&process.env.NODE_ENV!=='staging')
+  throw Error('TREASURY_TEST_DRAIN_REQUIRES_STAGING');
  if(!Number.isSafeInteger(max)||max<1||max>25)throw Error('TREASURY_BATCH_INVALID');
  const rows=await pool.query<{event_id:string}>(
   "SELECT event_id FROM tala_live_treasury_events WHERE state='received' ORDER BY received_at,event_id LIMIT $1",
@@ -137,21 +139,23 @@ export async function drainTreasuryConnectEvents(pool:Pool,provider:Pick<Stripe,
  let processed=0,held=0;
  for(const e of rows.rows){
   try{
-   const status=await reconcileOneTreasuryEvent(pool,provider,e.event_id);
+   const status=await reconcileOneTreasuryEvent(pool,provider,e.event_id,expectedLivemode);
    if(status==='processed')processed++;else held++;
   }catch{held++;}
  }
  return {checked:rows.rows.length,processed,held};
 }
 export function buildTreasuryConnectWebhookRouter(provider:Pick<Stripe,'webhooks'>,
- pool:Pool,secret:string){
+ pool:Pool,secret:string,expectedLivemode=true){
+ if(!expectedLivemode&&process.env.NODE_ENV!=='staging')
+  throw Error('TREASURY_TEST_ROUTER_REQUIRES_STAGING');
  const router=Router();
  router.post('/stripe-connect',raw({type:'application/json',limit:'256kb'}),
   async(req,res)=>{
    res.setHeader('Cache-Control','no-store');
    const signature=req.get('stripe-signature')??'';
    try{
-    const data=ingestTreasurySignedEvent(req.body,signature,provider,secret);
+    const data=ingestTreasurySignedEvent(req.body,signature,provider,secret,expectedLivemode);
     if(!data){res.status(200).json({received:true,queued:false});return;}
     const persisted=await persistTreasurySignedEvent(pool,data);
     res.status(200).json({received:true,queued:persisted.queued});
