@@ -5,6 +5,7 @@ import {buildLiveRuntimeDependencies} from './live/runtime-dependencies.js';
 import {buildIsolatedWebhookRouter} from './live/webhook-router.js';
 import {buildIsolatedCheckoutRouter} from './live/checkout-router.js';
 import {pickupCapability,type PickupMerchant} from './live/pickup-readiness.js';
+import {cashPickupReleased} from './marketplace/live-cash-delivery.js';
 import {buildLiveMerchantFinanceRouter} from './live/merchant-finance-router.js';
 import {buildPayeeFinanceRouter} from './live/payee-finance-router.js';
 import {buildTreasuryRouter} from './live/treasury-router.js';
@@ -102,12 +103,12 @@ if(live){
         const account=await live.stripe.accounts.retrieve(seller.stripe_account_id);
         res.json(pickupCapability(seller,account,liveChargeApproved,
           config.STRIPE_PLATFORM_ACCOUNT_ID,
-          config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true'));
+          cashPickupReleased()));
         return;
       }
       res.json(pickupCapability(seller,null,liveChargeApproved,
         config.STRIPE_PLATFORM_ACCOUNT_ID,
-        config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true'));
+        cashPickupReleased()));
     }catch {
       res.status(503).json({error:'PICKUP_READINESS_UNAVAILABLE'});
     }
@@ -306,7 +307,7 @@ app.get('/api/v1/ready', async (_req, res) => {
     // too. Read-only/API-only CI remains available with these flags disabled.
     const {ready,workerRequired}=computeRuntimeReadiness({
       nodeEnv:config.NODE_ENV,workerOnline,financialAuditPass:financialPass,
-      stagePickupCashEnabled:config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true',
+      stagePickupCashEnabled:config.NODE_ENV==='staging'&&cashPickupReleased(),
       stageDeliveryCashEnabled:config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true',
       stageStripeTestEnabled:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',
       stageDeliveryStripeTestEnabled:config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true',
