@@ -29,7 +29,7 @@ function setup({eventId='evt_FAIL19',state='requires_payment_method',
     if(sql.includes('FROM orders WHERE id=$1 FOR UPDATE'))
      return {rows:[{id:13,user_id:buyer,payment_method:'stripe',
       payment_provider:'stripe',payment_provider_id:pointer,
-      total:'14.00',payment_status:paymentStatus}]};
+      total:'14.00',order_type:'pickup',payment_status:paymentStatus}]};
     if(sql.includes('UPDATE stripe_webhook_events')){
      receipt='PROCESSED';mutations++;return {rowCount:1};
     }
