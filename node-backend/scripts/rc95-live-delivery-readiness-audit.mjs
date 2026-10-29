@@ -38,9 +38,8 @@ record('PRODUCTION_DELIVERY_FEATURE_FLAG',
  !/STAGE_DELIVERY_CASH_CHECKOUT_ENABLED!=='false'/.test(configSrc),
  'Current production config explicitly rejects staging driver/delivery flags');
 record('LIVE_DELIVERY_CHECKOUT',
- /liveCard=isStripePickupIntent\(req\.body\)/.test(routeSrc)===false &&
- /const liveStripe=cardStripePickup&&/.test(checkoutSrc)===false,
- 'Current LIVE card checkout and order creation accept pickup only');
+ false, // RC12.3 has gated source only; no external Stripe TEST commercial proof yet.
+ 'Card-to-door source exists but is hard-locked until E2E, refunds, logistics and operator release');
 let gpsRuntimeSrc='';
 try{gpsRuntimeSrc=read('src/marketplace/delivery-runtime.ts');}catch{/* RC9.4 deployed source */}
 record('LIVE_GPS_NAMESPACE',

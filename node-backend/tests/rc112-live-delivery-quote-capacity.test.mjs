@@ -41,8 +41,10 @@ test('LIVE route returns genuine server quote but cannot create a paid delivery 
  assert.ok(section.includes('await hasReachableLiveDriver('));
  assert.ok(section.includes('calculatePickupQuoteFromCatalog('));
  assert.ok(section.includes('calculateDefaultCommercial('));
- assert.ok(section.includes("if(livePreview&&data.payment_method==='stripe')"));
- assert.ok(section.includes("delivery_checkout_supported:stagePreview||(livePreview&&liveCashDeliveryReleased())"));
+ assert.ok(section.includes("if(livePreview&&data.payment_method==='stripe'&&!liveDispatchReleased())"));
+ assert.ok(section.includes("delivery_checkout_supported:stagePreview||(livePreview&&"));
+ assert.ok(section.includes("(liveCashDeliveryReleased()||liveDispatchReleased())"));
+ assert.ok(section.includes("live_stripe_delivery_supported:livePreview&&liveDispatchReleased()"));
  assert.ok(section.includes("checkout_blocker:'LIVE_DELIVERY_CHECKOUT_NOT_RELEASED'"));
  assert.ok(section.includes("driver_assignment_guaranteed:false"));
  assert.doesNotMatch(section,/stripe\.paymentIntents\.create|marketOrder\.create|\.\$transaction|return 201/);
@@ -50,6 +52,6 @@ test('LIVE route returns genuine server quote but cannot create a paid delivery 
  const orders=routes.split("stageOrdersRouter.post('/',async(req,res)=>{")[1]
   .split("ownerRouter.post('/orders/:orderId/complete'")[0];
  assert.ok(cfg.includes('RC96_LIVE_DELIVERY_NOT_RELEASED_STRIPE_TEST_REQUIRED'));
- assert.ok(orders.includes('const liveCard=isStripePickupIntent(req.body)&&'));
+ assert.ok(orders.includes('liveDispatchReleased()&&isStageStripeDeliveryIntent(req.body)'));
  assert.ok(orders.includes("config.NODE_ENV==='staging'&&"));
 });

@@ -10,7 +10,8 @@ import {db} from '../db.js';
 import {account,bad,param} from '../operational/routes.js';
 import {config} from '../config.js';
 import {buildPublicPaymentContracts} from '../payments/public-contract.js';
-import {liveCashDeliveryReleased} from '../marketplace/live-cash-delivery.js';
+import {liveCashDeliveryReleased,cashPickupReleased} from '../marketplace/live-cash-delivery.js';
+import {liveDispatchReleased} from '../marketplace/live-delivery-payment.js';
 import {createTestPaymentIntent} from '../stage-stripe-test.js';
 import {previewRecipientOrders} from '../finance/recipient-readiness.js';
 
@@ -84,7 +85,9 @@ parityRouter.get('/platform/features',(_req,res)=>{
 // immutable Stripe ledger are checked again at order/payment-intent time.
 const publicPaymentContracts=()=>buildPublicPaymentContracts({
   environment:config.NODE_ENV,
-  cashEnabled:config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true',
+  cashEnabled:config.NODE_ENV==='staging'&&cashPickupReleased(),
+  liveCashPickupEnabled:config.NODE_ENV==='production'&&cashPickupReleased(),
+  liveCardDeliveryEnabled:liveDispatchReleased(),
   stripeTestEnabled:config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true',
   stripeLiveEnabled:config.STRIPE_LIVE_ENABLED==='true',
   financialWritesEnabled:config.STRIPE_FINANCIAL_WRITES_ENABLED==='true',

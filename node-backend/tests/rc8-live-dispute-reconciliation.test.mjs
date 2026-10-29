@@ -35,7 +35,7 @@ function fixture({chargeLive=true,wrongEvent=false,wrongOrder=false,refundOnly=f
      id:31,user_id:wrongOrder?99:42,restaurant_id:51,total:'12.50',
      payment_method:'stripe',payment_provider:'stripe',
      payment_provider_id:'pi_DISPUTE11',
-     payment_status:refundOnly?'pending':'paid'}]};
+     order_type:'pickup',payment_status:refundOnly?'pending':'paid'}]};
     if(sql.includes("kind='stripe_live_payment'"))
       return {rows:[{amount:'12.50'}]};
     if(sql.includes('INSERT INTO tala_live_financial_cases'))return {rowCount:1};

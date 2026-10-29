@@ -45,6 +45,8 @@ const schema = z.object({
   LIVE_DELIVERY_DISPATCH_ENABLED: z.enum(['false','true']).default('false'),
   LIVE_DELIVERY_CARD_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
   LIVE_DELIVERY_RELEASE_APPROVED: z.enum(['false','true']).default('false'),
+  // Separate attestation that real Stripe TEST + GPS + PIN + signed webhooks completed.
+  LIVE_DELIVERY_CARD_E2E_APPROVED: z.enum(['false','true']).default('false'),
   // RC12.2: cash at merchant pickup has independent LIVE release; staging flag is never authority in production.
   LIVE_PICKUP_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
   LIVE_PICKUP_CASH_RELEASE_APPROVED: z.enum(['false','true']).default('false'),
@@ -71,9 +73,30 @@ const schema = z.object({
   WEB_PUSH_SUBJECT: z.string().regex(/^(mailto:.+@.+|https:\/\/[^/]+.*)$/).optional(),
 });
 // Stripe is the only online payment provider in this Node release.
-if(['LIVE_DELIVERY_DISPATCH_ENABLED','LIVE_DELIVERY_CARD_CHECKOUT_ENABLED',
-    'LIVE_DELIVERY_RELEASE_APPROVED'].some(k=>process.env[k]==='true'))
+// RC12.3 card delivery needs FOUR independent approvals. No partial rollout:
+// an operator must first prove Stripe TEST 3-PWA E2E, signed capture,
+// refund/dispute recovery, geo dispatch, PIN, and reversal/rollback.
+const deliveryCardKeys=['LIVE_DELIVERY_DISPATCH_ENABLED',
+ 'LIVE_DELIVERY_CARD_CHECKOUT_ENABLED','LIVE_DELIVERY_RELEASE_APPROVED',
+ 'LIVE_DELIVERY_CARD_E2E_APPROVED'] as const;
+const deliveryCardValues=deliveryCardKeys.map(k=>process.env[k]==='true');
+if(deliveryCardValues.some(Boolean)&&!deliveryCardValues.every(Boolean))
  throw new Error('RC96_LIVE_DELIVERY_NOT_RELEASED_STRIPE_TEST_REQUIRED');
+if(deliveryCardValues.every(Boolean)&&(
+ process.env.NODE_ENV!=='production'||
+ process.env.LIVE_DRIVER_PRESENCE_ENABLED!=='true'||
+ process.env.MARKETPLACE_B_ENABLED!=='true'||
+ process.env.AUTH_V02_ENABLED!=='true'||
+ process.env.MERCHANT_MANAGED_DELIVERY==='true'||
+ process.env.COMMERCIAL_PRICING_V162_ENABLED==='true'||
+ ['STRIPE_LIVE_ENABLED','STRIPE_LIVE_RELEASE_APPROVED',
+  'STRIPE_FINANCIAL_WRITES_ENABLED','STRIPE_REFUNDS_ENABLED',
+  'STRIPE_MANUAL_SETTLEMENT_APPROVED'].some(k=>process.env[k]!=='true')||
+ ['STRIPE_CONNECT_TRANSFERS_ENABLED','STAGE_DRIVER_DELIVERY_ENABLED',
+  'STAGE_DELIVERY_CASH_CHECKOUT_ENABLED',
+  'STAGE_DELIVERY_STRIPE_TEST_ENABLED',
+  'STAGE_STRIPE_TEST_CHECKOUT_ENABLED'].some(k=>process.env[k]==='true')
+)) throw new Error('RC123_LIVE_CARD_DELIVERY_PRECONDITIONS_NOT_MET');
 
 // LIVE cash pickup is a distinct release. A staging cash pickup flag cannot release it.
 const liveCashPickupKeys=['LIVE_PICKUP_CASH_CHECKOUT_ENABLED','LIVE_PICKUP_CASH_RELEASE_APPROVED'] as const;

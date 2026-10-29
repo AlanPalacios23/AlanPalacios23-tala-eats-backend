@@ -15,6 +15,7 @@ import {inspectLiveFinancialData} from './financial-readiness.js';
 
 type Gate={
   enabled:boolean;
+  deliveryReleased?:boolean; // Default OFF independently of LIVE pickup.
   authSecret:string;
   pool:Pool;
   redis:Pick<Redis,'eval'>;
@@ -72,7 +73,7 @@ export function buildIsolatedCheckoutRouter(g:Gate){
     if(typeof n!=='number'){res.status(503).json({error:'RATE_LIMIT_DOWN'});return;}
     if(n>5){res.status(429).json({error:'RATE_LIMIT'});return;}
     const intent=await createLivePickupPaymentIntent(
-      store,g.stripe,g.settings,orderId,buyer);
+      store,g.stripe,g.settings,orderId,buyer,g.deliveryReleased===true);
     res.status(200).json(intent);
   }catch(error){
     if(error instanceof LiveGateError){

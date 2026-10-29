@@ -50,7 +50,7 @@ test('RC12.2 customer, checkout, seller lifecycle and handoff share same explici
 test('RC12.2 public pickup capability does not advertise stage cash in production',()=>{
  const app=read('app.ts');
  const readiness=read('live/pickup-readiness.ts');
- assert.ok(app.includes("import {cashPickupReleased} from './marketplace/live-cash-delivery.js';"));
+ assert.ok(app.includes("import {cashPickupReleased,liveCashDeliveryReleased} from './marketplace/live-cash-delivery.js';"));
  assert.ok(app.includes('cashPickupReleased()'));
  assert.doesNotMatch(app,/config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true'/);
  assert.ok(app.includes("stagePickupCashEnabled:config.NODE_ENV==='staging'&&cashPickupReleased()"));

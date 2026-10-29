@@ -36,8 +36,10 @@ export async function reconcileRecordedLivePaymentFailure(
  const intent=await provider.paymentIntents.retrieve(e.objectId);
  const orderId=Number(intent.metadata.order_id);
  const buyerId=Number(intent.metadata.buyer_id);
+ const fulfillment=intent.metadata.tala_mode==='rc8_live_delivery'?'delivery':
+   intent.metadata.tala_mode==='rc8_live_pickup'?'pickup':null;
  if(!intent.livemode||intent.id!==e.objectId||
-    intent.currency!=='mxn'||intent.metadata.tala_mode!=='rc8_live_pickup'||
+    intent.currency!=='mxn'||!fulfillment||
     !pos.test(intent.metadata.order_id??'')||
     !pos.test(intent.metadata.buyer_id??'')||
     !Number.isSafeInteger(orderId)||!Number.isSafeInteger(buyerId)||
@@ -57,12 +59,12 @@ export async function reconcileRecordedLivePaymentFailure(
   }
   const orders=await client.query<{
    id:number;user_id:number;payment_method:string;payment_provider:string;
-   payment_provider_id:string;total:string;payment_status:string;
+   payment_provider_id:string;total:string;payment_status:string;order_type:string;
   }>(
-   'SELECT id,user_id,payment_method,payment_provider,payment_provider_id,total::text,payment_status FROM orders WHERE id=$1 FOR UPDATE',
+   'SELECT id,user_id,payment_method,payment_provider,payment_provider_id,total::text,payment_status,order_type FROM orders WHERE id=$1 FOR UPDATE',
    [orderId]);
   const o=orders.rows[0];
-  if(!o||o.user_id!==buyerId||o.payment_method!=='stripe'||
+  if(!o||o.user_id!==buyerId||o.order_type!==fulfillment||o.payment_method!=='stripe'||
      o.payment_provider!=='stripe'||
      ![intent.id,'pi_reserving_rc8_live'].includes(o.payment_provider_id)||
      cents(o.total)!==intent.amount)

@@ -87,12 +87,13 @@ export function livePilotAmount(amount:number,maxAmountMinor:number):number {
 export const liveReceiptIdentity=(intent:{
   livemode:boolean;id:string;amount:number;amount_received:number;
   currency:string;status:string;metadata:Record<string,string>;
-},order:{id:number;buyerId:number;amountMinor:number})=>{
+},order:{id:number;buyerId:number;amountMinor:number;fulfillment?:'pickup'|'delivery'})=>{
   assert(intent.livemode,'TEST_OBJECT_IN_LIVE');
   assert(/^pi_[A-Za-z0-9]+$/.test(intent.id),'INVALID_PI');
   assert(intent.currency==='mxn'&&intent.amount===order.amountMinor,
     'AMOUNT_OR_CURRENCY_MISMATCH');
-  assert(intent.metadata.tala_mode==='rc8_live_pickup'&&
+  const mode=order.fulfillment==='delivery'?'rc8_live_delivery':'rc8_live_pickup';
+  assert(intent.metadata.tala_mode===mode&&
     intent.metadata.order_id===String(order.id)&&
     intent.metadata.buyer_id===String(order.buyerId),'LIVE_ORDER_BINDING_MISMATCH');
   assert(intent.status==='succeeded'&&intent.amount_received===intent.amount,

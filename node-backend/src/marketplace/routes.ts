@@ -11,6 +11,7 @@ import { createStagePickupOrder, isCashPickupIntent, isStripePickupIntent,
 import {deliveryDistance,assertRestaurantDeliveryOrigin,DeliveryGeoError} from './delivery-geography.js';
 import {hasReachableLiveDriver} from './live-delivery-capacity.js';
 import {liveCashDeliveryReleased,isLiveCashCheckoutProvenance,cashPickupReleased} from './live-cash-delivery.js';
+import {liveDispatchReleased} from './live-delivery-payment.js';
 import {freshDriverNearPickup,driverLocationKey} from './delivery-runtime.js';
 import {calculateDefaultCommercial,fmtCents} from '../finance/pricing.js';
 import {calculatePickupQuoteFromCatalog,assertDefaultPickupRates,PickupQuoteError} from './quote.js';
@@ -399,8 +400,10 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
   const parsed=schema.safeParse(req.body);
   if(!parsed.success)throw new RouteError(422,'Datos de cotización inválidos');
   const data=parsed.data;
-  if(livePreview&&data.payment_method==='stripe')
+  if(livePreview&&data.payment_method==='stripe'&&!liveDispatchReleased())
     throw new RouteError(503,'Tarjeta a domicilio LIVE pendiente de autorización financiera');
+  if(livePreview&&data.payment_method==='cash'&&!liveCashDeliveryReleased())
+    throw new RouteError(503,'Efectivo a domicilio LIVE pendiente de autorización logística');
   if(stagePreview&&data.payment_method==='stripe'&&
      (config.STAGE_DELIVERY_STRIPE_TEST_ENABLED!=='true'||
       config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true'))
@@ -473,10 +476,13 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
       driver_earning:fmtCents(economics.driverEarning),
       quote_is_binding:false,inventory_reserved:false,
       requires_revalidation_on_order:true,
-      delivery_checkout_supported:stagePreview||(livePreview&&liveCashDeliveryReleased()),
+      delivery_checkout_supported:stagePreview||(livePreview&&
+        (liveCashDeliveryReleased()||liveDispatchReleased())),
+      live_cash_delivery_supported:livePreview&&liveCashDeliveryReleased(),
+      live_stripe_delivery_supported:livePreview&&liveDispatchReleased(),
       ...(livePreview?{live_driver_capacity_verified:true,
         preview_only:true,
-        ...(liveCashDeliveryReleased()?{}:{
+        ...((liveCashDeliveryReleased()||liveDispatchReleased())?{}:{
           checkout_blocker:'LIVE_DELIVERY_CHECKOUT_NOT_RELEASED'})}:{}),
       driver_assignment_guaranteed:false,
     });
@@ -630,7 +636,8 @@ stageOrdersRouter.post('/',async(req,res)=>{
      config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
      config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'))&&
     config.NODE_ENV==='staging'&&config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true';
-  const liveCard=isStripePickupIntent(req.body)&&
+  const liveCard=(isStripePickupIntent(req.body)||
+    (liveDispatchReleased()&&isStageStripeDeliveryIntent(req.body)))&&
     config.NODE_ENV==='production'&&config.STRIPE_LIVE_ENABLED==='true'&&
     config.STRIPE_FINANCIAL_WRITES_ENABLED==='true'&&
     config.STRIPE_LIVE_RELEASE_APPROVED==='true'&&

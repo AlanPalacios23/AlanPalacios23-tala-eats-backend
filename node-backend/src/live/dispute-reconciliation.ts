@@ -51,9 +51,11 @@ export async function holdRecordedLiveDispute(
  const pi=await provider.paymentIntents.retrieve(piId);
  const orderId=Number(pi.metadata.order_id);
  const buyerId=Number(pi.metadata.buyer_id);
+ const fulfillment=pi.metadata.tala_mode==='rc8_live_delivery'?'delivery':
+   pi.metadata.tala_mode==='rc8_live_pickup'?'pickup':null;
  if(!pi.livemode||pi.id!==piId||pi.currency!=='mxn'||
     pi.status!=='succeeded'||pi.amount_received!==pi.amount||
-    pi.metadata.tala_mode!=='rc8_live_pickup'||
+    !fulfillment||
     !positive.test(pi.metadata.order_id??'')||
     !positive.test(pi.metadata.buyer_id??'')||
     !Number.isSafeInteger(orderId)||!Number.isSafeInteger(buyerId)||
@@ -75,12 +77,12 @@ export async function holdRecordedLiveDispute(
   const orders=await client.query<{
    id:number;user_id:number;restaurant_id:number;total:string;
    payment_method:string;payment_provider:string;payment_provider_id:string;
-   payment_status:string;
+   payment_status:string;order_type:string;
   }>(
-   'SELECT id,user_id,restaurant_id,total::text,payment_method,payment_provider,payment_provider_id,payment_status FROM orders WHERE id=$1 FOR UPDATE',
+   'SELECT id,user_id,restaurant_id,total::text,payment_method,payment_provider,payment_provider_id,payment_status,order_type FROM orders WHERE id=$1 FOR UPDATE',
    [orderId]);
   const order=orders.rows[0];
-  if(!order||order.user_id!==buyerId||
+  if(!order||order.user_id!==buyerId||order.order_type!==fulfillment||
      order.payment_method!=='stripe'||order.payment_provider!=='stripe'||
      order.payment_provider_id!==piId||
      !['paid','partially_refunded','refunded'].includes(order.payment_status)||

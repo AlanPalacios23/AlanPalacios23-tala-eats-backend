@@ -7,6 +7,7 @@ import {deliveryDistance,assertRestaurantDeliveryOrigin} from './delivery-geogra
 import {hasReachableStageDriver} from './driver.js';
 import {hasReachableLiveDriver} from './live-delivery-capacity.js';
 import {liveCashDeliveryReleased,cashPickupReleased,liveCashPickupReleased} from './live-cash-delivery.js';
+import {liveDispatchReleased} from './live-delivery-payment.js';
 import { z } from 'zod';
 import { db } from '../db.js';
 import { config } from '../config.js';
@@ -126,15 +127,16 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
     config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true'&&
     isStageStripeDeliveryIntent(raw);
-  const cardStripe=cardStripePickup||cardStripeDelivery;
+  const liveStripeDelivery=liveDispatchReleased()&&isStageStripeDeliveryIntent(raw);
+  const cardStripe=cardStripePickup||cardStripeDelivery||liveStripeDelivery;
   const stageDelivery=config.NODE_ENV==='staging'&&
     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
     (isStageCashDeliveryIntent(raw)||cardStripeDelivery);
   const liveCashDelivery=liveCashDeliveryReleased()&&isStageCashDeliveryIntent(raw);
-  const delivery=stageDelivery||liveCashDelivery;
+  const delivery=stageDelivery||liveCashDelivery||liveStripeDelivery;
   const testStripe=cardStripe&&config.NODE_ENV==='staging'&&
     config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true';
-  const liveStripe=cardStripePickup&&config.NODE_ENV==='production'&&
+  const liveStripe=(cardStripePickup||liveStripeDelivery)&&config.NODE_ENV==='production'&&
     config.STRIPE_LIVE_ENABLED==='true'&&
     config.STRIPE_LIVE_RELEASE_APPROVED==='true'&&
     config.STRIPE_FINANCIAL_WRITES_ENABLED==='true'&&
@@ -154,7 +156,8 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
   const parsed=delivery?mobileDeliverySchema.safeParse(raw):mobilePickupSchema.safeParse(raw);
   if(!parsed.success)throw new CheckoutError(422,'Datos del pedido inválidos');
   // The metadata fields are not part of the financial signature or insert.
-  // No Stripe LIVE delivery, coupons, schedules or unsupported discounts.
+  // LIVE card delivery requires independent operational release; coupons,
+  // schedules and unsupported discounts remain unavailable.
   const {coupon_code:_coupon,delivery_lat:_lat,delivery_lng:_lng,...data}=parsed.data;
   const tip=toMinor(data.tip);
   if(tip>1_000_000n)throw new CheckoutError(422,'Propina fuera de límite');
@@ -221,7 +224,7 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
         {lat:_lat!,lng:_lng!},restaurant.deliveryRadiusKm);
       deliveryDistanceMilli=geo.distanceMilliKm;
       // Prevent creating a normal delivery without any verified online driver.
-      const driverAvailable=liveCashDelivery?
+      const driverAvailable=(liveCashDelivery||liveStripeDelivery)?
         await hasReachableLiveDriver({lat:restaurant.lat,lng:restaurant.lng}):
         await hasReachableStageDriver({lat:restaurant.lat,lng:restaurant.lng});
       if(!driverAvailable)
@@ -362,6 +365,7 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
       metadataJson:JSON.stringify({source:'checkout',checkout_intent_hmac:fingerprint,
         ...(stageDelivery?{stage_delivery_customer_v1:true}:{}),
         ...(liveCashDelivery?{live_delivery_cash_v1:true}:{}),
+        ...(liveStripeDelivery?{live_delivery_checkout_v1:true}:{}),
       }),
     }});
     // Stripe TEST is an unpaid reservation. No seller balance, GMV or

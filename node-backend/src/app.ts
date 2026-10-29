@@ -4,8 +4,10 @@ import { Redis } from 'ioredis';
 import {buildLiveRuntimeDependencies} from './live/runtime-dependencies.js';
 import {buildIsolatedWebhookRouter} from './live/webhook-router.js';
 import {buildIsolatedCheckoutRouter} from './live/checkout-router.js';
-import {pickupCapability,type PickupMerchant} from './live/pickup-readiness.js';
-import {cashPickupReleased} from './marketplace/live-cash-delivery.js';
+import {pickupCapability,deliveryCapability,type PickupMerchant} from './live/pickup-readiness.js';
+import {hasReachableLiveDriver} from './marketplace/live-delivery-capacity.js';
+import {liveDispatchReleased} from './marketplace/live-delivery-payment.js';
+import {cashPickupReleased,liveCashDeliveryReleased} from './marketplace/live-cash-delivery.js';
 import {buildLiveMerchantFinanceRouter} from './live/merchant-finance-router.js';
 import {buildPayeeFinanceRouter} from './live/payee-finance-router.js';
 import {buildTreasuryRouter} from './live/treasury-router.js';
@@ -70,7 +72,9 @@ if(live){
   // Read-only, buyer-visible readiness for THIS merchant. Global payment
   // method configuration alone does not mean a particular shop can receive
   // orders. Never echo Stripe account IDs, owner emails, or bank details.
-  app.get('/api/v1/restaurants/:id/pickup-readiness',async(req,res)=>{
+  app.get(['/api/v1/restaurants/:id/pickup-readiness',
+    '/api/v1/restaurants/:id/delivery-readiness'],async(req,res)=>{
+    const forDelivery=req.path.endsWith('/delivery-readiness');
     res.setHeader('Cache-Control','private, no-store');
     try {
       const session=await current(req);
@@ -86,7 +90,7 @@ if(live){
         res.status(422).json({error:'RESTAURANT_ID_INVALID'});return;
       }
       const result=await live.pool.query<PickupMerchant>(
-        `SELECT r.id,r.is_open,r.pickup_enabled,r.verification_status,
+        `SELECT r.id,r.lat,r.lng,r.is_open,r.pickup_enabled,r.verification_status,
          r.onboarding_status,r.owner_id,u.email AS owner_email,
          u.is_active AS owner_active,m.stripe_account_id,m.owner_approved_at
          FROM restaurants r
@@ -97,20 +101,25 @@ if(live){
       if(!seller){
         res.status(404).json({error:'RESTAURANT_NOT_FOUND'});return;
       }
-      // Do not call Stripe unless the mapping belongs to a verified,
-      // approved owner. Avoid confusing an outage with authorization.
-      if(seller.owner_approved_at&&seller.stripe_account_id){
-        const account=await live.stripe.accounts.retrieve(seller.stripe_account_id);
+      // Never advertise pickup permissions for home delivery; a merchant
+      // may be delivery-only. Both paths independently validate Connect.
+      const account=seller.owner_approved_at&&seller.stripe_account_id
+        ?await live.stripe.accounts.retrieve(seller.stripe_account_id):null;
+      if(forDelivery){
+        const deliveryCash=liveCashDeliveryReleased();
+        const deliveryCard=liveDispatchReleased();
+        const capacity=(deliveryCash||deliveryCard)&&
+          Number.isFinite(seller.lat)&&Number.isFinite(seller.lng)
+          ?await hasReachableLiveDriver({lat:seller.lat!,lng:seller.lng!})
+          :false;
+        res.json(deliveryCapability(seller,account,liveChargeApproved,
+          config.STRIPE_PLATFORM_ACCOUNT_ID,deliveryCash,deliveryCard,capacity));
+      }else{
         res.json(pickupCapability(seller,account,liveChargeApproved,
-          config.STRIPE_PLATFORM_ACCOUNT_ID,
-          cashPickupReleased()));
-        return;
+          config.STRIPE_PLATFORM_ACCOUNT_ID,cashPickupReleased()));
       }
-      res.json(pickupCapability(seller,null,liveChargeApproved,
-        config.STRIPE_PLATFORM_ACCOUNT_ID,
-        cashPickupReleased()));
     }catch {
-      res.status(503).json({error:'PICKUP_READINESS_UNAVAILABLE'});
+      res.status(503).json({error:'MERCHANT_READINESS_UNAVAILABLE'});
     }
   });
   // Check the payee again at PaymentIntent time: a previously created
@@ -161,7 +170,8 @@ if(live){
     }
   });
   app.use('/api/v1',buildIsolatedCheckoutRouter({
-    enabled:liveChargeApproved,authSecret:config.AUTH_JWT_SECRET!,pool:live.pool,
+    enabled:liveChargeApproved,deliveryReleased:liveDispatchReleased(),
+    authSecret:config.AUTH_JWT_SECRET!,pool:live.pool,
     redis:live.redis,stripe:live.stripe,settings:live.settings,
   }));
   // The pilot currently contains a disposable test restaurant. Standby

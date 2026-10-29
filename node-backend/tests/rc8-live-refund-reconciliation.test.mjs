@@ -22,7 +22,7 @@ function fixture({status='succeeded',amount=500,livemode=true,remoteId='evt_REFU
   if(sql.includes('FROM orders WHERE id=$1 FOR UPDATE'))
    return {rows:[{id:12,user_id:21,restaurant_id:31,total:'12.00',
     refunded_amount:balance,payment_provider_id:'pi_PAID123',
-    payment_status:paymentStatus,payment_method:'stripe',payment_provider:'stripe'}]};
+    payment_status:paymentStatus,order_type:'pickup',payment_method:'stripe',payment_provider:'stripe'}]};
   if(sql.includes("kind='stripe_live_payment'"))
    return {rows:[{amount:'12.00'}]};
   if(sql.includes('WHERE idempotency_key=$1 FOR UPDATE'))

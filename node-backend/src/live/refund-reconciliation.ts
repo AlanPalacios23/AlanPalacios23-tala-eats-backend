@@ -23,7 +23,7 @@ const eventTypes=new Set(['refund.created','refund.updated']);
 const Q={
  recorded:'SELECT type,"objectId","stripeAccountId" FROM stripe_webhook_events WHERE id=$1',
  receipt:'SELECT type,"objectId",status FROM stripe_webhook_events WHERE id=$1 AND "stripeAccountId" IS NULL FOR UPDATE',
- order:'SELECT id,user_id,restaurant_id,total::text,refunded_amount::text,payment_provider_id,payment_status,payment_method,payment_provider FROM orders WHERE id=$1 FOR UPDATE',
+ order:'SELECT id,user_id,restaurant_id,total::text,refunded_amount::text,payment_provider_id,payment_status,payment_method,payment_provider,order_type FROM orders WHERE id=$1 FOR UPDATE',
  original:"SELECT amount::text AS amount FROM financial_ledger_entries WHERE order_id=$1 AND account='stripe_live_collected' AND kind='stripe_live_payment' AND direction='credit' AND idempotency_key=$2 FOR UPDATE",
  duplicate:'SELECT order_id,amount::text AS amount FROM financial_ledger_entries WHERE idempotency_key=$1 FOR UPDATE',
  debit:"INSERT INTO financial_ledger_entries (order_id,user_id,restaurant_id,account,direction,amount,currency,kind,description,idempotency_key,created_at) VALUES($1,$2,$3,'stripe_live_collected','debit',$4,'MXN','stripe_live_refund','Stripe LIVE refund confirmed; payout/inventory HOLD',$5,NOW())",
@@ -59,9 +59,11 @@ export async function reconcileRecordedLiveRefund(
  const pi=await provider.paymentIntents.retrieve(piId);
  const orderId=Number(pi.metadata.order_id);
  const buyerId=Number(pi.metadata.buyer_id);
+ const fulfillment=pi.metadata.tala_mode==='rc8_live_delivery'?'delivery':
+   pi.metadata.tala_mode==='rc8_live_pickup'?'pickup':null;
  if(!pi.livemode||pi.id!==piId||pi.currency!=='mxn'||
     pi.status!=='succeeded'||pi.amount_received!==pi.amount||
-    pi.metadata.tala_mode!=='rc8_live_pickup'||
+    !fulfillment||
     !/^[1-9][0-9]{0,9}$/.test(pi.metadata.order_id??'')||
     !/^[1-9][0-9]{0,9}$/.test(pi.metadata.buyer_id??'')||
     !Number.isSafeInteger(orderId)||!Number.isSafeInteger(buyerId)||
@@ -81,10 +83,11 @@ export async function reconcileRecordedLiveRefund(
   const found=await client.query<{
    id:number;user_id:number;restaurant_id:number;total:string;
    refunded_amount:string;payment_provider_id:string;payment_status:string;
-   payment_method:string;payment_provider:string;
+   payment_method:string;payment_provider:string;order_type:string;
   }>(Q.order,[orderId]);
   const order=found.rows[0];
-  if(!order||order.user_id!==buyerId||order.payment_provider_id!==piId||
+  if(!order||order.user_id!==buyerId||order.order_type!==fulfillment||
+     order.payment_provider_id!==piId||
      order.payment_method!=='stripe'||order.payment_provider!=='stripe'||
      !['paid','partially_refunded','refunded'].includes(order.payment_status)||
      cents(order.total)!==pi.amount)

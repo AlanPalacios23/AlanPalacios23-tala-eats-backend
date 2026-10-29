@@ -51,7 +51,8 @@ const stageChecks=[
      app.includes('const liveChargeApproved=Boolean(live&&')&&
      app.includes('financialWrites:Boolean(liveChargeApproved&&ready)')&&
      app.includes('online_payment_writes:liveChargeApproved')&&
-     app.includes('enabled:liveChargeApproved,authSecret:config.AUTH_JWT_SECRET!')&&
+     app.includes('enabled:liveChargeApproved,deliveryReleased:liveDispatchReleased()')&&
+     app.includes('authSecret:config.AUTH_JWT_SECRET!')&&
      app.includes('LIVE_CARD_CHECKOUT_NOT_APPROVED')&&
      app.includes('PRODUCTION_STANDBY_CHECKOUT_DISABLED'),
   detail:'Staging sigue aislado y la API LIVE en standby no anuncia cobros'},

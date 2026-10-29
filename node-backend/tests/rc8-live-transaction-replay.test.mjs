@@ -69,6 +69,7 @@ function fixture({
     if(sql.includes('INSERT INTO order_events')){
       orderEvents.push(params[2]);return {rows:[],rowCount:1};
     }
+    if(sql.includes('INSERT INTO notifications'))return {rows:[],rowCount:1};
     if(sql.includes('UPDATE stripe_webhook_events')){
       receipt.status='PROCESSED';return {rows:[],rowCount:1};
     }

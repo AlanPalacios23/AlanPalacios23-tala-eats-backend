@@ -52,8 +52,10 @@ test('RC11.2 LIVE cash order reuses a single idempotent inventory+ledger transac
   assert.ok(checkout.includes(value),value);
  }
  assert.ok(routes.includes('liveCashDeliveryReleased()));'));
- const sig=checkout.indexOf('const liveStripe=cardStripePickup&&');
- assert.ok(sig>=0,'LIVE Stripe delivery must remain disallowed');
+ const sig=checkout.indexOf('const liveStripe=(cardStripePickup||liveStripeDelivery)&&');
+ assert.ok(sig>=0,'LIVE Stripe delivery can exist only after separate release');
+ assert.ok(checkout.includes('liveDispatchReleased()&&isStageStripeDeliveryIntent(raw)'));
+ assert.ok(read('config.ts').includes('RC96_LIVE_DELIVERY_NOT_RELEASED_STRIPE_TEST_REQUIRED'));
 });
 test('RC11.3 LIVE cash pickup dispatch and PIN require same server-origin receipt',()=>{
  const worker=read('live/production-worker.ts');

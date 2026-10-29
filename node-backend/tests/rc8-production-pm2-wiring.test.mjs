@@ -78,7 +78,8 @@ test('existing Flutter payment routes now have signed LIVE API with same user/wo
  const pm2=source('ecosystem.production.config.cjs');
  assert.match(app,/config.NODE_ENV==='production'\?buildLiveRuntimeDependencies\(\):null/);
  assert.match(app,/app\.use\('\/api\/v1\/payments\/stripe',buildIsolatedWebhookRouter/);
- assert.match(app,/enabled:liveChargeApproved,authSecret:config.AUTH_JWT_SECRET!/);
+ assert.match(app,/enabled:liveChargeApproved,deliveryReleased:liveDispatchReleased\(\)/);
+ assert.match(app,/authSecret:config.AUTH_JWT_SECRET!/);
  assert.match(app,/LIVE_FINANCIAL_RECONCILIATION_HOLD/);
  assert.match(order,/status:cardStripe\?'awaiting_payment':'received'/);
  assert.match(order,/if\(!cardStripe\)\{/);
