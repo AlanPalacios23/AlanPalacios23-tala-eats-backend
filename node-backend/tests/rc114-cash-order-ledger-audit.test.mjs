@@ -10,10 +10,12 @@ const order=()=>({
  serviceFee:'7.00',total:'156.00',platformCommission:'15.00',
  restaurantPayout:'85.00',driverEarning:'32.00',platformRevenue:'29.00',
  cashCollected:'156.00',refundedAmount:'0.00',
+ paymentProcessingFee:'0.00',contributionMargin:'29.00',
 });
 const ledger=()=>[
  ['gmv','156.00'],['restaurant_payable','85.00'],
  ['driver_payable','42.00'],['platform_revenue','29.00'],
+ ['contribution_margin','29.00'],
 ].map(([account,amount])=>({
  kind:'order_settlement',account,amount,currency:'MXN',direction:'credit',
  idempotencyKey:'order:456:ledger:'+account,
@@ -65,6 +67,13 @@ test('RC11.4 holds refund/dispute and bad currency/key; never withdrawable',()=>
   direction:'debit',currency:'MXN',idempotencyKey:'dispute:1'});
  assert.ok(codes(order(),g).includes('FINANCIAL_RISK_REQUIRES_REVIEW'));
  assert.equal(audit(order(),ledger(),pin()).withdrawable,false);
+});
+test('RC11.4 refuses false cash contribution margin or unexplained settlement credit',()=>{
+ assert.ok(codes({...order(),contributionMargin:'28.00'}).includes(
+  'CASH_PROCESSING_OR_MARGIN_MISMATCH'));
+ const extra=ledger();extra.push({kind:'order_settlement',account:'bonus',
+  amount:'100.00',direction:'credit',currency:'MXN',idempotencyKey:'misc:bonus'});
+ assert.ok(codes(order(),extra).includes('UNRECOGNIZED_SETTLEMENT_ACCOUNT'));
 });
 test('RC11.4 detects invalid money and does not round floats',()=>{
  assert.ok(codes({...order(),total:'156.001'}).includes('INVALID_ORDER_MONEY'));
