@@ -21,6 +21,7 @@ import { stripeWebhook } from './webhook.js';
 import { authRouter,current } from './auth/routes.js';
 import { platformRouter, platformErrors } from './platform/routes.js';
 import { adminRouter, operationsRouter, opsErrors } from './operational/routes.js';
+import {buildRehearsalRouter} from './operational/rehearsal-routes.js';
 import { v9Router, v10Router, v11Router } from './versions/routes.js';
 import { resilienceRouter, resilienceErrors } from './resilience/routes.js';
 import { parityRouter, parityErrors } from './parity/routes.js';
@@ -61,6 +62,10 @@ if(live){
     express.raw({type:'application/json',limit:'1mb'}),stripeWebhook);
 }
 app.use(express.json({ limit: '128kb' }));
+// RC13.0: simulated order lifecycle only. Separate API prefix and Redis
+// namespace; no commercial orders, Stripe, ledger or payout mutations.
+if(live&&config.LIVE_DEMO_REHEARSAL_ENABLED==='true')
+ app.use('/api/v1/demo',buildRehearsalRouter(live.redis));
 // Existing order routes remain public. LIVE card PaymentIntents are created
 // only for authenticated/customer-owned persisted Stripe pickup orders.
 if(live){

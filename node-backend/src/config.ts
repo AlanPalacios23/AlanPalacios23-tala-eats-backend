@@ -41,6 +41,9 @@ const schema = z.object({
 
   // RC9.5: separate LIVE driver presence pilot; never enables checkout or dispatch.
   LIVE_DRIVER_PRESENCE_ENABLED: z.enum(['false','true']).default('false'),
+  // RC13.0: non-financial, admin-initiated demo sessions in isolated Redis.
+  // It NEVER unlocks customer checkout, Stripe charges, delivery or payouts.
+  LIVE_DEMO_REHEARSAL_ENABLED: z.enum(['false','true']).default('false'),
   // RC9.6: future independent delivery release, all OFF; never reuse stage flags.
   LIVE_DELIVERY_DISPATCH_ENABLED: z.enum(['false','true']).default('false'),
   LIVE_DELIVERY_CARD_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
@@ -76,6 +79,8 @@ const schema = z.object({
 // RC12.3 card delivery needs FOUR independent approvals. No partial rollout:
 // an operator must first prove Stripe TEST 3-PWA E2E, signed capture,
 // refund/dispute recovery, geo dispatch, PIN, and reversal/rollback.
+if(process.env.LIVE_DEMO_REHEARSAL_ENABLED==='true'&&process.env.NODE_ENV!=='production')
+ throw Error('RC130_DEMO_REHEARSAL_LIVE_ONLY');
 const deliveryCardKeys=['LIVE_DELIVERY_DISPATCH_ENABLED',
  'LIVE_DELIVERY_CARD_CHECKOUT_ENABLED','LIVE_DELIVERY_RELEASE_APPROVED',
  'LIVE_DELIVERY_CARD_E2E_APPROVED'] as const;
