@@ -42,7 +42,7 @@ test('LIVE route returns genuine server quote but cannot create a paid delivery 
  assert.ok(section.includes('calculatePickupQuoteFromCatalog('));
  assert.ok(section.includes('calculateDefaultCommercial('));
  assert.ok(section.includes("if(livePreview&&data.payment_method==='stripe')"));
- assert.ok(section.includes("delivery_checkout_supported:stagePreview"));
+ assert.ok(section.includes("delivery_checkout_supported:stagePreview||(livePreview&&liveCashDeliveryReleased())"));
  assert.ok(section.includes("checkout_blocker:'LIVE_DELIVERY_CHECKOUT_NOT_RELEASED'"));
  assert.ok(section.includes("driver_assignment_guaranteed:false"));
  assert.doesNotMatch(section,/stripe\.paymentIntents\.create|marketOrder\.create|\.\$transaction|return 201/);
