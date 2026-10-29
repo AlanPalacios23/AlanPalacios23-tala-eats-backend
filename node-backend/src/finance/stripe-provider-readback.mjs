@@ -6,7 +6,7 @@
 const int=(x)=>Number.isSafeInteger(x)&&x>=0;
 const str=(x)=>typeof x==='string'?x:'';
 const amount=(x)=>{
- const s=str(x);
+ const s=String(x??'');
  if(!/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/.test(s))throw Error('INVALID_MONEY');
  const [whole,fraction='']=s.split('.');
  return Number(BigInt(whole)*100n+BigInt((fraction+'00').slice(0,2)));
