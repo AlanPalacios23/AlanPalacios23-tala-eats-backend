@@ -252,6 +252,20 @@ async function reconcileLiveVerifiedEvent(
         `,[orderId,buyerId,JSON.stringify({
           source:'stripe_live_webhook',stripe_event_id:signed.id,
         })]);
+        // The merchant receives an actionable order only after the signed
+        // Stripe capture is recorded. Duplicate webhooks do not notify twice.
+        await client.query(`
+          INSERT INTO notifications(user_id,kind,title,message,created_at)
+          SELECT r.owner_id,'restaurant_order','Nuevo pedido pagado',
+                 $2,NOW() FROM restaurants r
+          JOIN users u ON u.id=r.owner_id
+          WHERE r.id=$1 AND r.owner_id IS NOT NULL
+            AND u.is_active=true AND u.role='restaurant'
+        `,[order.restaurant_id,'Pedido #'+orderId+' pagado con Stripe. Preparar pedido.']);
+        await client.query(`
+          INSERT INTO notifications(user_id,kind,title,message,created_at)
+          VALUES($1,'order','Pago confirmado',$2,NOW())
+        `,[buyerId,'Confirmamos tu pago del pedido #'+orderId+'.']);
       }
     }
     // Failed/canceled events are retained; this routine NEVER frees stock
