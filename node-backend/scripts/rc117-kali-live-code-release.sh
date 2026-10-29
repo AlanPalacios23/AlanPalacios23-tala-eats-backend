@@ -55,10 +55,22 @@ fi
 if [[ "$mode" == --apply ]];then
  bash scripts/rc114-kali-live-code-cutover.sh --apply "$sha" "$3" \
   I_APPROVE_RC114_LIVE_TWO_PM2_CASH_DELIVERY_CODE_ONLY
+ # RC11.4 rolls back on its own switching errors. Extend rollback to the
+ # post-switch public PWA probe; do not leave a partially green deployment.
+ if ! bash scripts/rc114-kali-live-code-cutover.sh --verify "$sha" ||
+    ! node --env-file="$HOME/.config/talaeats-node-live.env" \
+      scripts/rc117-kali-live-public-preflight.mjs "$sha";then
+  echo RC117_POST_SWITCH_GATE=HOLD_TRY_ROLLBACK
+  bash scripts/rc114-kali-live-code-cutover.sh --rollback "$sha" \
+    I_APPROVE_RC114_ROLLBACK_PREVIOUS_TWO_PM2 || \
+   echo RC117_ROLLBACK=FAILED_MANUAL_INTERVENTION_REQUIRED
+  exit 1
+ fi
+else
+ bash scripts/rc114-kali-live-code-cutover.sh --verify "$sha"
+ node --env-file="$HOME/.config/talaeats-node-live.env" \
+  scripts/rc117-kali-live-public-preflight.mjs "$sha"
 fi
-bash scripts/rc114-kali-live-code-cutover.sh --verify "$sha"
-node --env-file="$HOME/.config/talaeats-node-live.env" \
- scripts/rc117-kali-live-public-preflight.mjs "$sha"
 echo RC117_BACKEND_AND_PUBLIC_PWA_HTTP=PASS
 echo RC117_LIVE_CODE_RELEASE=PASS
 echo RC117_PRODUCTION_PAYMENTS_OR_WITHDRAWALS_NEWLY_ACTIVATED=NO
