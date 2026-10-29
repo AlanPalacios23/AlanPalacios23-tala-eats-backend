@@ -32,7 +32,7 @@ export async function recoverUnknownTreasuryTransfer(
   !['restaurant','driver'].includes(x.payee_kind)||
   !/^acct_[A-Za-z0-9]+$/.test(x.connected_account_id)||
   !/^ch_[A-Za-z0-9]+$/.test(x.source_charge_id)||
-  !/^[1-9]\\d{0,13}$/.test(x.amount_minor)||
+  !/^[1-9]\d{0,13}$/.test(x.amount_minor)||
   x.idempotency_key!==expectedKey||
   !Number.isSafeInteger(x.reviewed_by_user_id)||
   !Number.isSafeInteger(x.approved_by_user_id)||
