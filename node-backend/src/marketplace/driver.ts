@@ -8,7 +8,7 @@ import { config } from '../config.js';
 import {stageDeliveryTenderAllowed} from './delivery-financial-proof.js';
 import {liveDispatchReleased,liveDeliveryTenderAllowed} from './live-delivery-payment.js';
 import {liveCashDeliveryReleased,liveCashDeliveryTenderAllowed} from './live-cash-delivery.js';
-import {canOperateDriverPresence,driverLocationKey,driverPersistKey,hasFreshVerifiedDriverGps} from './delivery-runtime.js';
+import {canOperateDriverPresence,driverLocationKey,driverPersistKey,hasFreshVerifiedDriverGps,rankFreshLiveDrivers} from './delivery-runtime.js';
 import type { AuthUser } from '../generated/prisma/client.js';
 
 const ACTIVE=['assigned','picked_up','on_the_way'];
@@ -668,27 +668,20 @@ export async function dispatchStageDeliveryReady(orderId:number):Promise<boolean
       user:{is:{role:'driver',isActive:true}}},
     select:{userId:true},orderBy:{userId:'asc'},take:100,
   });
-  const nearby:{userId:number;distance:number}[]=[];
   if(!profiles.length)return false;
   // One bounded Redis MGET, not a separate connection for every driver.
   // assign() then rechecks real TTL and performs the atomic claim.
   const redis=redisClient();
+  let nearby:{userId:number;distance:number}[]=[];
   try{
     await redis.connect();
     const locations=await redis.mget(
       ...profiles.map(p=>driverLocationKey(config.NODE_ENV,p.userId)));
-    const now=Date.now();
-    for(let i=0;i<profiles.length;i++){
-      const raw=locations[i]??null;
-      if(!hasFreshVerifiedDriverGps(raw,120,now))continue;
-      const fresh=JSON.parse(raw!) as {lat:number;lng:number};
-      const distance=haversine(fresh.lat,fresh.lng,
-        order.restaurant.lat,order.restaurant.lng);
-      if(distance<=config.STAGE_DRIVER_MAX_PICKUP_KM)
-        nearby.push({userId:profiles[i]!.userId,distance});
-    }
+    nearby=rankFreshLiveDrivers(
+      profiles.map(p=>p.userId),locations,
+      {lat:order.restaurant.lat,lng:order.restaurant.lng},
+      Date.now(),config.STAGE_DRIVER_MAX_PICKUP_KM);
   }catch{return false;}finally{redis.disconnect();}
-  nearby.sort((a,b)=>a.distance-b.distance||a.userId-b.userId);
   for(const p of nearby){
     try{
       // assign() re-checks GPS TTL, signed payment/cash origin and acquires
