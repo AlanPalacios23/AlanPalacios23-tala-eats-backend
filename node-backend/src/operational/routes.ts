@@ -5,6 +5,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import { db } from '../db.js';
 import { validDriverVehiclePlate } from './driver-onboarding-policy.js';
+import { canUseCommercialOnboardingRole } from './onboarding-role-policy.js';
 import { current } from '../auth/routes.js';
 export const operationsRouter=Router();
 export const adminRouter=Router();
@@ -359,6 +360,8 @@ operationsRouter.get('/onboarding-capabilities',async(_req,res)=>{
 operationsRouter.post('/onboarding',async(req,res)=>{
  const who=await account(req);
  const p=payload(onboardingSchema,req.body);
+ if(!canUseCommercialOnboardingRole(who.role,p.entity_type))
+  return bad(409,'La cuenta ya tiene otro rol comercial');
  if(p.entity_type==='driver'&&!validDriverVehiclePlate(p.vehicle,p.plate))
   return bad(422,'Vehículo o placas inválidas para registro de repartidor');
  // Only attach an exact private onboarding upload belonging to this account.
@@ -430,6 +433,9 @@ operationsRouter.patch('/admin/onboarding/:applicationId',async(req,res)=>{
   if(!old)return bad(404,'Solicitud no encontrada');
   const account=await tx.authUser.findUnique({where:{id:old.userId}});
   if(!account)return bad(404,'Cuenta de solicitante no encontrada');
+  if(p.status==='approved'&&
+    !canUseCommercialOnboardingRole(account.role,old.entityType))
+   return bad(409,'No se permite reemplazar el rol comercial existente');
   if(p.status==='approved'){
    if(old.entityType==='driver'){
     if(!validDriverVehiclePlate(old.vehicle,old.plate))
