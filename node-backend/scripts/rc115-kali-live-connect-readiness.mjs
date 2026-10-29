@@ -60,10 +60,15 @@ async function main(){
    if(!/^acct_[A-Za-z0-9]+$/.test(m.stripe_account_id)){
     held++;mark('INVALID_CONNECTED_ACCOUNT_REFERENCE');continue;
    }
-   const [account,balance]=await Promise.all([
-    stripe.accounts.retrieve(m.stripe_account_id),
-    stripe.balance.retrieve({stripeAccount:m.stripe_account_id}),
-   ]);
+   // Independent GETs: avoid hiding a missing bank-balance permission behind
+   // a generic "Connect GET/DB" error. Never log account identifiers or
+   // provider error messages, which may contain sensitive customer details.
+   let account;
+   try{account=await stripe.accounts.retrieve(m.stripe_account_id);}
+   catch{held++;mark('STRIPE_ACCOUNT_GET_FAILED');continue;}
+   let balance;
+   try{balance=await stripe.balance.retrieve({stripeAccount:m.stripe_account_id});}
+   catch{held++;mark('STRIPE_CONNECTED_BALANCE_GET_FAILED');continue;}
    const report=assessMappedLiveBeneficiary(m,account,balance,
     classifyLiveConnectRecipient);
    if(report.canProceedToLedgerAudit)ready++;

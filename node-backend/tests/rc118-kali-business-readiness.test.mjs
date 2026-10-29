@@ -19,6 +19,7 @@ test('RC118 checks all four existing auditors without restarting PM2 or changing
   'rc115-kali-live-connect-readiness.mjs',
   'rc116-kali-live-financial-recovery-audit.mjs',
   'rc117-kali-live-public-preflight.mjs',
+  'rc119-kali-live-blockers-diagnostic.mjs',
   'HOLD_FAILED_CHECK_COUNT_',
   'RC118_FINANCIAL_WRITES=NONE'])
   assert.ok(source.includes(marker),marker);

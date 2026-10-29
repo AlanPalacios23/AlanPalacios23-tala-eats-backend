@@ -49,6 +49,7 @@ run_check(){
 }
 run_check CASH_CAPACITY rc114-kali-live-cash-readiness.mjs
 run_check RESTAURANT_DRIVER_CONNECT rc115-kali-live-connect-readiness.mjs
+run_check OWNER_DRIVER_AND_OUTBOX_DIAGNOSTIC rc119-kali-live-blockers-diagnostic.mjs
 run_check FINANCIAL_RECOVERY rc116-kali-live-financial-recovery-audit.mjs
 run_check API_AND_THREE_PWAS rc117-kali-live-public-preflight.mjs
 echo RC118_FINANCIAL_WRITES=NONE
