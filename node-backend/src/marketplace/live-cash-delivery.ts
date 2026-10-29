@@ -11,6 +11,7 @@ export const liveCashDeliveryReleased=():boolean=>
  config.LIVE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
  config.LIVE_DELIVERY_CASH_DISPATCH_ENABLED==='true'&&
  config.LIVE_DELIVERY_CASH_RELEASE_APPROVED==='true'&&
+ config.COMMERCIAL_PRICING_V162_ENABLED!=='true'&&
  config.MERCHANT_MANAGED_DELIVERY!=='true';
 
 export type LiveCashOrder={
