@@ -72,14 +72,15 @@ BEGIN
  IF TG_OP='DELETE' THEN
   RAISE EXCEPTION 'FINANCE_V2_IMMUTABLE_DELETE' USING ERRCODE='23514';
  END IF;
- IF TG_TABLE_NAME='finance_journals_v2' AND
-    OLD.status='building' AND NEW.status='posted' AND
-    NEW.event_key=OLD.event_key AND NEW.fingerprint=OLD.fingerprint AND
-    NEW.source_type=OLD.source_type AND NEW.source_ref=OLD.source_ref AND
-    NEW.description=OLD.description AND NEW.currency=OLD.currency AND
-    NEW.reversal_of_id IS NOT DISTINCT FROM OLD.reversal_of_id AND
-    NEW.created_at=OLD.created_at THEN
-  RETURN NEW;
+ IF TG_TABLE_NAME='finance_journals_v2' THEN
+  IF OLD.status='building' AND NEW.status='posted' AND
+     NEW.event_key=OLD.event_key AND NEW.fingerprint=OLD.fingerprint AND
+     NEW.source_type=OLD.source_type AND NEW.source_ref=OLD.source_ref AND
+     NEW.description=OLD.description AND NEW.currency=OLD.currency AND
+     NEW.reversal_of_id IS NOT DISTINCT FROM OLD.reversal_of_id AND
+     NEW.created_at=OLD.created_at THEN
+   RETURN NEW;
+  END IF;
  END IF;
  RAISE EXCEPTION 'FINANCE_V2_IMMUTABLE_UPDATE' USING ERRCODE='23514';
 END;
