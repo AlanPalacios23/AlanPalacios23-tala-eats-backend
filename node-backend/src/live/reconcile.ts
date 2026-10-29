@@ -12,6 +12,7 @@ import {liveReceiptIdentity,LiveGateError,
 import {verifyLiveStripeEvent} from './stripe-payments.js';
 import type {LiveStripeApi} from './stripe-payments.js';
 import {liveSettlementPostings} from './ledger-posting.js';
+import {isRealLiveCheckoutProvenance} from '../marketplace/live-delivery-policy.js';
 
 const allowed=new Set(['payment_intent.succeeded',
   'payment_intent.payment_failed','payment_intent.canceled']);
@@ -21,7 +22,7 @@ type OrderRow={
   payment_provider:string;payment_provider_id:string;order_type:string;
   refunded_amount:string;restaurant_payout:string;
   platform_revenue:string;payment_processing_fee:string;
-  contribution_margin:string;
+  contribution_margin:string;driver_earning:string;
 };
 const decimal=/^(?:0|[1-9]\d{0,7})\.\d{2}$/;
 function minor(s:string):number{
@@ -109,9 +110,10 @@ async function reconcileLiveVerifiedEvent(
     throw new LiveGateError('STRIPE_REMOTE_PROOF_MISMATCH');
   const orderId=Number(intent.metadata.order_id);
   const buyerId=Number(intent.metadata.buyer_id);
+  const expectedFulfillment=intent.metadata.tala_mode==='rc8_live_delivery'?'delivery':
+    intent.metadata.tala_mode==='rc8_live_pickup'?'pickup':null;
   if(!Number.isSafeInteger(orderId)||orderId<=0||
-     !Number.isSafeInteger(buyerId)||buyerId<=0||
-     intent.metadata.tala_mode!=='rc8_live_pickup')
+     !Number.isSafeInteger(buyerId)||buyerId<=0||!expectedFulfillment)
     throw new LiveGateError('UNKNOWN_LIVE_PAYMENT_IDENTITY');
 
   const client=await pool.connect();
@@ -145,7 +147,7 @@ async function reconcileLiveVerifiedEvent(
         payment_method,payment_provider,payment_provider_id,order_type,
         refunded_amount::text,restaurant_payout::text,
         platform_revenue::text,payment_processing_fee::text,
-        contribution_margin::text
+        contribution_margin::text,driver_earning::text
       FROM orders WHERE id=$1 FOR UPDATE
     `,[orderId]);
     const order=found.rows[0];
@@ -156,11 +158,11 @@ async function reconcileLiveVerifiedEvent(
     if(order?.payment_provider_id==='pi_reserving_rc8_live' &&
        order.payment_status==='pending'&&order.status==='awaiting_payment'&&
        order.user_id===buyerId&&
-       order.order_type==='pickup'&&order.payment_method==='stripe'&&
+       order.order_type===expectedFulfillment&&order.payment_method==='stripe'&&
        order.payment_provider==='stripe'&&
        Number(order.refunded_amount)===0 &&
        minor(order.total)===intent.amount&&
-       intent.metadata.tala_mode==='rc8_live_pickup' &&
+       intent.metadata.tala_mode==='rc8_live_'+expectedFulfillment &&
        intent.metadata.order_id===String(orderId) &&
        intent.metadata.buyer_id===String(buyerId)){
       const linked=await client.query(`
@@ -173,13 +175,22 @@ async function reconcileLiveVerifiedEvent(
       order.payment_provider_id=intent.id;
     }
     if(!order||order.user_id!==buyerId||
-       order.order_type!=='pickup'||order.payment_method!=='stripe'||
+       order.order_type!==expectedFulfillment||order.payment_method!=='stripe'||
        order.payment_provider!=='stripe'||
        order.payment_provider_id!==intent.id||
        minor(order.total)!==intent.amount||Number(order.refunded_amount)!==0)
       throw new LiveGateError('ORDER_PROVIDER_BINDING_INVALID');
     if(signed.type==='payment_intent.succeeded'){
-      liveReceiptIdentity(intent,{id:orderId,buyerId,amountMinor:minor(order.total)});
+      liveReceiptIdentity(intent,{id:orderId,buyerId,amountMinor:minor(order.total),
+        fulfillment:expectedFulfillment});
+      if(expectedFulfillment==='delivery'){
+        const marker=await client.query<{metadata_json:string}>(`
+          SELECT metadata_json FROM order_events
+          WHERE order_id=$1 AND status='received' ORDER BY id LIMIT 1 FOR SHARE
+        `,[orderId]);
+        if(!isRealLiveCheckoutProvenance(marker.rows[0]?.metadata_json??null))
+          throw new LiveGateError('LIVE_DELIVERY_CHECKOUT_ORIGIN_NOT_VERIFIED');
+      }
       if(order.payment_status==='paid'){
         await verifiedReceipt(client,order);
       }else{
@@ -205,6 +216,8 @@ async function reconcileLiveVerifiedEvent(
           platformRevenue:order.platform_revenue,
           paymentProcessingFee:order.payment_processing_fee,
           contributionMargin:order.contribution_margin,
+          ...(expectedFulfillment==='delivery'?{
+            fulfillment:'delivery' as const,driverEarning:order.driver_earning}:{}),
         })){
           await accountEntry(client,order,posting.account,posting.amount,
             posting.direction);
