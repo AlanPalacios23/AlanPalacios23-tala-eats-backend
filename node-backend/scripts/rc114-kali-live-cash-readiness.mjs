@@ -10,11 +10,13 @@ import {homedir} from 'node:os';
 import {resolve,join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import Redis from 'ioredis';
+import Stripe from 'stripe';
 import {config} from '../dist/config.js';
 import {db} from '../dist/db.js';
 import {assertRestaurantDeliveryOrigin} from '../dist/marketplace/delivery-geography.js';
 import {hasReachableLiveDriver} from '../dist/marketplace/live-delivery-capacity.js';
 import {liveCashDeliveryReleased} from '../dist/marketplace/live-cash-delivery.js';
+import {pickupCapability} from '../dist/live/pickup-readiness.js';
 
 const sha=process.argv[2];
 if(process.argv[1]===undefined||process.argv.length!==3||
@@ -65,28 +67,61 @@ try{
  if(await redis.get('tala:node:live:worker:heartbeat')!=='online')
   throw Error('RC114_ABORT=WORKER_HEARTBEAT_OFFLINE');
  console.log('RC114_LIVE_WORKER_HEARTBEAT=PASS');
+ // A reachable driver and an open restaurant are NOT enough: customer checkout
+ // requires a verified owner-mapped Stripe Connect account even for CASH.
  const restaurants=await db.marketplaceRestaurant.findMany({
-  where:{verificationStatus:'verified',isOpen:true,
-   deliveryRadiusKm:{gt:0}},
-  select:{lat:true,lng:true,address:true},take:25,orderBy:{id:'asc'},
+  where:{verificationStatus:'verified',onboardingStatus:'approved',isOpen:true,
+   pickupEnabled:true,deliveryRadiusKm:{gt:0},ownerId:{not:null}},
+  select:{id:true,lat:true,lng:true,address:true,ownerId:true,isOpen:true,
+   pickupEnabled:true,verificationStatus:true,onboardingStatus:true,
+   owner:{select:{isActive:true,email:true}}},
+  take:25,orderBy:{id:'asc'},
  });
- let valid=0,reachable=0;
+ let valid=0,approvedLocal=0,verifiedConnect=0,reachable=0;
+ const ids=restaurants.map(r=>r.id);
+ const mappingRows=ids.length?await db.$queryRawUnsafe(
+  'SELECT restaurant_id,stripe_account_id,owner_approved_at FROM tala_live_merchant_accounts WHERE restaurant_id IN ('+
+   ids.map((_,i)=>'$'+(i+1)).join(',')+')',...ids):[];
+ const mappings=new Map(mappingRows.map(r=>[r.restaurant_id,r]));
+ const stripe=new Stripe(config.STRIPE_SECRET_KEY,{maxNetworkRetries:0,timeout:5000});
+ const platformReady=['STRIPE_LIVE_ENABLED','STRIPE_LIVE_RELEASE_APPROVED',
+  'STRIPE_FINANCIAL_WRITES_ENABLED','STRIPE_REFUNDS_ENABLED',
+  'STRIPE_MANUAL_SETTLEMENT_APPROVED'].every(k=>config[k]==='true');
  for(const r of restaurants){
   try{assertRestaurantDeliveryOrigin({lat:r.lat,lng:r.lng},r.address);}
   catch{continue;}
   valid++;
+  const m=mappings.get(r.id);
+  if(!m?.stripe_account_id||!m?.owner_approved_at||
+    !r.owner?.isActive||!r.owner.email)continue;
+  approvedLocal++;
+  try{
+   const seller=await stripe.accounts.retrieve(m.stripe_account_id);
+   const projected=pickupCapability({
+    id:r.id,is_open:r.isOpen,pickup_enabled:r.pickupEnabled,
+    verification_status:r.verificationStatus,
+    onboarding_status:r.onboardingStatus,owner_id:r.ownerId,
+    owner_email:r.owner.email,owner_active:r.owner.isActive,
+    stripe_account_id:m.stripe_account_id,owner_approved_at:m.owner_approved_at,
+   },seller,platformReady,config.STRIPE_PLATFORM_ACCOUNT_ID,true);
+   if(!projected.ready||seller.charges_enabled!==true)continue;
+   verifiedConnect++;
+  }catch{continue;}
   if(await hasReachableLiveDriver({lat:r.lat,lng:r.lng}))reachable++;
  }
  console.log('RC114_VERIFIED_OPEN_DELIVERY_RESTAURANTS_SAMPLE='+valid);
- console.log('RC114_RESTAURANTS_WITH_REACHABLE_IDLE_DRIVER_SAMPLE='+reachable);
+ console.log('RC114_OWNER_APPROVED_CONNECT_MAPPINGS_SAMPLE='+approvedLocal);
+ console.log('RC114_STRIPE_LIVE_SELLERS_ELIGIBLE_SAMPLE='+verifiedConnect);
+ console.log('RC114_SELLERS_WITH_REACHABLE_IDLE_DRIVER_SAMPLE='+reachable);
  console.log('RC114_SAMPLE_LIMIT=25');
+ console.log('RC114_STRIPE_OPERATIONS=GET_ONLY');
  console.log('RC114_DB_WRITES=NONE');
  console.log('RC114_REDIS_WRITES=NONE');
- if(!valid||!reachable){
-  console.log('RC114_CASH_RELEASE_READINESS=HOLD_NO_VERIFIED_RESTAURANT_DRIVER_PAIR');
+ if(!valid||!approvedLocal||!verifiedConnect||!reachable){
+  console.log('RC114_CASH_RELEASE_READINESS=HOLD_NO_APPROVED_STRIPE_SELLER_AND_DRIVER_PAIR');
   process.exitCode=2;
  }else{
-  console.log('RC114_CASH_RELEASE_READINESS=GPS_AND_CATALOG_CAPACITY_PRESENT');
+  console.log('RC114_CASH_RELEASE_READINESS=SELLER_CONNECT_AND_DRIVER_CAPACITY_PRESENT');
   console.log('RC114_E2E_ORDER_PAYMENT_PIN=NOT_VERIFIED');
  }
 }finally{
