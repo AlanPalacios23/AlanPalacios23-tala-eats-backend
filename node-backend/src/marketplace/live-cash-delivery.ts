@@ -3,6 +3,8 @@
  * The LIVE server itself must have persisted the customer's checkout intent.
  */
 import {config} from '../config.js';
+import {isLiveCashCheckoutProvenance} from './live-cash-delivery-policy.js';
+export {isLiveCashCheckoutProvenance} from './live-cash-delivery-policy.js';
 export const liveCashDeliveryReleased=():boolean=>
  config.NODE_ENV==='production'&&
  config.LIVE_DRIVER_PRESENCE_ENABLED==='true'&&
@@ -19,16 +21,6 @@ export type LiveCashOrder={
 type Reader={stageOrderEvent:{
  findFirst:(args:any)=>Promise<{metadataJson:string}|null>
 }};
-export const isLiveCashCheckoutProvenance=(metadata:string|null):boolean=>{
- if(!metadata)return false;
- try{
-  const v=JSON.parse(metadata);
-  return v.source==='checkout'&&v.live_delivery_cash_v1===true&&
-    v.stage_driver_fixture!==true&&v.stage_delivery_customer_v1!==true&&
-    typeof v.checkout_intent_hmac==='string'&&
-    /^[a-f0-9]{64}$/.test(v.checkout_intent_hmac);
- }catch{return false;}
-};
 export async function liveCashDeliveryTenderAllowed(
  tx:Reader,order:LiveCashOrder,
 ):Promise<boolean>{
