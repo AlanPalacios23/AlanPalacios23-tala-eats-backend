@@ -89,6 +89,28 @@ const noCourier=(await db.query(
  'SELECT count(*)::int AS n FROM driver_profiles WHERE user_id=$1',
  [doubleApplicant.id])).rows[0];
 assert.equal(noCourier.n,0);
+// Two parallel ADMIN approvals for separate applications of the same customer
+// must serialize on the USER row. Exactly ONE role can be granted.
+const racing=await user('parallelApprovals');
+const racingShop=await req(racing,'/operations/onboarding','POST',profile);
+const racingCourier=await req(racing,'/operations/onboarding','POST',crossDriver);
+assert.equal(racingShop.status,201,JSON.stringify(racingShop.json));
+assert.equal(racingCourier.status,201,JSON.stringify(racingCourier.json));
+const [mResult,dResult]=await Promise.all([
+ req(admin,'/operations/admin/onboarding/'+racingShop.json.id,'PATCH',
+  {status:'approved',notes:'Parallel merchant'}),
+ req(admin,'/operations/admin/onboarding/'+racingCourier.json.id,'PATCH',
+  {status:'approved',notes:'Parallel driver'}),
+]);
+assert.deepEqual([mResult.status,dResult.status].sort(),[200,409],
+ JSON.stringify([mResult,dResult]));
+const finalRole=(await db.query('SELECT role FROM users WHERE id=$1',[racing.id])).rows[0].role;
+const roleCounts=(await db.query(
+ 'SELECT (SELECT count(*)::int FROM restaurants WHERE owner_id=$1) AS shops,'+
+ ' (SELECT count(*)::int FROM driver_profiles WHERE user_id=$1) AS drivers',
+ [racing.id])).rows[0];
+assert.ok((finalRole==='restaurant'&&roleCounts.shops===1&&roleCounts.drivers===0)||
+ (finalRole==='driver'&&roleCounts.shops===0&&roleCounts.drivers===1));
 // Revocation and re-approval must keep the shop closed until the merchant
 // explicitly reopens; orders and existing invoices are not deleted.
 await db.query('UPDATE restaurants SET is_open=true WHERE id=$1',[ownedShop[0].id]);
