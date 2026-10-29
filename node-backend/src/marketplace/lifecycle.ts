@@ -50,8 +50,9 @@ const cashOnly=(o:MarketOrder):void=>{
   const eligiblePickup=o.orderType==='pickup'&&
     config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true';
   const eligibleDelivery=o.orderType==='delivery'&&
-    config.NODE_ENV==='staging'&&
-    config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true';
+    ((config.NODE_ENV==='staging'&&
+      config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true')||
+     liveCashDeliveryReleased());
   if(!(eligiblePickup||eligibleDelivery)||
      o.paymentMethod!=='cash'||o.paymentStatus!=='pending')
     fail(503,'Este flujo de staging sólo admite pedidos cash sin pagos capturados');
@@ -109,7 +110,8 @@ export async function cancelCashPickupStage(
   if(stripe&&config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true')
     fail(503,'Stripe TEST deshabilitado');
   if(!stripe&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true'&&
-     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED!=='true')
+     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED!=='true'&&
+     !liveCashDeliveryReleased())
     fail(503,'Ciclo de pedidos de staging deshabilitado');
   if(stripe&&candidate.status==='cancelled')return orderId;
   // Stripe confirms no capture BEFORE entering the stock restoration transaction.
@@ -153,6 +155,9 @@ export async function cancelCashPickupStage(
     try{fingerprint=JSON.parse(received?.metadataJson??'{}').checkout_intent_hmac;}catch{}
     if(typeof fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(fingerprint))
       fail(503,'Este pedido no tiene evidencia de checkout de staging');
+    if(config.NODE_ENV==='production'&&order.orderType==='delivery'&&
+      !await liveCashDeliveryTenderAllowed(tx,order))
+      fail(503,'Pedido en efectivo LIVE sin origen verificado o en revisión');
     if(order.inventoryRestoredAt!==null)
       fail(409,'El inventario del pedido ya fue restaurado');
     let reservations:Record<string,unknown>;
