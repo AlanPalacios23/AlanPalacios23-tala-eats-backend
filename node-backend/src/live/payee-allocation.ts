@@ -20,7 +20,7 @@ export type OrderAmounts={
  orderId:number;restaurantId:number;driverUserId:number|null;
  orderType:string;merchantManagedDelivery:boolean;tender:Tender;
  totalMinor:number;restaurantPayableMinor:number;driverBaseMinor:number;
- tipMinor:number;status:string;paymentStatus:string;
+ tipMinor:number;cashCollectedMinor:number;status:string;paymentStatus:string;
  deliveryProven:boolean;captured:boolean;openCases:number;
 };
 const valid=(n:number)=>Number.isSafeInteger(n)&&n>=0&&n<=100000000;
@@ -29,7 +29,7 @@ function requireSafe(value:boolean,code:string):void {
 }
 export function buildMoneyPlan(o:OrderAmounts):MoneyPlan{
  for(const n of [o.orderId,o.restaurantId])requireSafe(Number.isSafeInteger(n)&&n>0,'IDENTITY_INVALID');
- for(const n of [o.totalMinor,o.restaurantPayableMinor,o.driverBaseMinor,o.tipMinor])
+ for(const n of [o.totalMinor,o.restaurantPayableMinor,o.driverBaseMinor,o.tipMinor,o.cashCollectedMinor])
    requireSafe(valid(n),'INVALID_MONEY');
  requireSafe(['stripe','cash'].includes(o.tender),'TENDER_INVALID');
  const fulfillment:Fulfillment=o.orderType==='pickup'?'pickup':
@@ -40,9 +40,17 @@ export function buildMoneyPlan(o:OrderAmounts):MoneyPlan{
  requireSafe(o.status==='delivered','NOT_DELIVERED');
  requireSafe(o.deliveryProven,'DELIVERY_PROOF_REQUIRED');
  requireSafe(o.openCases===0,'OPEN_INCIDENTS');
- requireSafe(o.tender==='cash'||(o.paymentStatus==='paid'&&o.captured),
-   'CAPTURE_NOT_VERIFIED');
- requireSafe(o.tender!=='cash'||o.paymentStatus!=='refunded','CASH_REFUND_HOLD');
+ // Both tender types require verified, server-recorded settlement evidence.
+ // Delivery alone never proves that cash changed hands. A card receipt must
+ // not also recognize physical cash, which would double-count collection.
+ requireSafe(o.paymentStatus==='paid','PAYMENT_NOT_VERIFIED');
+ if(o.tender==='cash'){
+   requireSafe(o.cashCollectedMinor===o.totalMinor&&!o.captured,
+     'CASH_COLLECTION_NOT_VERIFIED');
+ }else{
+   requireSafe(o.captured&&o.cashCollectedMinor===0,
+     'STRIPE_COLLECTION_NOT_VERIFIED');
+ }
  const driver=fulfillment==='platform_delivery'?
    o.driverBaseMinor+o.tipMinor:0;
  requireSafe(valid(driver),'DRIVER_AMOUNT_INVALID');
