@@ -12,9 +12,11 @@ export type LiveSettlementFigures = {
   platformRevenue:string;
   paymentProcessingFee:string;
   contributionMargin:string;
+  driverEarning?:string; // Mandatory for card delivery; pickup defaults to zero.
+  fulfillment?:'pickup'|'delivery';
 };
 export type LiveSettlementPosting = {
-  account:'gmv'|'restaurant_payable'|'platform_revenue'|
+  account:'gmv'|'restaurant_payable'|'driver_payable'|'platform_revenue'|
     'payment_processing'|'contribution_margin';
   amount:string;
   direction:'credit'|'debit';
@@ -39,12 +41,16 @@ export function liveSettlementPostings(f:LiveSettlementFigures):LiveSettlementPo
   const platform=toMinor(f.platformRevenue,false);
   const processing=toMinor(f.paymentProcessingFee,false);
   const margin=toMinor(f.contributionMargin,true);
-  if(total<=0n||restaurant>total||
+  const driver=toMinor(f.driverEarning??'0.00',false);
+  if(f.fulfillment==='delivery'&&(driver<=0n||restaurant+driver+platform!==total))
+    throw new RangeError('LIVE_DELIVERY_PAYEE_CONSERVATION_MISMATCH');
+  if(total<=0n||restaurant>total||driver>total||
       margin!==platform-processing)
     throw new RangeError('LIVE_SETTLEMENT_BREAKDOWN_MISMATCH');
   const items=[
     {account:'gmv',value:total,direction:'credit'},
     {account:'restaurant_payable',value:restaurant,direction:'credit'},
+    {account:'driver_payable',value:driver,direction:'credit'},
     {account:'platform_revenue',value:platform,direction:'credit'},
     {account:'payment_processing',value:processing,direction:'debit'},
     {account:'contribution_margin',value:margin,direction:margin<0n?'debit':'credit'},
