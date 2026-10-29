@@ -9,7 +9,7 @@ import {livePilotAmount,liveReceiptIdentity,LiveGateError,
   type ValidatedLiveSettings} from './guard.js';
 export type LivePendingOrder={
   id:number;buyerId:number;amountMinor:number;
-  currency:'mxn';method:'stripe';fulfillment:'pickup';
+  currency:'mxn';method:'stripe';fulfillment:'pickup'|'delivery';
   status:'awaiting_payment';paymentStatus:'pending';
   intentId:string|null;
   createdAtMs:number;refundedMinor:number;
@@ -17,7 +17,7 @@ export type LivePendingOrder={
 export interface LivePaymentStore{
   // Both methods must be PostgreSQL transactions with row locking. reserve
   // claims the same order before Stripe API and NEVER releases it on timeout.
-  reserveForPayment(orderId:number,buyerId:number,maxOrderMinor:number):
+  reserveForPayment(orderId:number,buyerId:number,maxOrderMinor:number,allowDelivery?:boolean):
     Promise<LivePendingOrder|null>;
   attachStripeIntent(orderId:number,buyerId:number,intentId:string):
     Promise<boolean>;
@@ -25,10 +25,11 @@ export interface LivePaymentStore{
 export type LiveStripeApi=Pick<Stripe,'paymentIntents'|'webhooks'|'events'|'refunds'|'charges'|'disputes'>;
 const reserved='pi_reserving_rc8_live';
 export const LIVE_PI_RESERVED=reserved;
-function assertOrder(order:LivePendingOrder|undefined|null,buyerId:number,settings:ValidatedLiveSettings){
+function assertOrder(order:LivePendingOrder|undefined|null,buyerId:number,settings:ValidatedLiveSettings,allowDelivery:boolean){
   if(!order||order.buyerId!==buyerId)throw new LiveGateError('ORDER_NOT_FOUND');
   if(order.currency!=='mxn'||order.method!=='stripe'||
-    order.fulfillment!=='pickup'||order.status!=='awaiting_payment'||
+    !(order.fulfillment==='pickup'||(allowDelivery&&order.fulfillment==='delivery'))||
+    order.status!=='awaiting_payment'||
     order.paymentStatus!=='pending'||order.refundedMinor!==0||
     Date.now()-order.createdAtMs>30*60_000)
     throw new LiveGateError('ORDER_NOT_ELIGIBLE');
@@ -36,15 +37,16 @@ function assertOrder(order:LivePendingOrder|undefined|null,buyerId:number,settin
 }
 export async function createLivePickupPaymentIntent(
   store:LivePaymentStore,provider:LiveStripeApi,settings:ValidatedLiveSettings,
-  orderId:number,buyerId:number){
+  orderId:number,buyerId:number,allowDelivery=false){
   if(!Number.isSafeInteger(orderId)||orderId<=0||
      !Number.isSafeInteger(buyerId)||buyerId<=0)
     throw new LiveGateError('INVALID_ORDER_ID');
-  const order=await store.reserveForPayment(orderId,buyerId,settings.maxOrderMinor);
-  assertOrder(order,buyerId,settings);
+  const order=await store.reserveForPayment(orderId,buyerId,settings.maxOrderMinor,allowDelivery);
+  assertOrder(order,buyerId,settings,allowDelivery);
   if(order!.intentId!==reserved&&!/^pi_[A-Za-z0-9]+$/.test(order!.intentId??''))
     throw new LiveGateError('ORDER_RESERVATION_NOT_ATOMIC');
-  const metadata={tala_mode:'rc8_live_pickup',order_id:String(orderId),
+  const mode=order!.fulfillment==='delivery'?'delivery':'pickup';
+  const metadata={tala_mode:'rc8_live_'+mode,order_id:String(orderId),
     buyer_id:String(buyerId)};
   const intent=order!.intentId===reserved
     ? await provider.paymentIntents.create({
@@ -52,7 +54,7 @@ export async function createLivePickupPaymentIntent(
         allowed_payment_method_types:['card'],
         capture_method:'automatic',metadata,
         description:'Tala Eats pedido '+orderId,
-      },{idempotencyKey:'tala-live-v1-pickup-order-'+orderId})
+      },{idempotencyKey:'tala-live-v1-'+mode+'-order-'+orderId})
     : await provider.paymentIntents.retrieve(order!.intentId!);
   if((order!.intentId!==reserved&&intent.id!==order!.intentId)||
      !intent.livemode||intent.currency!=='mxn'||intent.amount!==order!.amountMinor||
