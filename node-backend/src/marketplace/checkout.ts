@@ -6,7 +6,7 @@ import {calculateDefaultCommercial,fmtCents} from '../finance/pricing.js';
 import {deliveryDistance,assertRestaurantDeliveryOrigin} from './delivery-geography.js';
 import {hasReachableStageDriver} from './driver.js';
 import {hasReachableLiveDriver} from './live-delivery-capacity.js';
-import {liveCashDeliveryReleased} from './live-cash-delivery.js';
+import {liveCashDeliveryReleased,cashPickupReleased,liveCashPickupReleased} from './live-cash-delivery.js';
 import { z } from 'zod';
 import { db } from '../db.js';
 import { config } from '../config.js';
@@ -139,12 +139,11 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
     config.STRIPE_LIVE_RELEASE_APPROVED==='true'&&
     config.STRIPE_FINANCIAL_WRITES_ENABLED==='true'&&
     config.STRIPE_MANUAL_SETTLEMENT_APPROVED==='true';
-  if(!((cash&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true')||
-       delivery||testStripe||liveStripe))
+  if(!((cash&&cashPickupReleased())||delivery||testStripe||liveStripe))
     throw new CheckoutError(503,'Checkout efectivo o Stripe no autorizado');
   if(!['customer','admin'].includes(account.role))
     throw new CheckoutError(403,'No tienes permisos para crear pedidos');
-  if(liveCashDelivery&&account.role!=='customer')
+  if((liveCashDelivery||(cash&&liveCashPickupReleased()))&&account.role!=='customer')
     throw new CheckoutError(403,'Domicilio LIVE requiere comprador autenticado');
   // Administrators may create synthetic CASH fixtures, but never PaymentIntents
   // they cannot authorize as the actual cardholder.
@@ -193,6 +192,25 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
     const restaurant=await tx.marketplaceRestaurant.findUnique({where:{id:data.restaurant_id}});
     if(!restaurant||restaurant.verificationStatus!=='verified')
       throw new CheckoutError(404,'Restaurante no disponible');
+    // LIVE collection, even physical cash, must be owned by an active
+    // verified merchant who expressly approved the real Connect mapping.
+    // Never use staging fixtures or an unowned account for a commercial sale.
+    if((cash&&liveCashPickupReleased())||liveStripe||liveCashDelivery){
+      if(restaurant.onboardingStatus!=='approved'||!restaurant.ownerId)
+        throw new CheckoutError(409,'Comercio sin aprobación comercial LIVE');
+      const mapped=await tx.$queryRaw<{id:number}[]>`
+        SELECT r.id FROM restaurants r
+        JOIN users u ON u.id=r.owner_id
+        JOIN tala_live_merchant_accounts m ON m.restaurant_id=r.id
+        WHERE r.id=${restaurant.id} AND u.is_active=true AND u.role='restaurant'
+          AND m.owner_approved_at IS NOT NULL
+          AND m.stripe_account_id IS NOT NULL
+          AND m.stripe_account_id<>${config.STRIPE_PLATFORM_ACCOUNT_ID??''}
+        FOR SHARE OF r,u,m
+      `;
+      if(mapped.length!==1)
+        throw new CheckoutError(409,'Comercio LIVE sin titular y Connect aprobados');
+    }
     if(!restaurant.isOpen)throw new CheckoutError(400,'El restaurante está cerrado');
     if(!delivery&&!restaurant.pickupEnabled)
       throw new CheckoutError(400,'Este restaurante no permite recoger');
