@@ -14,6 +14,7 @@ import {deliverAuthMailBatch} from '../email.js';
 import {liveDispatchReleased} from '../marketplace/live-delivery-payment.js';
 import {liveCashDeliveryReleased} from '../marketplace/live-cash-delivery.js';
 import {sweepLiveDeliveryReady} from '../marketplace/live-delivery-dispatch.js';
+import {drainLiveOperationalOutbox} from './production-operational-outbox.js';
 
 if(config.NODE_ENV!=='production')throw Error('LIVE_WORKER_ENV_REQUIRED');
 const {settings,pool,redis,stripe}=buildLiveRuntimeDependencies();
@@ -83,6 +84,26 @@ async function readyTick(){
      err instanceof Error?err.name:'unknown');}
  finally{readyBusy=false;}
 }
+// Durable operational notifications are independent of finance and checkout.
+// Does not process Stripe, refund, payout or treasury events, and never
+// declares a paid order from a Redis notification.
+let outboxBusy=false;
+async function operationalOutboxTick(){
+ if(stopping||outboxBusy)return;
+ outboxBusy=true;
+ try{
+  const result=await drainLiveOperationalOutbox(pool,redis,10);
+  if(result.retried||result.dead||result.skipped)
+   console.error('LIVE_OPERATIONAL_OUTBOX_REVIEW',
+    JSON.stringify({retried:result.retried,dead:result.dead,skipped:result.skipped}));
+ }catch(err){
+  console.error('LIVE_OPERATIONAL_OUTBOX_DEPENDENCY_HOLD',
+   err instanceof Error?err.name:'unknown');
+ }finally{outboxBusy=false;}
+}
+const operationalOutboxTimer=setInterval(()=>{void operationalOutboxTick();},10000);
+void operationalOutboxTick();
+
 const readyTimer=setInterval(()=>{void readyTick();},15000);
 void readyTick();
 const timer=setInterval(()=>{void tick();},5000);
@@ -92,6 +113,7 @@ const shutdown=async()=>{
  stopping=true;
  clearInterval(timer);
  clearInterval(readyTimer);
+ clearInterval(operationalOutboxTimer);
  if(pushTimer)clearInterval(pushTimer);
  if(mailTimer)clearInterval(mailTimer);
  try{await redis.del('tala:node:live:web-push:heartbeat');}catch{/* TTL expires */}

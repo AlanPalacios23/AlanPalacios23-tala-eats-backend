@@ -641,7 +641,8 @@ export async function dispatchStageDeliveryReady(orderId:number):Promise<boolean
   if(!((config.NODE_ENV==='staging'&&
         config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
         config.STAGE_DRIVER_DELIVERY_ENABLED==='true')||
-       (config.NODE_ENV==='production'&&liveDispatchReleased())))
+       (config.NODE_ENV==='production'&&
+         (liveDispatchReleased()||liveCashDeliveryReleased()))))
     return false;
   if(!Number.isSafeInteger(orderId)||orderId<=0)return false;
   const profiles=await db.marketplaceDriverProfile.findMany({

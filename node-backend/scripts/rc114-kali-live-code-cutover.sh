@@ -199,8 +199,38 @@ if [[ "$MODE" == --verify ]];then
 fi
 [[ "$old_sha" == "$OLD_EXPECTED" && "$old_sha" != "$SHA" ]] ||
  { echo RC114_ABORT=BASELINE_SHA_CHANGED;exit 1; }
-[[ ! -e "$RECEIPT" && ! -L "$RECEIPT" ]] ||
- { echo RC114_ABORT=PREVIOUS_ROLLBACK_RECEIPT_EXISTS;exit 1; }
+# A verified previous successful code release leaves its rollback receipt
+# intact. Archive it only when the receipt's target SHA is the actual active
+# PM2 release, keeping rollback evidence without overwriting an old receipt.
+if [[ -e "$RECEIPT" || -L "$RECEIPT" ]];then
+ [[ -f "$RECEIPT" && ! -L "$RECEIPT" &&
+    "$(stat -c '%a' "$RECEIPT")" == 600 &&
+    "$(stat -c '%u' "$RECEIPT")" == "$(id -u)" ]] ||
+  { echo RC114_ABORT=PREVIOUS_ROLLBACK_RECEIPT_EXISTS;exit 1; }
+ node - "$RECEIPT" "$old_sha" <<'JS'
+const fs=require('node:fs');
+const [path,sha]=process.argv.slice(2);
+try{
+ const doc=JSON.parse(fs.readFileSync(path,'utf8'));
+ if(doc.sha!==sha||
+  typeof doc.previousCwd!=='string'||
+  !/^\/home\/tala-node-stage\/tala-node-releases\/[a-f0-9]{40}\/node-backend$/.test(doc.previousCwd)||
+  doc.previousCwd.includes('/'+sha+'/'))
+   throw Error('WRONG_PREVIOUS_RECEIPT');
+}catch{
+ console.error('RC114_ABORT=PREVIOUS_RECEIPT_NOT_ACTIVE_SHA');
+ process.exitCode=1;
+}
+JS
+ history="$HOME/.config/rc114-previous-receipts"
+ [[ ! -L "$history" ]] || { echo RC114_ABORT=HISTORY_SYMLINK;exit 1; }
+ mkdir -m 700 -p "$history"
+ archived="$history/$old_sha.json"
+ [[ ! -e "$archived" && ! -L "$archived" ]] ||
+  { echo RC114_ABORT=RECEIPT_ARCHIVE_CONFLICT;exit 1; }
+ mv -- "$RECEIPT" "$archived"
+ echo RC114_PREVIOUS_ROLLBACK_RECEIPT_ARCHIVED=PASS
+fi
 printf '{"sha":"%s","previousCwd":"%s"}\n' "$SHA" "$old" > "$RECEIPT"
 chmod 600 "$RECEIPT"
 SWITCHED=no;DONE=no
