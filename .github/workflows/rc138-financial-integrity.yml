@@ -1,0 +1,89 @@
+name: "TALA EATS RC13.8 | Financial cash and wallet regression"
+on:
+  push:
+    branches: [feat/rc138-financial-cash-guard-20261029]
+    paths:
+      - "node-backend/**"
+      - ".github/workflows/rc138-financial-integrity.yml"
+  pull_request:
+    branches: [feat/rc137-payment-delivery-e2e-20261029]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rc138-finance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  financial-regression:
+    name: "PG15 migrations + TypeScript + 426+ unit regression tests"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: tala_node_stage
+          POSTGRES_PASSWORD: rc138-ci-only
+          POSTGRES_DB: tala_node_stage
+        ports: ["15435:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tala_node_stage -d tala_node_stage"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+      redis:
+        image: redis:8
+        ports: ["16379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      NODE_ENV: staging
+      HOST: "127.0.0.1"
+      PORT: "18190"
+      DATABASE_URL: "postgresql://tala_node_stage:rc138-ci-only@127.0.0.1:15435/tala_node_stage"
+      REDIS_URL: "redis://:rc138-ci-only@127.0.0.1:16379/0"
+      AUTH_JWT_SECRET: "rc138-disposable-ci-isolated-auth-aaaaabbbbbcccccdddddeeeee"
+      AUTH_V02_ENABLED: "true"
+      MARKETPLACE_B_ENABLED: "true"
+      COMMERCIAL_PRICING_V162_ENABLED: "true"
+      STRIPE_FINANCIAL_WRITES_ENABLED: "false"
+      STRIPE_LIVE_ENABLED: "false"
+      STRIPE_CONNECT_TRANSFERS_ENABLED: "false"
+      STRIPE_REFUNDS_ENABLED: "false"
+      LIVE_DELIVERY_DISPATCH_ENABLED: "false"
+      LIVE_DELIVERY_CARD_CHECKOUT_ENABLED: "false"
+      LIVE_PICKUP_CASH_CHECKOUT_ENABLED: "false"
+      LIVE_DELIVERY_CASH_CHECKOUT_ENABLED: "false"
+      LIVE_DELIVERY_CASH_DISPATCH_ENABLED: "false"
+      LIVE_CASH_HANDOFF_V2_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Install, validate schema, migrate disposable PostgreSQL, compile
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:validate
+          npm run db:migrate:deploy
+          npm run build
+      - name: Cash collection / pickup proof / no double count regression
+        run: node --test tests/rc85-payee-allocation.test.mjs
+      - name: Full Node backend regression suite
+        run: npm test
+      - name: Assert no new LIVE cash/card or payout switches
+        run: |
+          set -euo pipefail
+          grep -q "NODE_TREASURY_LIVE_EXECUTION_ENABLED=false" src/live/treasury-policy.ts
+          test "$STRIPE_FINANCIAL_WRITES_ENABLED" = false
+          test "$STRIPE_LIVE_ENABLED" = false
+          test "$STRIPE_CONNECT_TRANSFERS_ENABLED" = false
