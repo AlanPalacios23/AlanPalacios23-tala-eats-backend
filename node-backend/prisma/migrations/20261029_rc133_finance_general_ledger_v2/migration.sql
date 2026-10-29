@@ -14,7 +14,7 @@ CREATE TABLE finance_accounts_v2 (
  CONSTRAINT finance_accounts_v2_key_check CHECK (account_key ~ '^[a-z][a-z0-9_.:-]{2,119}$'),
  CONSTRAINT finance_accounts_v2_owner_check CHECK (
   (owner_kind IN ('platform','external') AND owner_id IS NULL) OR
-  (owner_kind IN ('restaurant','driver','customer') AND owner_id>0)
+  (owner_kind IN ('restaurant','driver','customer') AND owner_id IS NOT NULL AND owner_id>0)
  ),
  CONSTRAINT finance_accounts_v2_currency_check CHECK (currency='mxn'),
  CONSTRAINT finance_accounts_v2_category_check CHECK (
