@@ -27,8 +27,10 @@ const count=(s:string):number=>{
 export async function auditCompletedTreasuryTransfers(
  pool:Pick<Pool,'query'>,
  provider:Pick<Stripe,'transfers'|'charges'>,
- kind:Payee,payeeId:number,account:string,
+ kind:Payee,payeeId:number,account:string,expectedLivemode=true,
 ):Promise<bigint>{
+ if(!expectedLivemode&&process.env.NODE_ENV!=='staging')
+  throw Error('TREASURY_TEST_AUDIT_REQUIRES_STAGING');
  if(!['restaurant','driver'].includes(kind)||!Number.isSafeInteger(payeeId)||
   payeeId<1||!/^acct_[A-Za-z0-9]+$/.test(account))
   throw Error('TREASURY_TRANSFER_IDENTITY_INVALID');
@@ -64,11 +66,11 @@ export async function auditCompletedTreasuryTransfers(
    const t=await provider.transfers.retrieve(row.stripe_transfer_id);
    if(t.id!==row.stripe_transfer_id||t.destination!==account||
       t.source_transaction!==row.source_charge_id||
-      t.currency!=='mxn'||!t.livemode||
+      t.currency!=='mxn'||t.livemode!==expectedLivemode||
       t.amount!==Number(cents)||t.amount_reversed!==0)
     throw Error('PROVIDER_TRANSFER_INCONSISTENT');
    const charge=await provider.charges.retrieve(row.source_charge_id);
-   if(!charge.livemode||charge.id!==row.source_charge_id||!charge.paid||
+   if(charge.livemode!==expectedLivemode||charge.id!==row.source_charge_id||!charge.paid||
       charge.refunded||charge.disputed||charge.currency!=='mxn')
     throw Error('ORIGINAL_CHARGE_REFUND_DISPUTE_HOLD');
    total+=cents;scanned++;
