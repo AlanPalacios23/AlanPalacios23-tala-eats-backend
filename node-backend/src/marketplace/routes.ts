@@ -18,7 +18,7 @@ import { previewCancelStage, cancelCashPickupStage, moveCashPickupOwnerStage } f
 import { completeCashPickupStage } from './pickup.js';
 import { driverAvailability, driverAccept, driverStatus, driverGps,
   driverDashboard, driverComplete, driverPresenceReadiness, hasReachableStageDriver,
-  canDriverReachPickup } from './driver.js';
+  canDriverReachPickup,liveCashDriverOffers } from './driver.js';
 import { current } from '../auth/routes.js';
 import type { AuthUser, MarketplaceRestaurant, MarketplaceMenuItem,
   MarketplaceDriverProfile, MarketOrder, MarketOrderItem } from '../generated/prisma/client.js';
@@ -758,8 +758,14 @@ stageDriverRouter.get('/dashboard',async(req,res)=>{
 });
 stageDriverRouter.get('/available',async(req,res)=>{
   const account=await driverAccount(req);
-  if(config.STAGE_DRIVER_DELIVERY_ENABLED!=='true'){res.json([]);return;}
   const limit=z.coerce.number().int().min(1).max(100).safeParse(req.query.limit??25);
+  if(config.NODE_ENV==='production'){
+    if(!limit.success)throw new RouteError(422,'Límite inválido');
+    res.setHeader('Cache-Control','private, no-store');
+    res.json(await liveCashDriverOffers(account,limit.data));
+    return;
+  }
+  if(config.STAGE_DRIVER_DELIVERY_ENABLED!=='true'){res.json([]);return;}
   if(!limit.success) throw new RouteError(422,'Límite inválido');
   const profile=await db.marketplaceDriverProfile.findUnique({where:{userId:account.id}});
   if(!profile?.isOnline||!profile.isVerified){res.json([]);return;}
