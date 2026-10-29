@@ -8,6 +8,7 @@ import {hasReachableStageDriver} from './driver.js';
 import {hasReachableLiveDriver} from './live-delivery-capacity.js';
 import {liveCashDeliveryReleased,cashPickupReleased,liveCashPickupReleased} from './live-cash-delivery.js';
 import {liveDispatchReleased} from './live-delivery-payment.js';
+import {pilotBuyerAndStoreAllowed} from './live-delivery-pilot.js';
 import { z } from 'zod';
 import { db } from '../db.js';
 import { config } from '../config.js';
@@ -159,6 +160,11 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
   // LIVE card delivery requires independent operational release; coupons,
   // schedules and unsupported discounts remain unavailable.
   const {coupon_code:_coupon,delivery_lat:_lat,delivery_lng:_lng,...data}=parsed.data;
+  if((liveCashDelivery||liveStripeDelivery)&&!pilotBuyerAndStoreAllowed(
+    config.NODE_ENV,account.id,data.restaurant_id,
+    config.LIVE_DELIVERY_PILOT_CUSTOMER_ID,
+    config.LIVE_DELIVERY_PILOT_RESTAURANT_ID))
+    throw new CheckoutError(403,'Entrega LIVE reservada al piloto autorizado');
   const tip=toMinor(data.tip);
   if(tip>1_000_000n)throw new CheckoutError(422,'Propina fuera de límite');
   const itemIds=data.items.map(x=>x.menu_item_id);
