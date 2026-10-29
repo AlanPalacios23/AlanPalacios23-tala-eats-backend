@@ -656,18 +656,36 @@ export async function dispatchStageDeliveryReady(orderId:number):Promise<boolean
          (liveDispatchReleased()||liveCashDeliveryReleased()))))
     return false;
   if(!Number.isSafeInteger(orderId)||orderId<=0)return false;
+  // Python owner._assign_best_available_driver selects the nearest online
+  // eligible courier. Reproduce that behavior using ONLY recent Redis GPS.
+  // PostgreSQL's stale currentLat/currentLng are never dispatch proof.
+  const order=await db.marketOrder.findUnique({
+    where:{id:orderId},select:{restaurant:{select:{lat:true,lng:true}}},
+  });
+  if(!order)return false;
   const profiles=await db.marketplaceDriverProfile.findMany({
     where:{isVerified:true,isOnline:true,
       user:{is:{role:'driver',isActive:true}}},
     select:{userId:true},orderBy:{userId:'asc'},take:100,
   });
+  const nearby:{userId:number;distance:number}[]=[];
   for(const p of profiles){
+    const fresh=await redisLocation(p.userId);
+    if(!fresh)continue;
+    const distance=haversine(fresh.lat,fresh.lng,
+      order.restaurant.lat,order.restaurant.lng);
+    if(distance<=config.STAGE_DRIVER_MAX_PICKUP_KM)
+      nearby.push({userId:p.userId,distance});
+  }
+  nearby.sort((a,b)=>a.distance-b.distance||a.userId-b.userId);
+  for(const p of nearby){
     try{
+      // assign() re-checks GPS TTL, signed payment/cash origin and acquires
+      // profile+order locks. Proximity sorting is NOT a substitute for CAS.
       const id=await withProfileLock(p.userId,tx=>assign(tx,p.userId,orderId));
       if(id===orderId)return true;
     }catch{
-      // Failed driver must never fail merchant READY transaction or
-      // duplicate an assignment to a second driver.
+      // Retry from worker on the same READY order without double assignment.
     }
   }
   return false;
