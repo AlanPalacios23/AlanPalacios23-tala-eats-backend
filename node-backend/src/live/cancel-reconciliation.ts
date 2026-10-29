@@ -10,6 +10,7 @@
 import type Stripe from 'stripe';
 import type {Pool} from 'pg';
 import {LiveGateError} from './guard.js';
+import {isRealLiveCheckoutProvenance} from '../marketplace/live-delivery-policy.js';
 
 type Provider=Pick<Stripe,'events'|'paymentIntents'>;
 type Order={
@@ -52,9 +53,11 @@ export async function reconcileRecordedLiveCanceledIntent(
  const pi=await provider.paymentIntents.retrieve(entry.objectId);
  const orderId=Number(pi.metadata.order_id);
  const buyerId=Number(pi.metadata.buyer_id);
+ const fulfillment=pi.metadata.tala_mode==='rc8_live_delivery'?'delivery':
+   pi.metadata.tala_mode==='rc8_live_pickup'?'pickup':null;
  if(!pi.livemode||pi.id!==entry.objectId||pi.status!=='canceled'||
     pi.amount_received!==0||pi.currency!=='mxn'||
-    pi.metadata.tala_mode!=='rc8_live_pickup'||
+    !fulfillment||
     !/^[1-9][0-9]{0,9}$/.test(pi.metadata.order_id??'')||
     !/^[1-9][0-9]{0,9}$/.test(pi.metadata.buyer_id??'')||
     !Number.isSafeInteger(orderId)||!Number.isSafeInteger(buyerId)||
@@ -77,10 +80,18 @@ export async function reconcileRecordedLiveCanceledIntent(
    'SELECT id,user_id,restaurant_id,status,payment_status,payment_provider_id,payment_method,payment_provider,order_type,total::text,refunded_amount::text,inventory_restored_at,inventory_reserved_json FROM orders WHERE id=$1 FOR UPDATE',[orderId]);
   const o=foundOrder.rows[0];
   if(!o||o.user_id!==buyerId||o.payment_method!=='stripe'||
-     o.payment_provider!=='stripe'||o.order_type!=='pickup'||
+     o.payment_provider!=='stripe'||o.order_type!==fulfillment||
      o.payment_provider_id!==pi.id||minor(o.total)!==pi.amount||
      minor(o.refunded_amount)!==0)
     return error('CANCELED_ORDER_BINDING_MISMATCH');
+  // Never release an unpaid delivery reservation that did not originate in
+  // the same server-side signed customer checkout used for card capture.
+  if(fulfillment==='delivery'){
+    const marker=await client.query<{metadata_json:string}>(
+      "SELECT metadata_json FROM order_events WHERE order_id=$1 AND status='received' ORDER BY id LIMIT 1 FOR SHARE",[orderId]);
+    if(!isRealLiveCheckoutProvenance(marker.rows[0]?.metadata_json??null))
+      return error('LIVE_DELIVERY_CANCEL_ORIGIN_INVALID');
+  }
   if(o.status==='cancelled'&&o.inventory_restored_at!==null){
    await client.query('UPDATE stripe_webhook_events SET status=$2,"processedAt"=NOW() WHERE id=$1',
     [eventId,'PROCESSED']);
