@@ -4,6 +4,7 @@
  * The actual claim uses profile+order row locks and signed-Stripe checks.
  */
 import {db} from '../db.js';
+import {config} from '../config.js';
 import {liveDispatchReleased} from './live-delivery-payment.js';
 import {liveCashDeliveryReleased} from './live-cash-delivery.js';
 import {dispatchStageDeliveryReady} from './driver.js';
@@ -13,6 +14,8 @@ export async function sweepLiveDeliveryReady():Promise<DispatchRecovery>{
  if(!liveDispatchReleased()&&!liveCashDeliveryReleased())return {enabled:false,scanned:0,assigned:0,held:0};
  const rows=await db.marketOrder.findMany({
   where:{orderType:'delivery',status:'ready',driverId:null,
+    restaurantId:config.LIVE_DELIVERY_PILOT_RESTAURANT_ID,
+    userId:config.LIVE_DELIVERY_PILOT_CUSTOMER_ID,
     refundedAmount:0,
     OR:[...(liveCashDeliveryReleased()?
       [{paymentMethod:'cash',paymentStatus:'pending'}]:[]),
