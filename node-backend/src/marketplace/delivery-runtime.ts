@@ -55,3 +55,34 @@ export const freshDriverNearPickup=(
   return km<=pickupRadiusKm;
  }catch{return false;}
 };
+
+/** Order LIVE couriers by the closest fresh reported GPS, like Python
+ * owner._assign_best_available_driver. This ranking never reserves an order:
+ * assign() MUST revalidate Redis TTL and locks before actual dispatch.
+ */
+export function rankFreshLiveDrivers(
+ ids:readonly number[],locations:readonly (string|null)[],
+ origin:{lat:number;lng:number},nowMs:number,radiusKm:number,
+):{userId:number;distance:number}[]{
+ if(ids.length!==locations.length||ids.length>100||
+   !Number.isFinite(origin.lat)||Math.abs(origin.lat)>90||
+   !Number.isFinite(origin.lng)||Math.abs(origin.lng)>180||
+   !Number.isFinite(radiusKm)||radiusKm<1||radiusKm>30)return [];
+ const ranked:{userId:number;distance:number}[]=[];
+ for(let i=0;i<ids.length;i++){
+  const userId=ids[i]!,raw=locations[i]??null;
+  if(!Number.isSafeInteger(userId)||userId<=0||
+     !hasFreshVerifiedDriverGps(raw,120,nowMs))continue;
+  const gps=JSON.parse(raw!) as {lat:number;lng:number};
+  const radians=Math.PI/180;
+  const deltaLat=(gps.lat-origin.lat)*radians;
+  const deltaLng=(gps.lng-origin.lng)*radians;
+  const a=Math.sin(deltaLat/2)**2+
+    Math.cos(gps.lat*radians)*Math.cos(origin.lat*radians)*
+    Math.sin(deltaLng/2)**2;
+  const distance=6371.0088*2*Math.atan2(
+    Math.sqrt(a),Math.sqrt(Math.max(0,1-a)));
+  if(distance<=radiusKm)ranked.push({userId,distance});
+ }
+ return ranked.sort((a,b)=>a.distance-b.distance||a.userId-b.userId);
+}
