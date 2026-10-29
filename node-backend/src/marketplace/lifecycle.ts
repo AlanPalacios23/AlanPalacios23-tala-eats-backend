@@ -4,6 +4,7 @@
 import { db } from '../db.js';
 import {dispatchStageDeliveryReady} from './driver.js';
 import {liveDispatchReleased,liveDeliveryTenderAllowed} from './live-delivery-payment.js';
+import {liveCashDeliveryReleased,liveCashDeliveryTenderAllowed} from './live-cash-delivery.js';
 import { config } from '../config.js';
 import {cancelUnpaidStripeTestIntent} from '../stage-stripe-test.js';
 import type { AuthUser, MarketOrder } from '../generated/prisma/client.js';
@@ -267,7 +268,8 @@ export async function moveStagePickupOwner(orderId:number,actor:AuthUser,
     config.STRIPE_FINANCIAL_WRITES_ENABLED==='true';
   if(config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true'&&
      config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED!=='true'&&
-     config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true'&&!liveCardEnabled)
+     config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true'&&
+     !liveCashDeliveryReleased()&&!liveCardEnabled)
     fail(503,'Ciclo de pedidos de recogida deshabilitado');
   if(!['restaurant','admin'].includes(actor.role))fail(403,'No autorizado');
   const resultId=await db.$transaction(async tx=>{
@@ -285,8 +287,10 @@ export async function moveStagePickupOwner(orderId:number,actor:AuthUser,
       order.paymentStatus==='pending'&&(
        (order.orderType==='pickup'&&
         config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true')||
-       (order.orderType==='delivery'&&config.NODE_ENV==='staging'&&
-        config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'));
+       (order.orderType==='delivery'&&
+        ((config.NODE_ENV==='staging'&&
+          config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true')||
+         liveCashDeliveryReleased())));
     const stripe=(order.orderType==='pickup'||
       (order.orderType==='delivery'&&
        ((config.NODE_ENV==='staging'&&
@@ -296,6 +300,9 @@ export async function moveStagePickupOwner(orderId:number,actor:AuthUser,
       order.paymentStatus==='paid'&&
       (config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'||liveCardEnabled);
     if(!cash&&!stripe)fail(503,'Pago no conciliado o método no disponible');
+    if(cash&&order.orderType==='delivery'&&config.NODE_ENV==='production'&&
+       !await liveCashDeliveryTenderAllowed(tx,order))
+      fail(503,'Pedido en efectivo LIVE sin origen válido o en revisión');
     if(stripe){
       if(order.orderType==='delivery'&&config.NODE_ENV==='production'&&
          !await liveDeliveryTenderAllowed(tx,order))
@@ -353,7 +360,8 @@ export async function moveStagePickupOwner(orderId:number,actor:AuthUser,
   },{maxWait:10_000,timeout:20_000});
   if(next==='ready'&&((config.NODE_ENV==='staging'&&
      config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true')||
-     (config.NODE_ENV==='production'&&liveDispatchReleased()))){
+     (config.NODE_ENV==='production'&&
+       (liveDispatchReleased()||liveCashDeliveryReleased())))){
     await dispatchStageDeliveryReady(resultId);
   }
   return resultId;
