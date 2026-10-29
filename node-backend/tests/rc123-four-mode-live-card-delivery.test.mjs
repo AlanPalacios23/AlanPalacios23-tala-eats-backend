@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {createLivePickupPaymentIntent,LIVE_PI_RESERVED} from '../src/live/stripe-payments.ts';
-import {liveReceiptIdentity,LiveGateError} from '../src/live/guard.ts';
-import {liveSettlementPostings} from '../src/live/ledger-posting.ts';
+import {createLivePickupPaymentIntent,LIVE_PI_RESERVED} from '../dist/live/stripe-payments.js';
+import {liveReceiptIdentity,LiveGateError} from '../dist/live/guard.js';
+import {liveSettlementPostings} from '../dist/live/ledger-posting.js';
 
 const read=(file)=>readFileSync(new URL('../src/'+file,import.meta.url),'utf8');
 const settings={maxOrderMinor:50000,publishableKey:'pk_live_public_test_placeholder'};
