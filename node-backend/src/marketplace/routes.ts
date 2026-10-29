@@ -476,7 +476,8 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
       delivery_checkout_supported:stagePreview||(livePreview&&liveCashDeliveryReleased()),
       ...(livePreview?{live_driver_capacity_verified:true,
         preview_only:true,
-        checkout_blocker:'LIVE_DELIVERY_CHECKOUT_NOT_RELEASED'}:{}),
+        ...(liveCashDeliveryReleased()?{}:{
+          checkout_blocker:'LIVE_DELIVERY_CHECKOUT_NOT_RELEASED'})}:{}),
       driver_assignment_guaranteed:false,
     });
   }catch(err){
