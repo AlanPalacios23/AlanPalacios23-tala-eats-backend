@@ -19,13 +19,20 @@ const sameHash=(a:string,b:string)=>{
  if(!/^[0-9a-f]{64}$/.test(a)||!/^[0-9a-f]{64}$/.test(b))return false;
  return timingSafeEqual(Buffer.from(a,'hex'),Buffer.from(b,'hex'));
 };
+// Production handoff needs independent LIVE approval; staging is isolated.
+const handoffEnabled=()=>config.NODE_ENV==='production'?
+ config.LIVE_CASH_HANDOFF_V2_ENABLED==='true':
+ config.NODE_ENV==='staging'&&
+ config.STAGE_CASH_HANDOFF_V2_ENABLED==='true'&&
+ config.STRIPE_LIVE_ENABLED==='false'&&
+ config.STRIPE_FINANCIAL_WRITES_ENABLED==='false';
 export function buildCashHandoffV2Router(pool:Pool){
  const router=Router();
  router.use((_req,res,next)=>{
   res.setHeader('Cache-Control','private, no-store');next();
  });
  router.post('/driver/finance/cash-handoff/:orderId/start',async(req,res)=>{
-  if(config.NODE_ENV!=='production'||config.LIVE_CASH_HANDOFF_V2_ENABLED!=='true')
+  if(!handoffEnabled())
    {res.status(503).json({error:'CASH_HANDOFF_DISABLED'});return;}
   const client=await pool.connect();let tx=false;
   try{
@@ -77,7 +84,7 @@ export function buildCashHandoffV2Router(pool:Pool){
   }finally{client.release();}
  });
  router.post('/owner/finance/cash-handoff/:orderId/confirm',async(req,res)=>{
-  if(config.NODE_ENV!=='production'||config.LIVE_CASH_HANDOFF_V2_ENABLED!=='true')
+  if(!handoffEnabled())
    {res.status(503).json({error:'CASH_HANDOFF_DISABLED'});return;}
   const client=await pool.connect();let tx=false;
   try{
