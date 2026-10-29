@@ -44,7 +44,7 @@ test('RC12.7 verifies 107 real-shaped completed transfers across three pages',as
  assert.equal(total,21400n);
  assert.deepEqual(f.getStats(),{summaries:2,reads:107,charges:107});
  const source=readFileSync(new URL('../src/live/treasury-router.ts',import.meta.url),'utf8');
- assert.match(source,/auditCompletedTreasuryTransfers\(pool,stripe,x\.kind,x\.id,x\.account\)/);
+ assert.match(source,/auditCompletedTreasuryTransfers\(pool,stripe,x\.kind,x\.id,x\.account,expectedLivemode\)/);
  assert.doesNotMatch(source,/LIMIT 101/);
 });
 
