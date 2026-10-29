@@ -171,7 +171,9 @@ jobs:
           set -euo pipefail
           node dist/server.js > /tmp/rc136-commerce-server.log 2>&1 &
           api_pid=$!
-          trap 'kill "$api_pid" 2>/dev/null || true' EXIT
+          node dist/worker.js > /tmp/rc136-commerce-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'kill "$api_pid" "$worker_pid" 2>/dev/null || true' EXIT
           STRESS_SERVER_PID="$api_pid" node scripts/ci-500-purchases-load-e2e.mjs || {
             tail -n 90 /tmp/rc136-commerce-server.log | sed -E 's/(sk|rk|pk)_(test|live)_[A-Za-z0-9]+/[KEY REDACTED]/g'
             exit 1
