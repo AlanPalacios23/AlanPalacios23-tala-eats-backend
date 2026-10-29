@@ -91,3 +91,13 @@ export function deliveryCapability(
    cash_enabled:cashDeliveryReleased,stripe_enabled:cardDeliveryReleased,
    reason:'READY'};
 }
+
+/** The auth router throws HttpFailure with an HTTP code.
+ * An unauthenticated capability read must not be masked as a Stripe/DB 503.
+ * Never echo auth error messages or account details into a public response.
+ */
+export function readinessAuthStatus(error:unknown):401|403|null {
+ if(error===null||typeof error!=='object'||!('code' in error))return null;
+ const code=(error as {code:unknown}).code;
+ return code===401||code===403?code:null;
+}
