@@ -47,6 +47,16 @@ test('RC12.2 customer, checkout, seller lifecycle and handoff share same explici
  assert.ok(proof.includes("const cash=order.paymentMethod==='cash'&&cashPickupReleased()"));
 });
 
+test('RC12.2 public pickup capability does not advertise stage cash in production',()=>{
+ const app=read('app.ts');
+ const readiness=read('live/pickup-readiness.ts');
+ assert.ok(app.includes("import {cashPickupReleased} from './marketplace/live-cash-delivery.js';"));
+ assert.ok(app.includes('cashPickupReleased()'));
+ assert.doesNotMatch(app,/config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true'/);
+ assert.ok(app.includes("stagePickupCashEnabled:config.NODE_ENV==='staging'&&cashPickupReleased()"));
+ assert.ok(readiness.includes('cash_enabled:cashFlagEnabled'));
+});
+
 test('RC12.2 cash pickup physical receipt remains a non-Stripe immutable handoff',()=>{
  const source=read('marketplace/pickup.ts');
  assert.ok(source.includes("account:'cash_collected_by_merchant'"));
