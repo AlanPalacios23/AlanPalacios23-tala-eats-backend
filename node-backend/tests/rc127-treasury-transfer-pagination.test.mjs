@@ -6,8 +6,8 @@ import {auditCompletedTreasuryTransfers} from '../dist/live/treasury-transfer-au
 const account='acct_RC127STORE';
 const rows=Array.from({length:107},(_,i)=>({
  id:String(i+1),order_id:i+1,payee_kind:'restaurant',payee_id:42,
- connected_account_id:account,stripe_transfer_id:'tr_RC127_'+(i+1),
- amount_minor:'200',source_charge_id:'ch_RC127_'+(i+1),
+ connected_account_id:account,stripe_transfer_id:'tr_RC127A'+(i+1),
+ amount_minor:'200',source_charge_id:'ch_RC127A'+(i+1),
 }));
 
 function fixture(data=rows,{mutateSummary=false,refund=false}={}){
@@ -56,7 +56,7 @@ test('RC12.7 zero transfers returns zero without remote Stripe reads',async()=>{
 
 test('RC12.7 1001 transfers fail closed before any external provider call',async()=>{
  const a=Array.from({length:1001},(_,i)=>({
- ...rows[0],id:String(i+1),stripe_transfer_id:'tr_RC127_'+(i+1)}));
+ ...rows[0],id:String(i+1),stripe_transfer_id:'tr_RC127A'+(i+1)}));
  const f=fixture(a);
  await assert.rejects(
   auditCompletedTreasuryTransfers(f.pool,f.provider,'restaurant',42,account),
