@@ -3,9 +3,9 @@
  * Existing merchants/couriers may only reapply for their existing role.
  * ADMIN identities can never be converted by self-submitted onboarding.
  */
-export type CommercialApplicationRole='restaurant'|'driver';
 export function canUseCommercialOnboardingRole(
- currentRole:string,target:CommercialApplicationRole,
+ currentRole:string,target:string,
 ):boolean {
+ if(target!=='restaurant'&&target!=='driver')return false;
  return currentRole==='customer'||currentRole===target;
 }
