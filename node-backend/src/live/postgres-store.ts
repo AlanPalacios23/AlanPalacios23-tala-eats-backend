@@ -21,7 +21,7 @@ type Row={
 };
 export class PostgresLivePaymentStore implements LivePaymentStore {
   constructor(private readonly pool:Pool) {}
-  async reserveForPayment(orderId:number,buyerId:number,maxOrderMinor:number):Promise<LivePendingOrder|null>{
+  async reserveForPayment(orderId:number,buyerId:number,maxOrderMinor:number,allowDelivery=false):Promise<LivePendingOrder|null>{
     const client=await this.pool.connect();
     try{
       await client.query('BEGIN');
@@ -37,7 +37,8 @@ export class PostgresLivePaymentStore implements LivePaymentStore {
       if(!row){await client.query('ROLLBACK');return null;}
       if(row.status!=='awaiting_payment'||row.payment_status!=='pending'||
          row.payment_method!=='stripe'||row.payment_provider!=='stripe'||
-         row.order_type!=='pickup'||Number(row.refunded_amount)!==0){
+         !(row.order_type==='pickup'||(allowDelivery&&row.order_type==='delivery'))||
+         Number(row.refunded_amount)!==0){
         await client.query('ROLLBACK');
         throw new LiveGateError('ORDER_STATE_NOT_ELIGIBLE');
       }
@@ -65,7 +66,7 @@ export class PostgresLivePaymentStore implements LivePaymentStore {
       }
       await client.query('COMMIT');
       return {id:row.id,buyerId:row.user_id,amountMinor:minor,
-        currency:'mxn',method:'stripe',fulfillment:'pickup',
+        currency:'mxn',method:'stripe',fulfillment:row.order_type as 'pickup'|'delivery',
         status:'awaiting_payment',paymentStatus:'pending',
         intentId:pointer,createdAtMs,refundedMinor:0};
     }catch(error){
