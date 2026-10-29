@@ -5,6 +5,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { Redis } from 'ioredis';
 import { db } from '../db.js';
 import { config } from '../config.js';
+import {cashPickupReleased} from './live-cash-delivery.js';
 import type { AuthUser } from '../generated/prisma/client.js';
 
 class PickupError extends Error {
@@ -26,8 +27,9 @@ async function limitPickupPin(orderId:number,userId:number):Promise<void>{
   });
   try{
     await redis.connect();
-    const perActor='tala:node:stage:pickup:pin:'+orderId+':'+userId;
-    const perOrder='tala:node:stage:pickup:pin:order:'+orderId;
+    const namespace=config.NODE_ENV==='production'?'live':'stage';
+    const perActor='tala:node:'+namespace+':pickup:pin:'+orderId+':'+userId;
+    const perOrder='tala:node:'+namespace+':pickup:pin:order:'+orderId;
     const counts=await redis.eval(
       "local a=redis.call('INCR',KEYS[1]); if a==1 then redis.call('EXPIRE',KEYS[1],900) end; "+
       "local b=redis.call('INCR',KEYS[2]); if b==1 then redis.call('EXPIRE',KEYS[2],900) end; "+
@@ -66,7 +68,7 @@ export async function completeStagePickup(
   const liveCardEnabled=config.NODE_ENV==='production'&&
     config.STRIPE_LIVE_ENABLED==='true'&&
     config.STRIPE_FINANCIAL_WRITES_ENABLED==='true';
-  if(config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED!=='true'&&
+  if(!cashPickupReleased()&&
      config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true'&&!liveCardEnabled)
     reject(503,'Entrega de recogida deshabilitada');
   if(!['restaurant','admin'].includes(actor.role))
@@ -83,10 +85,10 @@ export async function completeStagePickup(
   if(actor.role!=='admin'&&candidate.restaurant.ownerId!==actor.id)
     reject(403,'Ese pedido no pertenece a tu restaurante');
   if(candidate.orderType!=='pickup'||
-     !((candidate.paymentMethod==='cash'&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true')||
+     !((candidate.paymentMethod==='cash'&&cashPickupReleased())||
        (candidate.paymentMethod==='stripe'&&
         (config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'||liveCardEnabled))))
-    reject(503,'Solo recogida de staging con método habilitado');
+    reject(503,'Solo recogida con método autorizado');
   await limitPickupPin(orderId,actor.id);
   return db.$transaction(async tx=>{
     const found=await tx.$queryRaw<{id:number}[]>`
@@ -99,7 +101,7 @@ export async function completeStagePickup(
     if(!order)return reject(404,'Pedido no encontrado');
     if(actor.role!=='admin' && order.restaurant.ownerId!==actor.id)
       reject(403,'Ese pedido no pertenece a tu restaurante');
-    const cash=order.paymentMethod==='cash'&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true';
+    const cash=order.paymentMethod==='cash'&&cashPickupReleased();
     const card=order.paymentMethod==='stripe'&&
       (config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true'||liveCardEnabled);
     if(order.orderType!=='pickup'||(!cash&&!card))
