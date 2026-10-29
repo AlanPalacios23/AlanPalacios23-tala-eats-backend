@@ -110,6 +110,7 @@ ADMIN_NODE_ONLY = {
     ("PATCH", "/api/v1/admin/support/{}"),
     ("GET", "/api/v1/admin/restaurants"),
     ("PATCH", "/api/v1/admin/restaurants/{}/archive"),
+    ("PATCH", "/api/v1/admin/restaurants/{}/restore"),
 }
 # New RC7 read-only, buyer-authenticated server-authoritative payment status.
 # Source checks also require owner match, immutable ledger and no secret leaks.

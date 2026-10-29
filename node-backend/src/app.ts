@@ -10,6 +10,8 @@ import {liveDispatchReleased} from './marketplace/live-delivery-payment.js';
 import {cashPickupReleased,liveCashDeliveryReleased} from './marketplace/live-cash-delivery.js';
 import {buildLiveMerchantFinanceRouter} from './live/merchant-finance-router.js';
 import {buildPayeeFinanceRouter} from './live/payee-finance-router.js';
+import {buildFinanceWalletReadRouter} from './live/finance-wallet-read-router.js';
+import {buildCashHandoffV2Router} from './live/cash-handoff-router-v2.js';
 import {buildTreasuryRouter} from './live/treasury-router.js';
 import {buildTreasuryConnectOnboardingRouter} from './live/treasury-connect-onboarding-router.js';
 import {buildTreasuryConnectWebhookRouter} from './live/treasury-connect-webhook.js';
@@ -66,6 +68,9 @@ app.use(express.json({ limit: '128kb' }));
 if(live){
   app.use('/api/v1',buildLiveMerchantFinanceRouter(live.pool,live.stripe));
   app.use('/api/v1',buildPayeeFinanceRouter(live.pool,live.stripe));
+  app.use('/api/v1',buildFinanceWalletReadRouter(live.pool));
+  if(config.LIVE_CASH_HANDOFF_V2_ENABLED==='true')
+    app.use('/api/v1',buildCashHandoffV2Router(live.pool));
   // Read-only treasury journal for both mobile payees; payout POST is always 503.
   app.use('/api/v1',buildTreasuryRouter(live.pool,live.stripe));
   app.use('/api/v1',buildTreasuryConnectOnboardingRouter(live.pool,live.stripe,live.redis));

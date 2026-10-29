@@ -998,6 +998,71 @@ adminRouter.get('/restaurants',async(req,res)=>{
  })));
 });
 
+// RC12.8 recovery: archived/suspended shops require an explicit ADMIN
+// restoration decision with MFA and a durable audit trail. Historical orders,
+// menus, Connect mappings and ledger records are left UNCHANGED.
+// Restore authorization ONLY: the owner opens the store and enables pickup
+// separately, so recovery cannot accidentally admit production orders.
+adminRouter.patch('/restaurants/:restaurantId/restore',async(req,res)=>{
+ const admin=await account(req,['admin']),id=param(req,'restaurantId');
+ const p=payload(z.strictObject({
+   confirm_name:z.string().min(2).max(150),
+   reason:z.string().trim().min(10).max(300),
+ }),req.body);
+ const restored=await db.$transaction(async tx=>{
+   const locks=await tx.$queryRawUnsafe(
+     'SELECT id FROM restaurants WHERE id=$1 FOR UPDATE',id);
+   if(!Array.isArray(locks)||locks.length!==1)
+     return bad(404,'Restaurante no encontrado');
+   const shop=await tx.marketplaceRestaurant.findUnique({where:{id}});
+   if(!shop)return bad(404,'Restaurante no encontrado');
+   if(shop.name!==p.confirm_name)
+     return bad(422,'El nombre de confirmación no coincide');
+   if(!['archived','suspended'].includes(shop.verificationStatus))
+     return bad(409,'El restaurante no está archivado ni suspendido');
+   if(shop.isOpen)return bad(409,'El restaurante aún está abierto');
+   if(!shop.ownerId)
+     return bad(409,'Restaurante sin titular para restauración');
+   const owner=await tx.authUser.findUnique({where:{id:shop.ownerId}});
+   if(!owner||!owner.isActive||owner.role!=='restaurant')
+     return bad(409,'Titular sin rol comercial activo');
+   // An approved request is required; changing archive flags alone must not
+   // promote a storefront that never passed identity review.
+   const approved=await tx.opsOnboarding.findFirst({where:{
+     userId:owner.id,entityType:'restaurant',status:'approved',
+   },select:{id:true}});
+   if(!approved)return bad(409,'Falta aprobación administrativa de alta');
+   const active=await tx.marketOrder.count({where:{
+     restaurantId:id,status:{notIn:['delivered','cancelled']},
+   }});
+   if(active>0)
+     return bad(409,'Existen pedidos sin finalizar: revisión necesaria');
+   const before={verification_status:shop.verificationStatus,
+     onboarding_status:shop.onboardingStatus,
+     is_open:shop.isOpen,pickup_enabled:shop.pickupEnabled};
+   const updated=await tx.marketplaceRestaurant.update({
+     where:{id},data:{
+       verificationStatus:'verified',onboardingStatus:'approved',
+       isOpen:false,pickupEnabled:false,sponsored:false,
+     },
+   });
+   const after={verification_status:updated.verificationStatus,
+     onboarding_status:updated.onboardingStatus,
+     is_open:updated.isOpen,pickup_enabled:updated.pickupEnabled};
+   await tx.authAuditEvent.create({data:{
+     userId:admin.id,action:'restaurant.restore',entityType:'restaurant',
+     entityId:String(id),detail:p.reason,beforeJson:JSON.stringify(before),
+     afterJson:JSON.stringify(after),
+   }});
+   return updated;
+ },{maxWait:10000,timeout:20000});
+ res.setHeader('Cache-Control','private, no-store');
+ res.json({id:restored.id,name:restored.name,restored:true,
+   verification_status:restored.verificationStatus,
+   onboarding_status:restored.onboardingStatus,
+   is_open:restored.isOpen,pickup_enabled:restored.pickupEnabled,
+   orders_created:false,stripe_operations:'none'});
+});
 // "Eliminar" from the ADMIN UI = reversible-by-authorized-recovery archive.
 // No destructive SQL, no cascade deleting orders, ledger, reviews or media.
 adminRouter.patch('/restaurants/:restaurantId/archive',async(req,res)=>{
