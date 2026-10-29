@@ -172,8 +172,11 @@ async function redisLocation(driverId:number):Promise<{lat:number;lng:number}|nu
 // on each order. Different drivers never both claim a single order.
 async function assign(tx:any,driverId:number,forcedOrderId?:number):Promise<number|null>{
   if(config.NODE_ENV==='production'&&!liveDispatchReleased()&&!liveCashDeliveryReleased())return null;
-  const p=await tx.marketplaceDriverProfile.findUnique({where:{userId:driverId}});
-  if(!p?.isOnline||!p.isVerified)return null;
+  const p=await tx.marketplaceDriverProfile.findUnique({
+    where:{userId:driverId},include:{user:true},
+  });
+  if(!p?.isOnline||!p.isVerified||p.user?.role!=='driver'||!p.user?.isActive)
+    return null;
   const active=await tx.marketOrder.findFirst({where:{
     driverId,status:{in:ACTIVE}},select:{id:true},
   });
