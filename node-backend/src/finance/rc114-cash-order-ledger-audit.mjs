@@ -35,7 +35,8 @@ export function auditDeliveredLiveCashOrder(order, entries, proof) {
     amounts = Object.fromEntries([
       'total','subtotal','discount','deliveryFee','tip','serviceFee',
       'platformCommission','restaurantPayout','driverEarning',
-      'platformRevenue','cashCollected','refundedAmount',
+      'platformRevenue','paymentProcessingFee','contributionMargin',
+      'cashCollected','refundedAmount',
     ].map(k => [k, minor(order[k])]));
   } catch {return report([...errors,'INVALID_ORDER_MONEY']);}
   const a = amounts;
@@ -47,6 +48,8 @@ export function auditDeliveredLiveCashOrder(order, entries, proof) {
     errors.push('CUSTOMER_TOTAL_MISMATCH');
   if (!same(a.restaurantPayout,food-a.platformCommission))
     errors.push('RESTAURANT_PAYABLE_MISMATCH');
+  if (a.paymentProcessingFee!==0n||a.contributionMargin!==a.platformRevenue)
+    errors.push('CASH_PROCESSING_OR_MARGIN_MISMATCH');
   const driverPayable = a.driverEarning+a.tip;
   if (!same(a.platformRevenue,a.platformCommission+a.serviceFee+
     a.deliveryFee-a.driverEarning))
@@ -58,6 +61,8 @@ export function auditDeliveredLiveCashOrder(order, entries, proof) {
   const expected = new Map([
     ['gmv',a.total],['restaurant_payable',a.restaurantPayout],
     ['driver_payable',driverPayable],['platform_revenue',a.platformRevenue],
+    ['payment_processing',a.paymentProcessingFee],
+    ['contribution_margin',a.contributionMargin],
   ]);
   const check = (kind,account,amount,key) => {
     const rows=entries.filter(e=>e.kind===kind&&e.account===account);
@@ -85,6 +90,11 @@ export function auditDeliveredLiveCashOrder(order, entries, proof) {
   }
   check('cash_delivery_collection','cash_collected_by_driver',a.total,
     'order:'+order.id+':cash-delivery:collected');
+  const allowedSettlement=new Set(expected.keys());
+  if(entries.some(e=>e.kind==='order_settlement'&&!allowedSettlement.has(e.account)))
+    errors.push('UNRECOGNIZED_SETTLEMENT_ACCOUNT');
+  if(entries.some(e=>e.kind!=='order_settlement'&&e.kind!=='cash_delivery_collection'))
+    errors.push('UNRECONCILED_NONSTANDARD_LEDGER');
   if(entries.some(e=>e.kind==='order_cancellation' ||
       ['stripe_live_refund','stripe_live_dispute','stripe_live_reversal'].includes(e.kind)))
     errors.push('FINANCIAL_RISK_REQUIRES_REVIEW');
