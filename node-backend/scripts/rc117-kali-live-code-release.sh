@@ -41,7 +41,22 @@ cd "$work"
 if [[ "$mode" != --verify ]];then
  echo RC117_CODE_PREPARE=START
  npm ci --no-audit --no-fund
- npm run verify
+ # The full node:test suite imports dist/config.js in several test modules.
+ # It requires an env even though no test may touch LIVE funds. Use synthetic
+ # staging-shaped, deliberately invalid credentials in a scrubbed subprocess.
+ # NEVER load the real LIVE env into unit tests and never contact Stripe.
+ echo RC117_ISOLATED_TEST_ENV=SYNTHETIC_NO_LIVE_SECRETS
+ env -i HOME="$HOME" USER=tala-node-stage LOGNAME=tala-node-stage PATH="$PATH" \
+   NODE_ENV=staging HOST=127.0.0.1 PORT=18190 \
+   DATABASE_URL="postgresql://tala_node_stage:RC117SyntheticNonProductionNoAccess@127.0.0.1:15435/tala_node_stage" \
+   REDIS_URL="redis://:RC117SyntheticNonProductionNoAccess@127.0.0.1:16379/0" \
+   STRIPE_FINANCIAL_WRITES_ENABLED=false STRIPE_LIVE_ENABLED=false \
+   STRIPE_LIVE_RELEASE_APPROVED=false STRIPE_REFUNDS_ENABLED=false \
+   STRIPE_CONNECT_TRANSFERS_ENABLED=false STRIPE_MANUAL_SETTLEMENT_APPROVED=false \
+   STAGE_PICKUP_CASH_CHECKOUT_ENABLED=false STAGE_DELIVERY_CASH_CHECKOUT_ENABLED=false \
+   STAGE_DRIVER_DELIVERY_ENABLED=false STAGE_DELIVERY_STRIPE_TEST_ENABLED=false \
+   STAGE_STRIPE_TEST_CHECKOUT_ENABLED=false \
+   npm run verify
  test -s dist/server.js
  test -s dist/live/production-worker.js
  bash scripts/rc114-kali-live-code-cutover.sh --plan "$sha"
