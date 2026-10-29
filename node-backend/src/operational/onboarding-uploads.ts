@@ -19,7 +19,7 @@ function privateDirectory(){
  const production=process.env.NODE_ENV==='production';
  const value=process.env.TALA_ONBOARDING_PRIVATE_DIR||
    (production?'/home/tala-node-stage/.local/share/talaeats-private/onboarding':
-     join(tmpdir(),'talaeats-node-onboarding-'+process.getuid()));
+     join(tmpdir(),'talaeats-node-onboarding-'+(process.getuid?.()??0)));
  // Production must never write evidence under an HTTP-served directory,
  // within a Git release, or into a world-readable /tmp path.
  if(!isAbsolute(value)||value.includes('..')||
