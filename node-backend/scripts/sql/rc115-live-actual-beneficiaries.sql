@@ -1,4 +1,4 @@
--- RC115 READ-ONLY REAL PAYEE MAPPINGS. Never selects old merchant_connect_accounts.
+-- RC115 READ-ONLY REAL PAYEE MAPPINGS. Never reads disconnected legacy staging payee mirrors.
 SELECT 'restaurant'::text AS payee_kind,
  m.restaurant_id::text AS payee_id,
  m.stripe_account_id,
