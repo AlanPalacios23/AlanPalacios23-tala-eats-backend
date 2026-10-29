@@ -23,6 +23,7 @@ export const liveDispatchReleased=():boolean=>
  config.LIVE_DELIVERY_DISPATCH_ENABLED==='true'&&
  config.LIVE_DELIVERY_CARD_CHECKOUT_ENABLED==='true'&&
  config.LIVE_DELIVERY_RELEASE_APPROVED==='true'&&
+ config.LIVE_DELIVERY_CARD_E2E_APPROVED==='true'&&
  config.STRIPE_LIVE_ENABLED==='true'&&
  config.STRIPE_FINANCIAL_WRITES_ENABLED==='true';
 
