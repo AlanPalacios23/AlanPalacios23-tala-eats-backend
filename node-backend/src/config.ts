@@ -55,6 +55,12 @@ const schema = z.object({
   LIVE_DELIVERY_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
   LIVE_DELIVERY_CASH_DISPATCH_ENABLED: z.enum(['false','true']).default('false'),
   LIVE_DELIVERY_CASH_RELEASE_APPROVED: z.enum(['false','true']).default('false'),
+  // RC12.9: keep the FIRST real delivery pilot restricted to exactly one
+  // approved customer, one merchant and one verified driver (IDs only).
+  // Missing identities prevent ANY delivery release from booting.
+  LIVE_DELIVERY_PILOT_CUSTOMER_ID: z.coerce.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
+  LIVE_DELIVERY_PILOT_RESTAURANT_ID: z.coerce.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
+  LIVE_DELIVERY_PILOT_DRIVER_ID: z.coerce.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   STAGE_DRIVER_DELIVERY_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_DRIVER_MAX_PICKUP_KM: z.coerce.number().finite().min(1).max(30).default(8),
   STAGE_DELIVERY_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
@@ -117,6 +123,15 @@ const liveCashKeys=['LIVE_DELIVERY_CASH_CHECKOUT_ENABLED',
 const liveCashValues=liveCashKeys.map(k=>process.env[k]==='true');
 if(liveCashValues.some(Boolean)&&!liveCashValues.every(Boolean))
  throw Error('RC112_PARTIAL_LIVE_CASH_DELIVERY_RELEASE_FORBIDDEN');
+// RC12.9: a pilot enabling either delivery tender may NOT accidentally
+// expose the new fulfillment mode to the entire public customer base.
+// IDs must be explicit, positive and safe; identities are also checked on
+// readiness, order admission, driver eligibility and payment-intent issuance.
+if([...deliveryCardKeys,...liveCashKeys].some(k=>process.env[k]==='true')&&
+ ['LIVE_DELIVERY_PILOT_CUSTOMER_ID','LIVE_DELIVERY_PILOT_RESTAURANT_ID',
+  'LIVE_DELIVERY_PILOT_DRIVER_ID'].some(k=>
+   !/^[1-9][0-9]{0,14}$/.test(process.env[k]??'')))
+ throw Error('RC129_LIVE_DELIVERY_PILOT_SCOPE_REQUIRED');
 if(liveCashValues.every(Boolean)&&(
  process.env.NODE_ENV!=='production'||process.env.LIVE_DRIVER_PRESENCE_ENABLED!=='true'||
  process.env.MERCHANT_MANAGED_DELIVERY==='true'||process.env.MARKETPLACE_B_ENABLED!=='true'||
