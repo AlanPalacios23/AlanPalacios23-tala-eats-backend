@@ -7,6 +7,7 @@ import {buildIsolatedCheckoutRouter} from './live/checkout-router.js';
 import {pickupCapability,deliveryCapability,readinessAuthStatus,type PickupMerchant} from './live/pickup-readiness.js';
 import {hasReachableLiveDriver} from './marketplace/live-delivery-capacity.js';
 import {liveDispatchReleased} from './marketplace/live-delivery-payment.js';
+import {pilotBuyerAndStoreAllowed} from './marketplace/live-delivery-pilot.js';
 import {cashPickupReleased,liveCashDeliveryReleased} from './marketplace/live-cash-delivery.js';
 import {buildLiveMerchantFinanceRouter} from './live/merchant-finance-router.js';
 import {buildPayeeFinanceRouter} from './live/payee-finance-router.js';
@@ -89,6 +90,16 @@ if(live){
       if(!Number.isSafeInteger(id)||id<=0){
         res.status(422).json({error:'RESTAURANT_ID_INVALID'});return;
       }
+      if(forDelivery&&!pilotBuyerAndStoreAllowed(
+        config.NODE_ENV,session.userId,id,
+        config.LIVE_DELIVERY_PILOT_CUSTOMER_ID,
+        config.LIVE_DELIVERY_PILOT_RESTAURANT_ID)){
+        // Do not advertise delivery checkout to public customers while
+        // a single-buyer, single-merchant pilot is under controlled test.
+        res.json({restaurant_id:id,order_type:'delivery',ready:false,
+          cash_enabled:false,stripe_enabled:false,
+          reason:'LIVE_DELIVERY_PILOT_RESTRICTED'});return;
+      }
       const result=await live.pool.query<PickupMerchant>(
         `SELECT r.id,r.lat,r.lng,r.is_open,r.pickup_enabled,r.verification_status,
          r.onboarding_status,r.owner_id,u.email AS owner_email,
@@ -144,9 +155,9 @@ if(live){
         res.status(422).json({error:'ORDER_ID_INVALID'});return;
       }
       const linked=await live.pool.query<{
-        user_id:number;stripe_account_id:string|null;
+        user_id:number;restaurant_id:number;order_type:string;stripe_account_id:string|null;
         owner_approved_at:Date|null;email:string|null;is_active:boolean|null;
-      }>(`SELECT o.user_id,m.stripe_account_id,m.owner_approved_at,
+      }>(`SELECT o.user_id,o.restaurant_id,o.order_type,m.stripe_account_id,m.owner_approved_at,
            u.email,u.is_active FROM orders o
            JOIN restaurants r ON r.id=o.restaurant_id
            LEFT JOIN tala_live_merchant_accounts m ON m.restaurant_id=r.id
@@ -155,6 +166,12 @@ if(live){
       const merchant=linked.rows[0];
       if(!merchant||merchant.user_id!==session.userId){
         res.status(404).json({error:'ORDER_NOT_FOUND'});return;
+      }
+      if(merchant.order_type==='delivery'&&!pilotBuyerAndStoreAllowed(
+        config.NODE_ENV,session.userId,merchant.restaurant_id,
+        config.LIVE_DELIVERY_PILOT_CUSTOMER_ID,
+        config.LIVE_DELIVERY_PILOT_RESTAURANT_ID)){
+        res.status(403).json({error:'LIVE_DELIVERY_PILOT_RESTRICTED'});return;
       }
       if(!merchant.owner_approved_at||!merchant.stripe_account_id||
          !merchant.is_active||!merchant.email){
