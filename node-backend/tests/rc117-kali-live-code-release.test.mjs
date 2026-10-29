@@ -20,5 +20,5 @@ test('RC11.7 code deploy is SHA-pinned, guarded and never toggles LIVE money',()
 test('RC11.7 only delegates state changes to the existing protected PM2 installer',()=>{
  assert.doesNotMatch(src,/pm2\s+(?:delete|start|restart|reload)/);
  assert.doesNotMatch(src,/ALTER TABLE|UPDATE orders|INSERT INTO|DELETE FROM/i);
- assert.match(src,/--apply"\s*\)\;/);
+ assert.match(src,/--apply\)/);
 });
