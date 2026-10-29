@@ -42,7 +42,8 @@ async function main(){
  if(!/^(sk|rk)_live_[A-Za-z0-9]+$/.test(config.STRIPE_SECRET_KEY??'')||
     config.STRIPE_LIVE_ENABLED!=='true')
     return fail('LIVE_STRIPE_READ_CAPABILITY_MISSING');
- const where={orderType:'pickup',paymentMethod:'stripe',paymentStatus:'paid'};
+ const where={orderType:'pickup',paymentMethod:'stripe',
+  paymentStatus:{in:['paid','partially_refunded','refunded']}};
  const count=await db.marketOrder.count({where});
  if(count===0)return fail('NO_VERIFIED_LIVE_PICKUP_PAYMENTS');
  if(count>100)return fail('OVER_100_ORDERS_REQUIRES_PAGED_AUDIT');
