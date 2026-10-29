@@ -3,7 +3,7 @@
  * This is a read-only fail-closed indicator for the customer checkout screen.
  */
 export interface PickupMerchant {
- id:number;is_open:boolean;pickup_enabled:boolean;verification_status:string;
+ id:number;lat?:number;lng?:number;is_open:boolean;pickup_enabled:boolean;verification_status:string;
  onboarding_status:string;owner_id:number|null;owner_email:string|null;
  owner_active:boolean|null;stripe_account_id:string|null;
  owner_approved_at:Date|null;
