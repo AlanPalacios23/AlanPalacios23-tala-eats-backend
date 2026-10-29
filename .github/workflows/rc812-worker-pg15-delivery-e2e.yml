@@ -92,6 +92,7 @@ jobs:
           RC133_FINANCE_DB_TEST: 'true'
         run: |
           node --test tests/rc133-journal-pg15.test.mjs
+          node --test tests/rc135-cash-handoff-pg15.test.mjs
       - name: Protect disposable Redis with password
         run: |
           node --input-type=module -e '
