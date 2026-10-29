@@ -32,3 +32,26 @@ export const hasFreshVerifiedDriverGps=(raw:string|null,ttlSeconds:number,nowMs:
   return Number.isFinite(age)&&age>=0&&age<=120000;
  }catch{return false;}
 };
+
+/**
+ * LIVE distance check must use the signed-in driver's fresh Redis heartbeat,
+ * not the last persisted PostgreSQL latitude/longitude.
+ */
+export const freshDriverNearPickup=(
+ raw:string|null,origin:{lat:number;lng:number},nowMs:number,pickupRadiusKm:number,
+):boolean=>{
+ if(!Number.isFinite(origin.lat)||!Number.isFinite(origin.lng)||
+    Math.abs(origin.lat)>90||Math.abs(origin.lng)>180||
+    !Number.isFinite(pickupRadiusKm)||pickupRadiusKm<1||pickupRadiusKm>30||
+    !hasFreshVerifiedDriverGps(raw,120,nowMs))return false;
+ try{
+  const loc=JSON.parse(raw!) as {lat:number;lng:number};
+  const radians=Math.PI/180;
+  const dLat=(loc.lat-origin.lat)*radians;
+  const dLng=(loc.lng-origin.lng)*radians;
+  const a=Math.sin(dLat/2)**2+
+   Math.cos(loc.lat*radians)*Math.cos(origin.lat*radians)*Math.sin(dLng/2)**2;
+  const km=6371.0088*2*Math.atan2(Math.sqrt(a),Math.sqrt(Math.max(0,1-a)));
+  return km<=pickupRadiusKm;
+ }catch{return false;}
+};

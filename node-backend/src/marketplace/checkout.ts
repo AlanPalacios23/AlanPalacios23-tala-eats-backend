@@ -5,6 +5,8 @@ import { createHmac, timingSafeEqual, randomInt } from 'node:crypto';
 import {calculateDefaultCommercial,fmtCents} from '../finance/pricing.js';
 import {deliveryDistance,assertRestaurantDeliveryOrigin} from './delivery-geography.js';
 import {hasReachableStageDriver} from './driver.js';
+import {hasReachableLiveDriver} from './live-delivery-capacity.js';
+import {liveCashDeliveryReleased} from './live-cash-delivery.js';
 import { z } from 'zod';
 import { db } from '../db.js';
 import { config } from '../config.js';
@@ -128,6 +130,8 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
   const stageDelivery=config.NODE_ENV==='staging'&&
     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
     (isStageCashDeliveryIntent(raw)||cardStripeDelivery);
+  const liveCashDelivery=liveCashDeliveryReleased()&&isStageCashDeliveryIntent(raw);
+  const delivery=stageDelivery||liveCashDelivery;
   const testStripe=cardStripe&&config.NODE_ENV==='staging'&&
     config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED==='true';
   const liveStripe=cardStripePickup&&config.NODE_ENV==='production'&&
@@ -136,17 +140,19 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
     config.STRIPE_FINANCIAL_WRITES_ENABLED==='true'&&
     config.STRIPE_MANUAL_SETTLEMENT_APPROVED==='true';
   if(!((cash&&config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true')||
-       stageDelivery||testStripe||liveStripe))
+       delivery||testStripe||liveStripe))
     throw new CheckoutError(503,'Checkout efectivo o Stripe no autorizado');
   if(!['customer','admin'].includes(account.role))
     throw new CheckoutError(403,'No tienes permisos para crear pedidos');
+  if(liveCashDelivery&&account.role!=='customer')
+    throw new CheckoutError(403,'Domicilio LIVE requiere comprador autenticado');
   // Administrators may create synthetic CASH fixtures, but never PaymentIntents
   // they cannot authorize as the actual cardholder.
   if(cardStripe&&account.role!=='customer')
     throw new CheckoutError(403,'Stripe TEST requiere comprador customer');
-  if(!cash&&!cardStripe&&!stageDelivery)
+  if(!cash&&!cardStripe&&!delivery)
     throw new CheckoutError(503,'Método u opción de entrega no habilitada');
-  const parsed=stageDelivery?mobileDeliverySchema.safeParse(raw):mobilePickupSchema.safeParse(raw);
+  const parsed=delivery?mobileDeliverySchema.safeParse(raw):mobilePickupSchema.safeParse(raw);
   if(!parsed.success)throw new CheckoutError(422,'Datos del pedido inválidos');
   // The metadata fields are not part of the financial signature or insert.
   // No Stripe LIVE delivery, coupons, schedules or unsupported discounts.
@@ -158,7 +164,7 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
   for(const item of data.items)totals.set(item.menu_item_id,(totals.get(item.menu_item_id)??0)+item.quantity);
   if([...totals.values()].some(x=>x>50))throw new CheckoutError(422,'Cantidad de producto fuera de límite');
   const sortedIds=[...totals.keys()].sort((a,b)=>a-b);
-  const fingerprint=signature(stageDelivery?
+  const fingerprint=signature(delivery?
     {...data,delivery_lat:_lat,delivery_lng:_lng}:data);
   return db.$transaction(async tx=>{
     // Serialize retries with the same user, BEFORE testing client_reference.
@@ -188,16 +194,19 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
     if(!restaurant||restaurant.verificationStatus!=='verified')
       throw new CheckoutError(404,'Restaurante no disponible');
     if(!restaurant.isOpen)throw new CheckoutError(400,'El restaurante está cerrado');
-    if(!stageDelivery&&!restaurant.pickupEnabled)
+    if(!delivery&&!restaurant.pickupEnabled)
       throw new CheckoutError(400,'Este restaurante no permite recoger');
     let deliveryDistanceMilli=0n;
-    if(stageDelivery){
+    if(delivery){
       assertRestaurantDeliveryOrigin({lat:restaurant.lat,lng:restaurant.lng},restaurant.address);
       const geo=deliveryDistance({lat:restaurant.lat,lng:restaurant.lng},
         {lat:_lat!,lng:_lng!},restaurant.deliveryRadiusKm);
       deliveryDistanceMilli=geo.distanceMilliKm;
       // Prevent creating a normal delivery without any verified online driver.
-      if(!await hasReachableStageDriver({lat:restaurant.lat,lng:restaurant.lng}))
+      const driverAvailable=liveCashDelivery?
+        await hasReachableLiveDriver({lat:restaurant.lat,lng:restaurant.lng}):
+        await hasReachableStageDriver({lat:restaurant.lat,lng:restaurant.lng});
+      if(!driverAvailable)
         throw new CheckoutError(409,'No hay repartidores disponibles con ubicación actual');
     }
     const pricingV162=config.COMMERCIAL_PRICING_V162_ENABLED==='true';
@@ -272,9 +281,9 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
     // Only fixed default policies are supported here; custom overrides 503.
     const economics=calculateDefaultCommercial({
       policy:pricingV162?'v162':'v152',
-      method:data.payment_method,fulfillment:stageDelivery?'delivery':'pickup',
+      method:data.payment_method,fulfillment:delivery?'delivery':'pickup',
       subtotal,discount:0n,tip,
-      ...(stageDelivery?{distanceMilliKm:deliveryDistanceMilli}:{}),
+      ...(delivery?{distanceMilliKm:deliveryDistanceMilli}:{}),
     });
     const commission=economics.commission;
     const serviceFee=economics.serviceFee;
@@ -289,7 +298,7 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
         userId:account.id,restaurantId:restaurant.id,
         address:data.address,notes:data.notes,clientReference:data.client_reference,
         deliveryPin:String(randomInt(0,10_000)).padStart(4,'0'),
-        orderType:stageDelivery?'delivery':'pickup',
+        orderType:delivery?'delivery':'pickup',
         paymentMethod:data.payment_method,paymentStatus:'pending',
         paymentProvider:data.payment_method,status:cardStripe?'awaiting_payment':'received',
         subtotal:fromMinor(subtotal),deliveryFee:fromMinor(economics.deliveryFee),
@@ -299,9 +308,9 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
         restaurantPayout:fromMinor(restaurantPayout),
         platformRevenue:fromMinor(platformRevenue),contributionMargin:fmtCents(economics.contributionMargin),
         driverEarning:fromMinor(economics.driverEarning),
-        estimatedMinutes:restaurant.etaMin+(stageDelivery?15:0),
+        estimatedMinutes:restaurant.etaMin+(delivery?15:0),
         distanceKm:Number(deliveryDistanceMilli)/1000,
-        deliveryLat:stageDelivery?_lat:null,deliveryLng:stageDelivery?_lng:null,
+        deliveryLat:delivery?_lat:null,deliveryLng:delivery?_lng:null,
         inventoryReservedJson:JSON.stringify(Object.fromEntries(
           [...ingredientUsage.entries()].map(([id,needed])=>[String(id),fromMilli(needed)]))),
       },
@@ -334,6 +343,7 @@ export async function createStagePickupOrder(raw:unknown, account:AuthUser):Prom
       orderId:order.id,status:'received',actorUserId:account.id,
       metadataJson:JSON.stringify({source:'checkout',checkout_intent_hmac:fingerprint,
         ...(stageDelivery?{stage_delivery_customer_v1:true}:{}),
+        ...(liveCashDelivery?{live_delivery_cash_v1:true}:{}),
       }),
     }});
     // Stripe TEST is an unpaid reservation. No seller balance, GMV or

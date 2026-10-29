@@ -5,14 +5,19 @@
  */
 import {db} from '../db.js';
 import {liveDispatchReleased} from './live-delivery-payment.js';
+import {liveCashDeliveryReleased} from './live-cash-delivery.js';
 import {dispatchStageDeliveryReady} from './driver.js';
 
 export type DispatchRecovery={enabled:boolean;scanned:number;assigned:number;held:number};
 export async function sweepLiveDeliveryReady():Promise<DispatchRecovery>{
- if(!liveDispatchReleased())return {enabled:false,scanned:0,assigned:0,held:0};
+ if(!liveDispatchReleased()&&!liveCashDeliveryReleased())return {enabled:false,scanned:0,assigned:0,held:0};
  const rows=await db.marketOrder.findMany({
   where:{orderType:'delivery',status:'ready',driverId:null,
-    paymentMethod:'stripe',paymentStatus:'paid',refundedAmount:0},
+    refundedAmount:0,
+    OR:[...(liveCashDeliveryReleased()?
+      [{paymentMethod:'cash',paymentStatus:'pending'}]:[]),
+      ...(liveDispatchReleased()?
+        [{paymentMethod:'stripe',paymentStatus:'paid'}]:[])]},
   select:{id:true},orderBy:[{readyAt:'asc'},{id:'asc'}],take:10,
  });
  let assigned=0,held=0;

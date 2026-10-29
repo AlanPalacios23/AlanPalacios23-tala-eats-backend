@@ -12,6 +12,7 @@ import {deliverWebPushIteration,webPushConfigured} from '../operational/web-push
 import {db} from '../db.js';
 import {deliverAuthMailBatch} from '../email.js';
 import {liveDispatchReleased} from '../marketplace/live-delivery-payment.js';
+import {liveCashDeliveryReleased} from '../marketplace/live-cash-delivery.js';
 import {sweepLiveDeliveryReady} from '../marketplace/live-delivery-dispatch.js';
 
 if(config.NODE_ENV!=='production')throw Error('LIVE_WORKER_ENV_REQUIRED');
@@ -72,7 +73,7 @@ if(pushTimer)void pushTick();
 // Independent bounded READY recovery, never coupled to Stripe receipt writes.
 let readyBusy=false;
 async function readyTick(){
- if(stopping||readyBusy||!liveDispatchReleased())return;
+ if(stopping||readyBusy||(!liveDispatchReleased()&&!liveCashDeliveryReleased()))return;
  readyBusy=true;
  try{
   const result=await sweepLiveDeliveryReady();

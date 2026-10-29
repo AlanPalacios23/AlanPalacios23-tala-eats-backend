@@ -9,13 +9,16 @@ import {requireStageCheckoutWorker} from '../stage-worker-gate.js';
 import { createStagePickupOrder, isCashPickupIntent, isStripePickupIntent,
   isStageCashDeliveryIntent,isStageStripeDeliveryIntent } from './checkout.js';
 import {deliveryDistance,assertRestaurantDeliveryOrigin,DeliveryGeoError} from './delivery-geography.js';
+import {hasReachableLiveDriver} from './live-delivery-capacity.js';
+import {liveCashDeliveryReleased,isLiveCashCheckoutProvenance} from './live-cash-delivery.js';
+import {freshDriverNearPickup,driverLocationKey} from './delivery-runtime.js';
 import {calculateDefaultCommercial,fmtCents} from '../finance/pricing.js';
 import {calculatePickupQuoteFromCatalog,assertDefaultPickupRates,PickupQuoteError} from './quote.js';
 import { previewCancelStage, cancelCashPickupStage, moveCashPickupOwnerStage } from './lifecycle.js';
 import { completeCashPickupStage } from './pickup.js';
 import { driverAvailability, driverAccept, driverStatus, driverGps,
   driverDashboard, driverComplete, driverPresenceReadiness, hasReachableStageDriver,
-  canDriverReachPickup } from './driver.js';
+  canDriverReachPickup,liveCashDriverOffers } from './driver.js';
 import { current } from '../auth/routes.js';
 import type { AuthUser, MarketplaceRestaurant, MarketplaceMenuItem,
   MarketplaceDriverProfile, MarketOrder, MarketOrderItem } from '../generated/prisma/client.js';
@@ -367,12 +370,16 @@ ownerRouter.patch('/restaurant',async(req,res)=>{
   res.json(restaurantPublic(updated));
 });
 
-// RC8.7 staging: cash delivery preview is a real SERVER price calculation,
-// not an estimated map-route journey. Never creates order, reserves stock,
-// charges Stripe or advertises production delivery.
+// RC11.2 LIVE: real production catalog quote and driver availability, READ ONLY.
+// This is NOT checkout permission; cash/card orders remain off until financial
+// admission, dispatch, and delivery proofs are integrated in a separate release.
 stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
-  if(config.NODE_ENV!=='staging'||
-     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED!=='true')
+  const livePreview=config.NODE_ENV==='production'&&
+    config.LIVE_DRIVER_PRESENCE_ENABLED==='true'&&
+    config.MERCHANT_MANAGED_DELIVERY!=='true';
+  const stagePreview=config.NODE_ENV==='staging'&&
+    config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true';
+  if(!livePreview&&!stagePreview)
     throw new RouteError(503,'Cotización a domicilio no habilitada');
   await user(req,['customer']);
   const schema=z.strictObject({
@@ -392,7 +399,9 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
   const parsed=schema.safeParse(req.body);
   if(!parsed.success)throw new RouteError(422,'Datos de cotización inválidos');
   const data=parsed.data;
-  if(data.payment_method==='stripe'&&
+  if(livePreview&&data.payment_method==='stripe')
+    throw new RouteError(503,'Tarjeta a domicilio LIVE pendiente de autorización financiera');
+  if(stagePreview&&data.payment_method==='stripe'&&
      (config.STAGE_DELIVERY_STRIPE_TEST_ENABLED!=='true'||
       config.STAGE_STRIPE_TEST_CHECKOUT_ENABLED!=='true'))
     throw new RouteError(503,'Tarjeta TEST a domicilio no habilitada');
@@ -409,7 +418,10 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
       restaurant.address);
     const geo=deliveryDistance({lat:restaurant.lat,lng:restaurant.lng},
       {lat:data.delivery_lat,lng:data.delivery_lng},restaurant.deliveryRadiusKm);
-    if(!await hasReachableStageDriver({lat:restaurant.lat,lng:restaurant.lng}))
+    const reachable=livePreview?
+      await hasReachableLiveDriver({lat:restaurant.lat,lng:restaurant.lng}):
+      await hasReachableStageDriver({lat:restaurant.lat,lng:restaurant.lng});
+    if(!reachable)
       throw new RouteError(409,'No hay repartidores disponibles con ubicación actual');
     const products=await db.marketplaceMenuItem.findMany({
       where:{id:{in:data.items.map(i=>i.menu_item_id)},restaurantId:restaurant.id},
@@ -461,7 +473,11 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
       driver_earning:fmtCents(economics.driverEarning),
       quote_is_binding:false,inventory_reserved:false,
       requires_revalidation_on_order:true,
-      delivery_checkout_supported:true,
+      delivery_checkout_supported:stagePreview||(livePreview&&liveCashDeliveryReleased()),
+      ...(livePreview?{live_driver_capacity_verified:true,
+        preview_only:true,
+        ...(liveCashDeliveryReleased()?{}:{
+          checkout_blocker:'LIVE_DELIVERY_CHECKOUT_NOT_RELEASED'})}:{}),
       driver_assignment_guaranteed:false,
     });
   }catch(err){
@@ -607,8 +623,9 @@ stageOrdersRouter.post('/',async(req,res)=>{
   const cash=(isCashPickupIntent(req.body)&&
     config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true')||
     (isStageCashDeliveryIntent(req.body)&&
-     config.NODE_ENV==='staging'&&
-     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true');
+     ((config.NODE_ENV==='staging'&&
+       config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true')||
+      liveCashDeliveryReleased()));
   const stageCard=(isStripePickupIntent(req.body)||
     (isStageStripeDeliveryIntent(req.body)&&
      config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
@@ -742,8 +759,14 @@ stageDriverRouter.get('/dashboard',async(req,res)=>{
 });
 stageDriverRouter.get('/available',async(req,res)=>{
   const account=await driverAccount(req);
-  if(config.STAGE_DRIVER_DELIVERY_ENABLED!=='true'){res.json([]);return;}
   const limit=z.coerce.number().int().min(1).max(100).safeParse(req.query.limit??25);
+  if(config.NODE_ENV==='production'){
+    if(!limit.success)throw new RouteError(422,'Límite inválido');
+    res.setHeader('Cache-Control','private, no-store');
+    res.json(await liveCashDriverOffers(account,limit.data));
+    return;
+  }
+  if(config.STAGE_DRIVER_DELIVERY_ENABLED!=='true'){res.json([]);return;}
   if(!limit.success) throw new RouteError(422,'Límite inválido');
   const profile=await db.marketplaceDriverProfile.findUnique({where:{userId:account.id}});
   if(!profile?.isOnline||!profile.isVerified){res.json([]);return;}

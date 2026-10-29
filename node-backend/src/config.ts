@@ -45,6 +45,11 @@ const schema = z.object({
   LIVE_DELIVERY_DISPATCH_ENABLED: z.enum(['false','true']).default('false'),
   LIVE_DELIVERY_CARD_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
   LIVE_DELIVERY_RELEASE_APPROVED: z.enum(['false','true']).default('false'),
+  // RC11.2/11.3: independent CASH-at-door LIVE admission, NO Stripe charge.
+  // All switches must be simultaneously released after an audited rollout.
+  LIVE_DELIVERY_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
+  LIVE_DELIVERY_CASH_DISPATCH_ENABLED: z.enum(['false','true']).default('false'),
+  LIVE_DELIVERY_CASH_RELEASE_APPROVED: z.enum(['false','true']).default('false'),
   STAGE_DRIVER_DELIVERY_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_DRIVER_MAX_PICKUP_KM: z.coerce.number().finite().min(1).max(30).default(8),
   STAGE_DELIVERY_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
@@ -66,6 +71,20 @@ const schema = z.object({
 if(['LIVE_DELIVERY_DISPATCH_ENABLED','LIVE_DELIVERY_CARD_CHECKOUT_ENABLED',
     'LIVE_DELIVERY_RELEASE_APPROVED'].some(k=>process.env[k]==='true'))
  throw new Error('RC96_LIVE_DELIVERY_NOT_RELEASED_STRIPE_TEST_REQUIRED');
+
+// Production cash delivery is independent of the Stripe card-delivery lock.
+const liveCashKeys=['LIVE_DELIVERY_CASH_CHECKOUT_ENABLED',
+ 'LIVE_DELIVERY_CASH_DISPATCH_ENABLED','LIVE_DELIVERY_CASH_RELEASE_APPROVED'] as const;
+const liveCashValues=liveCashKeys.map(k=>process.env[k]==='true');
+if(liveCashValues.some(Boolean)&&!liveCashValues.every(Boolean))
+ throw Error('RC112_PARTIAL_LIVE_CASH_DELIVERY_RELEASE_FORBIDDEN');
+if(liveCashValues.every(Boolean)&&(
+ process.env.NODE_ENV!=='production'||process.env.LIVE_DRIVER_PRESENCE_ENABLED!=='true'||
+ process.env.MERCHANT_MANAGED_DELIVERY==='true'||process.env.MARKETPLACE_B_ENABLED!=='true'||
+ process.env.COMMERCIAL_PRICING_V162_ENABLED==='true'||
+ process.env.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'||
+ process.env.STAGE_DRIVER_DELIVERY_ENABLED==='true'))
+ throw Error('RC112_LIVE_CASH_DELIVERY_REQUIRES_APPROVED_PRODUCTION_PRESENCE');
 
 // Reject accidentally imported Mercado Pago secrets even with writes off.
 const forbiddenPaymentKeys = Object.keys(process.env).filter(k =>

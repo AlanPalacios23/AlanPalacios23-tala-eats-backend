@@ -28,7 +28,7 @@ test('LIVE driver check-in never starts dispatch or creates delivery orders',()=
  assert.match(source,/const presence=\(\)=>/);
  assert.match(source,/const stage=\(\)=>/);
  assert.match(source,/const deliveryActions=\(\)=>/);
- assert.match(source,/if\(!liveDispatchReleased\(\)\)fail\(503/);
+ assert.match(source,/if\(!liveDispatchReleased\(\)&&!liveCashDeliveryReleased\(\)\)fail\(503/);
  assert.match(config,/RC96_LIVE_DELIVERY_NOT_RELEASED_STRIPE_TEST_REQUIRED/);
  assert.match(source,/if\(!p\?\.isVerified\|\|!p\.isOnline\)/);
  assert.match(source,/driverLocationKey\(config.NODE_ENV,actor.id\)/);
@@ -48,8 +48,8 @@ test('driver route exposes own readiness without coordinates or accidental deliv
  assert.match(driver,/export async function driverPresenceReadiness\(actor:AuthUser\)/);
  assert.match(driver,/profile\?\.isVerified===true&&actor\.isActive===true/);
  assert.match(driver,/const \[raw,ttl\]=await Promise\.all\(\[redis\.get\(key\),redis\.ttl\(key\)\]\)/);
- assert.match(driver,/live_delivery_checkout_enabled:false/);
- assert.match(driver,/live_stripe_delivery_enabled:false/);
+ assert.match(driver,/live_delivery_checkout_enabled:liveCashDeliveryReleased\(\)\|\|liveDispatchReleased\(\)/);
+ assert.match(driver,/live_stripe_delivery_enabled:liveDispatchReleased\(\)/);
  const section=driver.slice(driver.indexOf('export async function driverPresenceReadiness'),driver.indexOf('export async function canDriverReachPickup'));
  assert.doesNotMatch(section,/await tx\.marketOrder\.|db\.marketOrder\.|stripe\.|order\.create/);
  assert.doesNotMatch(section,/currentLat:|currentLng:|reported_at:parsed\.reported_at/);
