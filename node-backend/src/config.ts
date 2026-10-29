@@ -55,6 +55,7 @@ const schema = z.object({
   LIVE_DELIVERY_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
   LIVE_DELIVERY_CASH_DISPATCH_ENABLED: z.enum(['false','true']).default('false'),
   LIVE_DELIVERY_CASH_RELEASE_APPROVED: z.enum(['false','true']).default('false'),
+  LIVE_CASH_HANDOFF_V2_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_DRIVER_DELIVERY_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_DRIVER_MAX_PICKUP_KM: z.coerce.number().finite().min(1).max(30).default(8),
   STAGE_DELIVERY_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
