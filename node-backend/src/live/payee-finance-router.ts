@@ -208,22 +208,25 @@ export function buildPayeeFinanceRouter(pool:Pool,stripe:StripeRead){
    const read=await client.query<{
      id:number;restaurant_id:number;driver_id:number|null;
      order_type:string;status:string;payment_method:string;
-     payment_status:string;total:string;tip:string;
-     restaurant_payout:string;driver_earning:string;refunded_amount:string;
+     payment_status:string;total:string;tip:string;cash_collected:string;
+     payment_provider_id:string;restaurant_payout:string;driver_earning:string;refunded_amount:string;
      delivered_at:Date|null;
    }>(
-     "SELECT id,restaurant_id,driver_id,order_type,status,payment_method,payment_status,total::text,tip::text,restaurant_payout::text,driver_earning::text,refunded_amount::text,delivered_at FROM orders WHERE id=$1 FOR UPDATE",
+     "SELECT id,restaurant_id,driver_id,order_type,status,payment_method,payment_status,total::text,tip::text,cash_collected::text,payment_provider_id,restaurant_payout::text,driver_earning::text,refunded_amount::text,delivered_at FROM orders WHERE id=$1 FOR UPDATE",
      [orderId]);
    const o=read.rows[0];
    if(!o){throw Error('ORDER_NOT_FOUND');}
    if(centavos(o.refunded_amount)!==0)throw Error('REFUND_HOLD');
-   const checks=await client.query<{proof:string;captured:string;open_cases:string}>(
+   const checks=await client.query<{proof:string;pickup_proof:string;captured:string;open_cases:string}>(
      "SELECT (SELECT count(*) FROM delivery_proofs p WHERE p.order_id=$1 AND p.pin_verified=true)::text AS proof,"+
-     "(SELECT count(*) FROM financial_ledger_entries l WHERE l.order_id=$1 AND l.kind='stripe_live_payment' AND l.account='stripe_live_collected' AND l.direction='credit' AND l.idempotency_key=('order:'||$1::text||':stripe-live:collected'))::text AS captured,"+
+     "(SELECT count(*) FROM order_events e WHERE e.order_id=$1 AND e.status='delivered')::text AS pickup_proof,"+
+     "(SELECT count(*) FROM financial_ledger_entries l WHERE l.order_id=$1 AND l.kind='stripe_live_payment' AND l.account='stripe_live_collected' AND l.direction='credit' AND l.idempotency_key=('order:'||$1::text||':stripe-live:collected') AND l.amount=(SELECT total FROM orders WHERE id=$1))::text AS captured,"+
      "(SELECT count(*) FROM tala_live_financial_cases c WHERE c.order_id=$1 AND c.status<>'resolved')::text AS open_cases",
      [orderId]);
    const check=checks.rows[0];
    if(!check||!o.delivered_at)throw Error('DELIVERY_PROOF_REQUIRED');
+   if(o.payment_method==='stripe'&&!/^pi_[A-Za-z0-9]+$/.test(o.payment_provider_id))
+     throw Error('STRIPE_PROVIDER_INTENT_NOT_BOUND');
    if(o.order_type==='delivery') {
      if(o.driver_id===null)throw Error('MERCHANT_MANAGED_DELIVERY_REQUIRES_OWNED_MODE');
      const driverReady=await client.query(
@@ -238,11 +241,12 @@ export function buildPayeeFinanceRouter(pool:Pool,stripe:StripeRead){
      // reject such orders rather than mistake owner's courier for platform's.
      merchantManagedDelivery:false,
      tender:o.payment_method as 'stripe'|'cash',
-     totalMinor:centavos(o.total),
+     totalMinor:centavos(o.total),cashCollectedMinor:centavos(o.cash_collected),
      restaurantPayableMinor:centavos(o.restaurant_payout),
      driverBaseMinor:centavos(o.driver_earning),tipMinor:centavos(o.tip),
      status:o.status,paymentStatus:o.payment_status,
-     deliveryProven:check.proof==='1',captured:check.captured==='1',
+     deliveryProven:o.order_type==='pickup'?check.pickup_proof==='1':check.proof==='1',
+     captured:check.captured==='1',
      openCases:Number(check.open_cases)
    });
    for(const obligation of plan.obligations){

@@ -8,6 +8,7 @@ import {
 const base={orderId:18,restaurantId:5,driverUserId:null,
  orderType:'pickup',merchantManagedDelivery:false,tender:'stripe',
  totalMinor:21400,restaurantPayableMinor:17000,driverBaseMinor:0,
+ cashCollectedMinor:0,
  tipMinor:0,status:'delivered',paymentStatus:'paid',
  deliveryProven:true,captured:true,openCases:0};
 test('Stripe pickup: $214 customer, $170 merchant, $44 platform; no driver beneficiary',()=>{
@@ -37,7 +38,7 @@ test('driver gratuity is fully allocated without changing platform earnings',()=
  assert.equal(p.grossPlatformMinor,5100);
 });
 test('cash pickup: seller custodian owes platform $44, but bank settlement not implied',()=>{
- const p=buildMoneyPlan({...base,tender:'cash',paymentStatus:'pending',captured:false});
+ const p=buildMoneyPlan({...base,tender:'cash',paymentStatus:'paid',cashCollectedMinor:21400,captured:false});
  assert.deepEqual(p.cash,{
    collectorKind:'restaurant',collectorId:5,
    collectedMinor:21400,retainedMinor:17000,duePlatformMinor:4400,
@@ -45,7 +46,7 @@ test('cash pickup: seller custodian owes platform $44, but bank settlement not i
  });
 });
 test('platform delivery paid in cash: courier holds full $253, no driver wage retained',()=>{
- const p=buildMoneyPlan({...base,tender:'cash',paymentStatus:'pending',
+ const p=buildMoneyPlan({...base,tender:'cash',paymentStatus:'paid',cashCollectedMinor:25300,
    captured:false,orderType:'delivery',driverUserId:9,
    totalMinor:25300,driverBaseMinor:3200});
  assert.deepEqual(p.cash,{
@@ -73,6 +74,12 @@ test('reject unverified collection, invalid delivery, and unearned payables',()=
    {orderType:'delivery',driverUserId:9,driverBaseMinor:0},
    {orderType:'delivery',driverUserId:9,tipMinor:30000},
    {tender:'cash',paymentStatus:'refunded'},
+   {tender:'cash',paymentStatus:'pending',cashCollectedMinor:21400,captured:false},
+   {tender:'cash',paymentStatus:'paid',cashCollectedMinor:21399,captured:false},
+   {tender:'cash',paymentStatus:'paid',cashCollectedMinor:21400,captured:true},
+   {tender:'stripe',cashCollectedMinor:21400},
+   {tender:'cash',cashCollectedMinor:Infinity},
+   {tender:'cash',cashCollectedMinor:21400,openCases:1,captured:false},
    {totalMinor:-1}, {tipMinor:Infinity},
    {orderType:'courier_unknown'},
  ];
@@ -102,4 +109,14 @@ test('finance schema enforces per order/payee allocations and conservation of ca
  assert.match(s,/settled_by<>reviewed_by/);
  assert.match(s,/stripe_account_id VARCHAR\(120\) NOT NULL UNIQUE/);
  assert.match(s,/driver_accounts/);
+});
+
+test('RC13.8 cash needs verified full physical receipt; pickup can use its own proof',()=>{
+ const source=readFileSync(new URL('../src/live/payee-finance-router.ts',import.meta.url),'utf8');
+ assert.match(source,/cash_collected::text/);
+ assert.match(source,/cashCollectedMinor:centavos\(o\.cash_collected\)/);
+ assert.match(source,/status='delivered'\)\:\:text AS pickup_proof/);
+ assert.match(source,/o\.order_type==='pickup'\?check\.pickup_proof==='1':check\.proof==='1'/);
+ assert.match(source,/l\.amount=\(SELECT total FROM orders WHERE id=\$1\)/);
+ assert.match(source,/STRIPE_PROVIDER_INTENT_NOT_BOUND/);
 });
