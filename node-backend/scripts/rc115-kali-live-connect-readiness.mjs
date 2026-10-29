@@ -67,7 +67,7 @@ async function main(){
    try{account=await stripe.accounts.retrieve(m.stripe_account_id);}
    catch{held++;mark('STRIPE_ACCOUNT_GET_FAILED');continue;}
    let balance;
-   try{balance=await stripe.balance.retrieve({stripeAccount:m.stripe_account_id});}
+   try{balance=await stripe.balance.retrieve({}, {stripeAccount:m.stripe_account_id});}
    catch{held++;mark('STRIPE_CONNECTED_BALANCE_GET_FAILED');continue;}
    const report=assessMappedLiveBeneficiary(m,account,balance,
     classifyLiveConnectRecipient);
