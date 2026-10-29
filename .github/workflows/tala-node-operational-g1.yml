@@ -1,9 +1,9 @@
 name: TALA EATS | Node Operational Functional G1 PG15 Redis8
 on:
   push:
-    branches: [feat/node-ops-safe-mutations-g1-20261019]
+    branches: [feat/node-ops-safe-mutations-g1-20261019, fix/rc126-real-onboarding-role-isolation-20261029]
   pull_request:
-    branches: [feat/node-operations-admin-v9-v11-100-routes-20261019]
+    branches: [feat/node-operations-admin-v9-v11-100-routes-20261019, feat/rc125-python-delivery-offers-parity-20261029]
 permissions:
   contents: read
 jobs:
