@@ -5,7 +5,7 @@
  * This CANNOT send transfers/payouts, reconcile liabilities, or verify
  * delivery into a bank account. No IDs, names, balances or secrets in logs.
  */
-import {existsSync,lstatSync} from 'node:fs';
+import {existsSync,lstatSync,readFileSync} from 'node:fs';
 import {homedir} from 'node:os';
 import {resolve,join} from 'node:path';
 import {execFileSync} from 'node:child_process';
@@ -14,6 +14,8 @@ import {config} from '../dist/config.js';
 import {db} from '../dist/db.js';
 import {classifyLiveConnectRecipient}
  from '../src/finance/rc115-connect-readiness.mjs';
+import {assessMappedLiveBeneficiary}
+ from '../src/finance/rc115-live-beneficiary-policy.mjs';
 const sha=process.argv[2];
 const hold=code=>{console.log('RC115_CONNECT_READINESS=HOLD_'+code);process.exitCode=2;};
 async function main(){
@@ -36,41 +38,48 @@ async function main(){
     pg.pathname!=='/tala_node_live'||
     !/^(sk|rk)_live_[A-Za-z0-9]+$/.test(config.STRIPE_SECRET_KEY??''))
    return hold('PRODUCTION_ACCOUNT_IDENTITY');
- // For an audit, never depend on payout execution being enabled.
- const count=await db.merchantConnectAccount.count();
- if(count===0)return hold('NO_DURABLE_CONNECT_MAPPINGS');
- if(count>25)return hold('CONNECT_MAPS_REQUIRE_PAGINATION');
- const mappings=await db.merchantConnectAccount.findMany({
-  select:{merchantId:true,stripeAccountId:true,
-   chargesEnabled:true,payoutsEnabled:true},
-  take:25,orderBy:{merchantId:'asc'},
- });
- if(mappings.length!==count)return hold('CONNECT_MAPPING_SET_CHANGED');
+ // Read ONLY real persistent LIVE payee mappings, not the disconnected
+ // legacy merchant_connect_accounts mirror retained for stage compatibility.
+ const sql=readFileSync(new URL('./sql/rc115-live-actual-beneficiaries.sql',import.meta.url),'utf8');
+ if(!sql.startsWith('-- RC115 READ-ONLY REAL PAYEE MAPPINGS.')||
+    sql.includes(';')||/\b(INSERT|UPDATE|DELETE|ALTER|DROP|CREATE)\b/i.test(
+      sql.replace(/^--[^\n]*\n/gm,'')))return hold('UNAPPROVED_MAPPING_SQL');
+ const mappings=await db.$queryRawUnsafe(sql);
+ if(!Array.isArray(mappings))return hold('CONNECT_MAPPING_QUERY_INVALID');
+ if(mappings.length===0)return hold('NO_DURABLE_CONNECT_MAPPINGS');
+ if(mappings.length>50)return hold('CONNECT_MAPS_REQUIRE_PAGINATION');
  const stripe=new Stripe(config.STRIPE_SECRET_KEY,{maxNetworkRetries:0,timeout:5000});
- let ready=0,held=0;const reasons=new Map();
+ let ready=0,held=0;const reasons=new Map();const seen=new Set();
  const mark=k=>reasons.set(k,(reasons.get(k)??0)+1);
  for(const m of mappings){
   try{
-   if(!/^acct_[A-Za-z0-9]+$/.test(m.stripeAccountId)){
+   if(seen.has(m.stripe_account_id)){
+    held++;mark('DUPLICATE_ACCOUNT_ACROSS_PAYEES');continue;
+   }
+   seen.add(m.stripe_account_id);
+   if(!/^acct_[A-Za-z0-9]+$/.test(m.stripe_account_id)){
     held++;mark('INVALID_CONNECTED_ACCOUNT_REFERENCE');continue;
    }
    const [account,balance]=await Promise.all([
-    stripe.accounts.retrieve(m.stripeAccountId),
-    stripe.balance.retrieve({stripeAccount:m.stripeAccountId}),
+    stripe.accounts.retrieve(m.stripe_account_id),
+    stripe.balance.retrieve({stripeAccount:m.stripe_account_id}),
    ]);
-   const report=classifyLiveConnectRecipient(m,account,balance);
-   if(report.readyForFurtherFinancialReconciliation)ready++;
+   const report=assessMappedLiveBeneficiary(m,account,balance,
+    classifyLiveConnectRecipient);
+   if(report.canProceedToLedgerAudit)ready++;
    else {held++;for(const code of report.reasons)mark(code);}
   }catch{held++;mark('STRIPE_CONNECT_GET_OR_DB_FAILED');}
  }
  console.log('RC115_DURABLE_CONNECT_MAPPINGS='+mappings.length);
+ console.log('RC115_RESTAURANT_PAYEES='+mappings.filter(m=>m.payee_kind==='restaurant').length);
+ console.log('RC115_DRIVER_PAYEES='+mappings.filter(m=>m.payee_kind==='driver').length);
  console.log('RC115_MAPPED_ACCOUNTS_REMOTE_READY='+ready);
  console.log('RC115_MAPPED_ACCOUNTS_HELD='+held);
  console.log('RC115_FAILURE_CODES='+[...reasons].sort(([a],[b])=>a.localeCompare(b))
    .map(([c,n])=>c+':'+n).join(','));
  console.log('RC115_REMOTE_OPERATIONS=GET_ONLY');
  console.log('RC115_DATABASE_WRITES=NONE');
- console.log('RC115_DRIVER_PAYEE_COVERAGE=NOT_VERIFIED');
+ console.log('RC115_DRIVER_PAYEE_COVERAGE=CHECKED_FOR_MAPPED_PAYEES_ONLY');
  console.log('RC115_LEDGER_WITHDRAWABLE_BALANCES=NOT_VERIFIED');
  console.log('RC115_TRANSFER_AND_PAYOUT_EXECUTION=DISABLED_BY_THIS_AUDIT');
  if(held)return hold('CONNECTED_ACCOUNT_CAPABILITY_REVIEW_REQUIRED');
