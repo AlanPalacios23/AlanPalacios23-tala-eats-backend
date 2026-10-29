@@ -82,7 +82,7 @@ export function buildFinanceWalletReadRouter(pool:Pool){
    let id=s.userId;
    if(kind==='restaurant'){
     const raw=req.params.restaurantId;
-    if(!raw||!/^[1-9][0-9]{0,9}$/.test(raw)){res.status(422).json({error:'WALLET_RESTAURANT_ID_INVALID'});return;}
+    if(typeof raw!=='string'||!/^[1-9][0-9]{0,9}$/.test(raw)){res.status(422).json({error:'WALLET_RESTAURANT_ID_INVALID'});return;}
     id=Number(raw);
     const owner=await pool.query<{owner_id:number}>(
      'SELECT owner_id FROM restaurants WHERE id=$1',[id]);
