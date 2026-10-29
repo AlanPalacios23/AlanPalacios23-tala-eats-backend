@@ -10,9 +10,10 @@ import {ingestTreasurySignedEvent,persistTreasurySignedEvent,
  reconcileOneTreasuryEvent} from '../dist/live/treasury-connect-webhook.js';
 import {decideConnectedPayoutEvent} from '../dist/live/treasury-webhook-policy.js';
 assert.equal(process.env.NODE_ENV,'staging','NO_PRODUCTION_ENV');
+assert.equal(process.env.GITHUB_ACTIONS,'true','EPHEMERAL_CI_ONLY');
 const db=new URL(process.env.DATABASE_URL);
-assert.equal(db.hostname,'127.0.0.1');assert.equal(db.port,'15435');
-assert.equal(db.pathname,'/tala_node_stage');
+assert.equal(db.hostname,'127.0.0.1');assert.equal(db.port,'15445');
+assert.equal(db.username,'rc9_ci');assert.equal(db.pathname,'/rc9_ci');
 const pool=new Pool({connectionString:process.env.DATABASE_URL});
 const stripe=new Stripe('sk_test_CIOnlyNotNetworkCredential0123456789',{maxNetworkRetries:0});
 const secret='whsec_RC128NonProductionOnlySignatures01234567';
