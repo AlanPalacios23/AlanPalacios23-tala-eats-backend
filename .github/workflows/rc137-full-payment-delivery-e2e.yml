@@ -1,0 +1,229 @@
+name: "TALA EATS RC13.7 | Stripe TEST signed + Delivery GPS PIN + Cash Handoff"
+on:
+  push:
+    branches: [feat/rc137-payment-delivery-e2e-20261029]
+    paths:
+      - ".github/workflows/rc137-full-payment-delivery-e2e.yml"
+      - "node-backend/src/**"
+      - "node-backend/scripts/ci-rc87-cash-delivery-e2e.mjs"
+      - "node-backend/scripts/ci-rc810-synthetic-paid-delivery-e2e.mjs"
+      - "node-backend/scripts/ci-rc137-stripe-signed-ingress.mjs"
+      - "node-backend/scripts/ci-rc128-stripe-test-connect-webhook-pg15.mjs"
+      - "node-backend/prisma/**"
+  pull_request:
+    branches: [release/rc135-finance-pilot-candidate-20261029]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rc137-payment-functional-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cash:
+    name: "Delivery cash GPS/PIN + dual actor merchant receipt"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:15
+        env: {POSTGRES_USER: tala_node_stage, POSTGRES_PASSWORD: stage-ci-pass, POSTGRES_DB: tala_node_stage}
+        ports: ["15435:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tala_node_stage -d tala_node_stage"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+      redis:
+        image: redis:8
+        ports: ["16379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    defaults:
+      run: {working-directory: node-backend}
+    env:
+      NODE_ENV: staging
+      GITHUB_ACTIONS: "true"
+      HOST: "127.0.0.1"
+      PORT: "18190"
+      DATABASE_URL: "postgresql://tala_node_stage:stage-ci-pass@127.0.0.1:15435/tala_node_stage"
+      REDIS_URL: "redis://:stage-ci-redis@127.0.0.1:16379/0"
+      AUTH_JWT_SECRET: "rc137-isolated-journeys-auth-aaaaabbbbbcccccdddddeeeeefffff"
+      AUTH_V02_ENABLED: "true"
+      MARKETPLACE_B_ENABLED: "true"
+      STAGE_PICKUP_CASH_CHECKOUT_ENABLED: "true"
+      STAGE_DRIVER_DELIVERY_ENABLED: "true"
+      STAGE_DELIVERY_CASH_CHECKOUT_ENABLED: "true"
+      STAGE_CASH_HANDOFF_V2_ENABLED: "true"
+      COMMERCIAL_PRICING_V162_ENABLED: "true"
+      STRIPE_FINANCIAL_WRITES_ENABLED: "false"
+      STRIPE_LIVE_ENABLED: "false"
+      STRIPE_CONNECT_TRANSFERS_ENABLED: "false"
+      STRIPE_REFUNDS_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: "24", cache: npm, cache-dependency-path: node-backend/package-lock.json}
+      - name: Install + migrate + compile disposable stage
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:validate
+          npm run db:migrate:deploy
+          npm run build
+      - name: Password protect isolated Redis
+        run: |
+          node --input-type=module -e '
+            import {Redis} from "ioredis";
+            const r=new Redis("redis://127.0.0.1:16379");
+            await r.config("SET","requirepass","stage-ci-redis");r.disconnect();
+            const s=new Redis(process.env.REDIS_URL);
+            if(await s.ping()!=="PONG")process.exitCode=1;s.disconnect();
+          '
+      - name: Customer to owner to verified GPS courier to PIN to cash merchant handoff
+        run: |
+          set -euo pipefail
+          node dist/server.js > /tmp/rc137-cash-api.log 2>&1 &
+          api_pid=$!
+          node dist/worker.js > /tmp/rc137-cash-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'kill "$api_pid" "$worker_pid" 2>/dev/null || true' EXIT
+          node scripts/ci-rc87-cash-delivery-e2e.mjs || {
+            tail -n 110 /tmp/rc137-cash-api.log
+            tail -n 110 /tmp/rc137-cash-worker.log
+            exit 1
+          }
+      - name: Reject unexpected financial LIVE flags
+        run: |
+          node --input-type=module -e '
+            const c=(await import("./dist/config.js")).config;
+            if(c.NODE_ENV!=="staging"||c.STAGE_CASH_HANDOFF_V2_ENABLED!=="true"||
+               c.STRIPE_LIVE_ENABLED!=="false"||
+               c.STRIPE_FINANCIAL_WRITES_ENABLED!=="false"||
+               c.STRIPE_CONNECT_TRANSFERS_ENABLED!=="false")process.exit(1);
+          '
+
+  card:
+    name: "Stripe TEST synthetic receipt -> KDS -> GPS -> PIN (no charge)"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:15
+        env: {POSTGRES_USER: tala_node_stage, POSTGRES_PASSWORD: stage-ci-pass, POSTGRES_DB: tala_node_stage}
+        ports: ["15435:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tala_node_stage -d tala_node_stage"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+      redis:
+        image: redis:8
+        ports: ["16379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    defaults:
+      run: {working-directory: node-backend}
+    env:
+      NODE_ENV: staging
+      GITHUB_ACTIONS: "true"
+      HOST: "127.0.0.1"
+      PORT: "18190"
+      DATABASE_URL: "postgresql://tala_node_stage:stage-ci-pass@127.0.0.1:15435/tala_node_stage"
+      REDIS_URL: "redis://:stage-ci-redis@127.0.0.1:16379/0"
+      AUTH_JWT_SECRET: "rc137-card-staging-auth-aaaaabbbbbcccccdddddeeeeefffff"
+      AUTH_V02_ENABLED: "true"
+      MARKETPLACE_B_ENABLED: "true"
+      STAGE_PICKUP_CASH_CHECKOUT_ENABLED: "true"
+      STAGE_DRIVER_DELIVERY_ENABLED: "true"
+      STAGE_DELIVERY_CASH_CHECKOUT_ENABLED: "true"
+      STAGE_DELIVERY_STRIPE_TEST_ENABLED: "true"
+      STAGE_STRIPE_TEST_CHECKOUT_ENABLED: "true"
+      COMMERCIAL_PRICING_V162_ENABLED: "true"
+      STRIPE_SECRET_KEY: "sk_test_CINotRealForGithubFixtureOnly"
+      STRIPE_PUBLISHABLE_KEY: "pk_test_CINotRealForGithubFixtureOnly"
+      STRIPE_WEBHOOK_SECRET: "whsec_ci_not_a_real_webhook_secret"
+      STRIPE_FINANCIAL_WRITES_ENABLED: "false"
+      STRIPE_LIVE_ENABLED: "false"
+      STRIPE_CONNECT_TRANSFERS_ENABLED: "false"
+      STRIPE_REFUNDS_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: "24", cache: npm, cache-dependency-path: node-backend/package-lock.json}
+      - name: Prepare isolated card-delivery staging
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:migrate:deploy
+          npm run build
+      - name: Protect disposable Redis
+        run: |
+          node --input-type=module -e '
+            import {Redis} from "ioredis";
+            const r=new Redis("redis://127.0.0.1:16379");
+            await r.config("SET","requirepass","stage-ci-redis");r.disconnect();
+          '
+      - name: Simulate exact verified capture -> kitchen -> GPS -> PIN
+        run: |
+          set -euo pipefail
+          node dist/server.js > /tmp/rc137-card-api.log 2>&1 &
+          api_pid=$!
+          node dist/worker.js > /tmp/rc137-card-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'kill "$api_pid" "$worker_pid" 2>/dev/null || true' EXIT
+          node scripts/ci-rc137-stripe-signed-ingress.mjs || {
+            tail -n 110 /tmp/rc137-card-api.log
+            exit 1
+          }
+          node scripts/ci-rc810-synthetic-paid-delivery-e2e.mjs || {
+            tail -n 110 /tmp/rc137-card-api.log
+            tail -n 110 /tmp/rc137-card-worker.log
+            exit 1
+          }
+      - name: Refund and dispute safety regressions
+        run: |
+          node --test tests/rc8-live-refund-reconciliation.test.mjs tests/rc8-live-dispute-reconciliation.test.mjs tests/rc8-live-refund-failure.test.mjs
+
+  signed:
+    name: "Stripe SDK signed Connect TEST webhook + reconciliation PG15"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:15
+        env: {POSTGRES_USER: rc9_ci, POSTGRES_PASSWORD: rc9-only-ci, POSTGRES_DB: rc9_ci}
+        ports: ["15445:5432"]
+        options: >-
+          --health-cmd "pg_isready -U rc9_ci -d rc9_ci"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    defaults:
+      run: {working-directory: node-backend}
+    env:
+      NODE_ENV: staging
+      GITHUB_ACTIONS: "true"
+      DATABASE_URL: "postgresql://rc9_ci:rc9-only-ci@127.0.0.1:15445/rc9_ci"
+      STRIPE_LIVE_ENABLED: "false"
+      STRIPE_FINANCIAL_WRITES_ENABLED: "false"
+      STRIPE_CONNECT_TRANSFERS_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: "24", cache: npm, cache-dependency-path: node-backend/package-lock.json}
+      - name: Immutable signed webhook prerequisites
+        run: |
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:migrate:deploy
+          npm run build
+      - name: Signed Stripe SDK HMAC + remote-readback fake + merchant and driver
+        run: |
+          set -euo pipefail
+          node scripts/ci-rc128-stripe-test-connect-webhook-pg15.mjs
+          node scripts/ci-rc9-treasury-signed-webhooks-pg15.mjs
+      - name: Treasury must remain protected from LIVE withdrawals
+        run: |
+          grep -q "NODE_TREASURY_LIVE_EXECUTION_ENABLED=false" src/live/treasury-policy.ts

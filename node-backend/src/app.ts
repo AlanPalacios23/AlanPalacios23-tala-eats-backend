@@ -1,4 +1,5 @@
 import express from 'express';
+import {Pool} from 'pg';
 import helmet from 'helmet';
 import { Redis } from 'ioredis';
 import {buildLiveRuntimeDependencies} from './live/runtime-dependencies.js';
@@ -31,6 +32,9 @@ import { marketplaceRouter, ownerRouter, stageOrdersRouter,
 
 export const app = express();
 const live=config.NODE_ENV==='production'?buildLiveRuntimeDependencies():null;
+const stageCashHandoffPool=config.NODE_ENV==='staging'&&
+ config.STAGE_CASH_HANDOFF_V2_ENABLED==='true'?
+ new Pool({connectionString:config.DATABASE_URL,max:4}):null;
 // Runtime readiness and permission to charge are deliberately distinct.
 const liveChargeApproved=Boolean(live&&
   config.STRIPE_LIVE_ENABLED==='true'&&
@@ -63,6 +67,8 @@ if(live){
     express.raw({type:'application/json',limit:'1mb'}),stripeWebhook);
 }
 app.use(express.json({ limit: '128kb' }));
+if(stageCashHandoffPool)
+ app.use('/api/v1',buildCashHandoffV2Router(stageCashHandoffPool));
 // Existing order routes remain public. LIVE card PaymentIntents are created
 // only for authenticated/customer-owned persisted Stripe pickup orders.
 if(live){

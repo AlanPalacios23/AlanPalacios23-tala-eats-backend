@@ -56,6 +56,7 @@ const schema = z.object({
   LIVE_DELIVERY_CASH_DISPATCH_ENABLED: z.enum(['false','true']).default('false'),
   LIVE_DELIVERY_CASH_RELEASE_APPROVED: z.enum(['false','true']).default('false'),
   LIVE_CASH_HANDOFF_V2_ENABLED: z.enum(['false','true']).default('false'),
+  STAGE_CASH_HANDOFF_V2_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_DRIVER_DELIVERY_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_DRIVER_MAX_PICKUP_KM: z.coerce.number().finite().min(1).max(30).default(8),
   STAGE_DELIVERY_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
@@ -259,6 +260,16 @@ if(config.STAGE_DRIVER_DELIVERY_ENABLED==='true' &&
   (config.MARKETPLACE_B_ENABLED!=='true'||config.AUTH_V02_ENABLED!=='true'||
    config.MERCHANT_MANAGED_DELIVERY==='true')){
   throw new Error('STAGE_DRIVER_DELIVERY_REQUIRES_ISOLATED_AUTH_AND_MARKETPLACE');
+}
+
+if(config.STAGE_CASH_HANDOFF_V2_ENABLED==='true'&&(
+    config.NODE_ENV!=='staging'||
+    config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED!=='true'||
+    config.STAGE_DRIVER_DELIVERY_ENABLED!=='true'||
+    config.STRIPE_LIVE_ENABLED!=='false'||
+    config.STRIPE_FINANCIAL_WRITES_ENABLED!=='false'||
+    config.STRIPE_CONNECT_TRANSFERS_ENABLED!=='false')){
+  throw new Error('RC137_STAGING_CASH_HANDOFF_MUST_BE_DISPOSABLE');
 }
 
 if(config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&(
