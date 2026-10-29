@@ -10,6 +10,7 @@ import {db} from '../db.js';
 import {account,bad,param} from '../operational/routes.js';
 import {config} from '../config.js';
 import {buildPublicPaymentContracts} from '../payments/public-contract.js';
+import {liveCashDeliveryReleased} from '../marketplace/live-cash-delivery.js';
 import {createTestPaymentIntent} from '../stage-stripe-test.js';
 import {previewRecipientOrders} from '../finance/recipient-readiness.js';
 
@@ -94,6 +95,7 @@ const publicPaymentContracts=()=>buildPublicPaymentContracts({
   pricingV162Enabled:config.COMMERCIAL_PRICING_V162_ENABLED==='true',
   stagingDeliveryCashEnabled:config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true',
   stagingDeliveryStripeTestEnabled:config.STAGE_DELIVERY_STRIPE_TEST_ENABLED==='true',
+  liveCashDeliveryEnabled:liveCashDeliveryReleased(),
 });
 parityRouter.get('/orders/payment-methods',async(req,res)=>{
   await account(req);
