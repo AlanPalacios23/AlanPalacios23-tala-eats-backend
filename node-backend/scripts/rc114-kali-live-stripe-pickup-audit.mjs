@@ -15,6 +15,7 @@ import Stripe from 'stripe';
 import {config} from '../dist/config.js';
 import {db} from '../dist/db.js';
 import {auditCapturedLiveStripePickup} from '../src/finance/rc114-stripe-order-ledger-audit.mjs';
+import {auditStripeCapturedBalance} from '../src/finance/stripe-provider-readback.mjs';
 const sha=process.argv[2];
 const fail=msg=>{console.log('RC114_STRIPE_AUDIT=HOLD_'+msg);process.exitCode=2;};
 const asMinor=raw=>{
@@ -105,6 +106,21 @@ async function main(){
       remoteEvent.id!==stored.id||
       remoteEvent.data?.object?.id!==pi.id){
      held++;mark('REMOTE_STRIPE_CAPTURE_MISMATCH');continue;
+   }
+   // Read the *real* Stripe fee/net. No rate estimate may silently pass.
+   // A pending provider BalanceTransaction is a HOLD, never a fake zero fee.
+   const chargeId=typeof pi.latest_charge==='string'?
+     pi.latest_charge:pi.latest_charge?.id;
+   if(!chargeId){held++;mark('STRIPE_CHARGE_MISSING');continue;}
+   const charge=await provider.charges.retrieve(chargeId);
+   const transactionId=typeof charge.balance_transaction==='string'?
+     charge.balance_transaction:charge.balance_transaction?.id;
+   if(!transactionId){held++;mark('STRIPE_BALANCE_PENDING');continue;}
+   const transaction=await provider.balanceTransactions.retrieve(transactionId);
+   const balanceAudit=auditStripeCapturedBalance(o,pi,charge,transaction);
+   if(!balanceAudit.pass){
+     held++;for(const f of balanceAudit.findings)mark(f);
+     continue;
    }
    passed++;
   }catch{held++;mark('STRIPE_OR_DATABASE_RECONCILIATION_ERROR');}
