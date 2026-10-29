@@ -23,6 +23,7 @@ export const liveCashPickupReleased=():boolean=>
 export const liveCashDeliveryReleased=():boolean=>
  config.NODE_ENV==='production'&&
  config.LIVE_DRIVER_PRESENCE_ENABLED==='true'&&
+ config.LIVE_CASH_HANDOFF_V2_ENABLED==='true'&&
  config.LIVE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
  config.LIVE_DELIVERY_CASH_DISPATCH_ENABLED==='true'&&
  config.LIVE_DELIVERY_CASH_RELEASE_APPROVED==='true'&&
