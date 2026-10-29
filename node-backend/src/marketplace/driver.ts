@@ -7,6 +7,7 @@ import { db } from '../db.js';
 import { config } from '../config.js';
 import {stageDeliveryTenderAllowed} from './delivery-financial-proof.js';
 import {liveDispatchReleased,liveDeliveryTenderAllowed} from './live-delivery-payment.js';
+import {liveCashDeliveryReleased,liveCashDeliveryTenderAllowed} from './live-cash-delivery.js';
 import {canOperateDriverPresence,driverLocationKey,driverPersistKey,hasFreshVerifiedDriverGps} from './delivery-runtime.js';
 import type { AuthUser } from '../generated/prisma/client.js';
 
@@ -23,7 +24,7 @@ const stage=()=>{
 // Accept, pickup, PIN and checkout still use the independent stage() lock.
 const deliveryActions=()=>{
  if(config.NODE_ENV==='production'){
-  if(!liveDispatchReleased())fail(503,'Reparto LIVE pendiente de pruebas y autorización financiera');
+  if(!liveDispatchReleased()&&!liveCashDeliveryReleased())fail(503,'Reparto LIVE pendiente de pruebas y autorización financiera');
  }else stage();
 };
 const presence=()=>{
@@ -166,7 +167,7 @@ async function redisLocation(driverId:number):Promise<{lat:number;lng:number}|nu
 // All driver claims use profile-row lock FIRST (same driver) then SKIP LOCKED
 // on each order. Different drivers never both claim a single order.
 async function assign(tx:any,driverId:number,forcedOrderId?:number):Promise<number|null>{
-  if(config.NODE_ENV==='production'&&!liveDispatchReleased())return null;
+  if(config.NODE_ENV==='production'&&!liveDispatchReleased()&&!liveCashDeliveryReleased())return null;
   const p=await tx.marketplaceDriverProfile.findUnique({where:{userId:driverId}});
   if(!p?.isOnline||!p.isVerified)return null;
   const active=await tx.marketOrder.findFirst({where:{
@@ -178,7 +179,10 @@ async function assign(tx:any,driverId:number,forcedOrderId?:number):Promise<numb
   const candidates=await tx.marketOrder.findMany({
     where:{status:'ready',driverId:null,orderType:'delivery',
       OR:config.NODE_ENV==='production'?
-        [{paymentMethod:'stripe',paymentStatus:'paid'}]:
+        [...(liveCashDeliveryReleased()?
+          [{paymentMethod:'cash',paymentStatus:'pending'}]:[]),
+         ...(liveDispatchReleased()?
+           [{paymentMethod:'stripe',paymentStatus:'paid'}]:[])]:
         [{paymentMethod:'cash',paymentStatus:'pending'},
          {paymentMethod:'stripe',paymentStatus:'paid'}],
       ...(forcedOrderId?{id:forcedOrderId}:{})},
@@ -199,7 +203,9 @@ async function assign(tx:any,driverId:number,forcedOrderId?:number):Promise<numb
     );
     if(!lock.length)continue;
     if(config.NODE_ENV==='production'){
-      if(!await liveDeliveryTenderAllowed(tx,row))continue;
+      if(!(row.paymentMethod==='cash'?
+        await liveCashDeliveryTenderAllowed(tx,row):
+        await liveDeliveryTenderAllowed(tx,row)))continue;
     }else{
       if(!await fixture(tx,row.id))continue;
       if(!await stageDeliveryTenderAllowed(tx,row))continue;
@@ -312,7 +318,9 @@ export async function driverStatus(actor:AuthUser,orderId:number,next:string){
     const allowed:{[k:string]:string}={assigned:'picked_up',picked_up:'on_the_way'};
     if(allowed[o.status]!==next)fail(409,'Transición inválida: '+o.status+' → '+next);
     if(o.orderType!=='delivery'||!(config.NODE_ENV==='production'?
-       await liveDeliveryTenderAllowed(tx,o):
+       (o.paymentMethod==='cash'?
+         await liveCashDeliveryTenderAllowed(tx,o):
+         await liveDeliveryTenderAllowed(tx,o)):
        await fixture(tx,orderId)&&await stageDeliveryTenderAllowed(tx,o)))
       fail(503,'Pedido sin prueba de pago autorizada para reparto');
     await tx.marketOrder.update({where:{id:orderId},data:{
@@ -365,7 +373,7 @@ export async function driverGps(actor:AuthUser,lat:number,lng:number){
       data:{currentLat:lat,currentLng:lng}}):
     await db.marketplaceDriverProfile.findUnique({where:{userId:actor.id}});
   if(!profile)return fail(503,'Perfil del repartidor no encontrado');
-  if(liveDispatchReleased()){
+  if(liveDispatchReleased()||liveCashDeliveryReleased()){
     try{await withProfileLock(actor.id,tx=>assign(tx,actor.id));}
     catch{/* Recovery worker will retry READY. GPS commit remains valid. */}
   }
@@ -483,8 +491,11 @@ export async function driverComplete(actor:AuthUser,orderId:number,
     }
     if(o.status!=='on_the_way')fail(409,'Primero marca el pedido como en camino');
     if(config.NODE_ENV==='production'){
-      if(!await liveDeliveryTenderAllowed(tx,o))
-        fail(503,'Entrega LIVE sin captura Stripe conciliada, o con reembolso/disputa');
+      const valid=o.paymentMethod==='cash'?
+        await liveCashDeliveryTenderAllowed(tx,o):
+        await liveDeliveryTenderAllowed(tx,o);
+      if(!valid)
+        fail(503,'Entrega LIVE sin autorización financiera o con riesgo abierto');
     }else{
       if(!await fixture(tx,orderId))fail(503,'Entrega fuera de contrato de staging');
       if(!await stageDeliveryTenderAllowed(tx,o))
