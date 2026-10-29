@@ -11,15 +11,19 @@ import {config} from '../dist/config.js';
 import {dispatchTreasuryTransfer,dispatchTreasuryWithdrawal}
  from '../dist/live/treasury-dispatch.js';
 import {auditedSnapshot} from '../dist/live/treasury-router.js';
+import {recoverUnknownTreasuryTransfer}
+ from '../dist/live/treasury-transfer-unknown-recovery.js';
+import {recoverUnknownTreasuryPayout}
+ from '../dist/live/treasury-unknown-recovery.js';
 
 const fail=(s)=>{throw Error(s);};
 const [mode,kind,id,approval]=process.argv.slice(2);
 const testKeys=['STRIPE_FINANCIAL_WRITES_ENABLED','STRIPE_LIVE_ENABLED',
  'STRIPE_LIVE_RELEASE_APPROVED','STRIPE_CONNECT_TRANSFERS_ENABLED',
  'STRIPE_MANUAL_SETTLEMENT_APPROVED','STRIPE_REFUNDS_ENABLED'];
-if(!['--plan','--execute-test'].includes(mode)||
+if(!['--plan','--execute-test','--recover-test'].includes(mode)||
  !['transfer','payout'].includes(kind)||!/^[1-9][0-9]{0,15}$/.test(id||'')){
- fail('USAGE: --plan|--execute-test transfer|payout <RESERVATION_ID> [APPROVAL]');
+ fail('USAGE: --plan|--execute-test|--recover-test transfer|payout <RESERVATION_ID> [APPROVAL]');
 }
 if(process.getuid?.()===0||userInfo().username!=='tala-node-stage'||
  config.NODE_ENV!=='staging'||
@@ -32,9 +36,10 @@ if(db.username!=='tala_node_stage'||db.hostname!=='127.0.0.1'||
  db.port!=='15435'||db.pathname!=='/tala_node_stage'||
  redis.hostname!=='127.0.0.1'||redis.port!=='16379')
  fail('RC128_TEST_DATABASE_ISOLATION_HOLD');
-const actionToken=kind==='transfer'?'I_APPROVE_STRIPE_TEST_TRANSFER_ONLY':
+const actionToken=mode==='--recover-test'? 'I_APPROVE_STRIPE_TEST_RECOVERY_ONLY':
+ kind==='transfer'?'I_APPROVE_STRIPE_TEST_TRANSFER_ONLY':
  'I_APPROVE_STRIPE_TEST_PAYOUT_ONLY';
-if(mode==='--execute-test'&&approval!==actionToken)
+if(mode!=='--plan'&&approval!==actionToken)
  fail('RC128_EXPLICIT_TEST_EXECUTION_APPROVAL_REQUIRED');
 if(mode==='--plan'&&approval)fail('RC128_PLAN_REQUIRES_NO_APPROVAL_TOKEN');
 const stripe=new Stripe(config.STRIPE_SECRET_KEY,{maxNetworkRetries:0,timeout:12000});
@@ -167,7 +172,12 @@ async function payoutAvailable(){
  return Number(snapshot.withdrawableMinor);
 }
 try{
- if(kind==='transfer'){
+ if(mode==='--recover-test'){
+  const state=kind==='transfer'?
+   await recoverUnknownTreasuryTransfer(pool,stripe,id):
+   await recoverUnknownTreasuryPayout(pool,stripe,id);
+  console.log('RC128_TEST_READBACK_RECOVERY='+state.toUpperCase());
+ }else if(kind==='transfer'){
   const input=await transferInput();
   if(mode==='--plan')console.log('RC128_REAL_STRIPE_TEST_TRANSFER_READINESS=PASS_READ_ONLY');
   else{
