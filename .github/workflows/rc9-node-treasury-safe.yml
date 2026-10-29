@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - feat/node-treasury-restaurant-driver-20261028
+      - fix/rc126-real-onboarding-role-isolation-20261029
     paths:
       - 'node-backend/src/live/treasury-*.ts'
       - 'node-backend/src/live/merchant-finance-router.ts'
