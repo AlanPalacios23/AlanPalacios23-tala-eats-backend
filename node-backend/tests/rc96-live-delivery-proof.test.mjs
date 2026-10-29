@@ -63,6 +63,8 @@ test('future LIVE dispatch, PIN and financial work remain under three locked rel
  assert.match(dispatcher,/await throttlePin\(orderId,actor\.id\)/);
  assert.match(worker,/sweepLiveDeliveryReady\(\)/);
  assert.match(worker,/if\(stopping\|\|readyBusy\|\|\(!liveDispatchReleased\(\)&&!liveCashDeliveryReleased\(\)\)\)return/);
- assert.match(checkout,/const liveStripe=cardStripePickup&&/);
- assert.doesNotMatch(checkout,/live_delivery_checkout_v1:true/);
+ assert.match(checkout,/const liveStripe=\(cardStripePickup\|\|liveStripeDelivery\)&&/);
+ assert.match(checkout,/liveStripeDelivery=liveDispatchReleased\(\)&&isStageStripeDeliveryIntent\(raw\)/);
+ assert.match(checkout,/live_delivery_checkout_v1:true/);
+ assert.match(cfg,/RC96_LIVE_DELIVERY_NOT_RELEASED_STRIPE_TEST_REQUIRED/);
 });
