@@ -35,13 +35,15 @@ export function buildPublicPaymentContracts(o:PublicPaymentOptions){
     : o.stripeTestEnabled&&Boolean(o.publishableKey?.startsWith('pk_test_'));
   // No checkout whatsoever in production standby with only test merchants.
   const cashEnabled=(live?o.liveCashPickupEnabled===true:o.cashEnabled)&&(!live||enabled);
-  const liveDeliveryCash=live&&cashEnabled&&o.liveCashDeliveryEnabled===true&&
+  // Cash delivery is independent of pickup cash. Never let a pickup-only
+  // release accidentally disable an independently approved delivery method.
+  const liveDeliveryCash=live&&enabled&&o.liveCashDeliveryEnabled===true&&
     o.pricingV162Enabled!==true;
   const stageDeliveryCash=!live&&o.stagingDeliveryCashEnabled===true;
   const liveDeliveryStripe=live&&enabled&&o.liveCardDeliveryEnabled===true;
   const stageDeliveryStripe=!live&&o.stagingDeliveryCashEnabled===true&&
     o.stagingDeliveryStripeTestEnabled===true&&enabled;
-  const mode=live?'live-pickup-card':'test-pickup-card';
+  const mode=live?'live-pickup-only':'test-pickup-only';
   const key=enabled?o.publishableKey??null:null;
   return {
     methods:{
