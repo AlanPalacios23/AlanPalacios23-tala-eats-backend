@@ -293,6 +293,46 @@ export async function driverAvailability(actor:AuthUser,isOnline:boolean){
   }
   return result;
 }
+/**
+ * Driver offer list in LIVE is read-only and privacy-preserving.
+ * Customer address, GPS and PIN are never exposed before the profile has
+ * atomically claimed the delivery. The worker may auto-assign first.
+ */
+export async function liveCashDriverOffers(actor:AuthUser,limit:number){
+ if(!liveCashDeliveryReleased())return [];
+ if(!Number.isSafeInteger(limit)||limit<1||limit>100)fail(422,'Límite inválido');
+ const profile=await db.marketplaceDriverProfile.findUnique({where:{userId:actor.id}});
+ if(!profile?.isVerified||!profile.isOnline||!actor.isActive)return [];
+ const busy=await db.marketOrder.count({
+  where:{driverId:actor.id,status:{in:ACTIVE}},
+ });
+ if(busy>0)return [];
+ const fresh=await redisLocation(actor.id);
+ if(!fresh)return [];
+ const orders=await db.marketOrder.findMany({
+  where:{orderType:'delivery',status:'ready',driverId:null,
+   paymentMethod:'cash',paymentStatus:'pending'},
+  include:{restaurant:true},take:limit,
+  orderBy:[{readyAt:'asc'},{id:'asc'}],
+ });
+ const offers=[];
+ for(const order of orders){
+  if(haversine(fresh.lat,fresh.lng,order.restaurant.lat,order.restaurant.lng)>
+     config.STAGE_DRIVER_MAX_PICKUP_KM)continue;
+  if(!await liveCashDeliveryTenderAllowed(db,order))continue;
+  offers.push({
+   id:order.id,status:'ready',order_type:'delivery',
+   restaurant_id:order.restaurantId,
+   restaurant:{id:order.restaurantId,name:order.restaurant.name,
+    address:order.restaurant.address,
+    lat:order.restaurant.lat,lng:order.restaurant.lng},
+   driver_earning:order.driverEarning.toString(),tip:order.tip.toString(),
+   distance_km:order.distanceKm,total:order.total.toString(),
+  });
+ }
+ return offers;
+}
+
 export async function driverAccept(actor:AuthUser,orderId:number){
   deliveryActions();
   return withProfileLock(actor.id,async tx=>{
