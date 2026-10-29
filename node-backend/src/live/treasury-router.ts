@@ -29,7 +29,7 @@ const minor=(raw:unknown):bigint=>{
  if(typeof raw!=='string'||!/^\d{1,16}$/.test(raw))throw Error('TREASURY_MINOR_INVALID');
  return BigInt(raw);
 };
-type RoleIdentity={kind:TreasuryPayee;id:number;ownerId:number;account:string;approved:boolean;
+export type RoleIdentity={kind:TreasuryPayee;id:number;ownerId:number;account:string;approved:boolean;
  ownerEmail:string};
 async function identity(req:Request,pool:Pool,kind:TreasuryPayee,payeeId:number):Promise<RoleIdentity>{
  const s=await current(req);
@@ -49,7 +49,10 @@ async function identity(req:Request,pool:Pool,kind:TreasuryPayee,payeeId:number)
  return {kind,id:payeeId,ownerId:s.userId,account:x.stripe_account_id,approved:Boolean(x.owner_approved_at),ownerEmail:x.email};
 }
 type ConnectedReads=Pick<Stripe,'accounts'|'balance'|'transfers'|'charges'|'payouts'|'paymentIntents'>;
-async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIdentity){
+export async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIdentity,
+ expectedLivemode=true){
+ if(!expectedLivemode&&config.NODE_ENV!=='staging')
+  throw Error('TREASURY_TEST_SNAPSHOT_REQUIRES_STAGING');
  if(!/^acct_[A-Za-z0-9]+$/.test(x.account)||x.account===config.STRIPE_PLATFORM_ACCOUNT_ID)
   throw Error('INVALID_CONNECT_RECIPIENT');
  const acct=await stripe.accounts.retrieve(x.account);
@@ -67,7 +70,7 @@ async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIdentity){
   throw Error('CONNECT_CARD_BALANCE_UNVERIFIED');
  const available=BigInt(cardMinor);
  if(available<0n)throw Error('CONNECT_NEGATIVE_BALANCE');
- const total=await auditCompletedTreasuryTransfers(pool,stripe,x.kind,x.id,x.account);
+ const total=await auditCompletedTreasuryTransfers(pool,stripe,x.kind,x.id,x.account,expectedLivemode);
  const [withdrawals,holds,cases,daily]=await Promise.all([
   pool.query<{total:string;pending:string}>(
     "SELECT COALESCE(SUM(amount_minor),0)::text AS total, COALESCE(SUM(CASE WHEN state IN ('reserved','submitted','unknown','review_required') THEN 1 ELSE 0 END),0)::text AS pending FROM tala_live_treasury_withdrawals WHERE payee_kind=$1 AND payee_id=$2 AND state IN ('reserved','submitted','unknown','review_required','paid')",
@@ -92,7 +95,7 @@ async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIdentity){
   [x.account]);
  const bank=await inspectConnectedBankAndPayouts(stripe,x.account,
   known.rows.map(v=>({id:v.id,withdrawalId:v.withdrawal_id,payeeKind:v.payee_kind,
-    payeeId:v.payee_id,amountMinor:v.amount_minor,bankId:v.bank_destination_id,state:v.state})));
+    payeeId:v.payee_id,amountMinor:v.amount_minor,bankId:v.bank_destination_id,state:v.state})),expectedLivemode);
  const balance=treasuryBalance({
   amountTransferredMinor:total,committedWithdrawalsMinor:reserved,
   stripeAvailableMinor:available,openFinancialCases:incidentCount,
