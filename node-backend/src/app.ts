@@ -4,7 +4,7 @@ import { Redis } from 'ioredis';
 import {buildLiveRuntimeDependencies} from './live/runtime-dependencies.js';
 import {buildIsolatedWebhookRouter} from './live/webhook-router.js';
 import {buildIsolatedCheckoutRouter} from './live/checkout-router.js';
-import {pickupCapability,deliveryCapability,type PickupMerchant} from './live/pickup-readiness.js';
+import {pickupCapability,deliveryCapability,readinessAuthStatus,type PickupMerchant} from './live/pickup-readiness.js';
 import {hasReachableLiveDriver} from './marketplace/live-delivery-capacity.js';
 import {liveDispatchReleased} from './marketplace/live-delivery-payment.js';
 import {cashPickupReleased,liveCashDeliveryReleased} from './marketplace/live-cash-delivery.js';
@@ -118,7 +118,12 @@ if(live){
         res.json(pickupCapability(seller,account,liveChargeApproved,
           config.STRIPE_PLATFORM_ACCOUNT_ID,cashPickupReleased()));
       }
-    }catch {
+    }catch(error) {
+      const status=readinessAuthStatus(error);
+      if(status!==null){
+        res.status(status).json({error:status===401?'AUTH_REQUIRED':'BUYER_FORBIDDEN'});
+        return;
+      }
       res.status(503).json({error:'MERCHANT_READINESS_UNAVAILABLE'});
     }
   });
