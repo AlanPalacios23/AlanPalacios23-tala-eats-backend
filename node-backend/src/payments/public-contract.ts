@@ -19,6 +19,8 @@ export type PublicPaymentOptions = {
   pricingV162Enabled?:boolean;
   stagingDeliveryCashEnabled?:boolean;
   stagingDeliveryStripeTestEnabled?:boolean;
+  // Server-owned, audited cash-at-door release; NEVER enables Stripe card delivery.
+  liveCashDeliveryEnabled?:boolean;
 };
 
 export function buildPublicPaymentContracts(o:PublicPaymentOptions){
@@ -30,13 +32,16 @@ export function buildPublicPaymentContracts(o:PublicPaymentOptions){
     : o.stripeTestEnabled&&Boolean(o.publishableKey?.startsWith('pk_test_'));
   // No checkout whatsoever in production standby with only test merchants.
   const cashEnabled=o.cashEnabled&&(!live||enabled);
+  const liveDeliveryCash=live&&cashEnabled&&o.liveCashDeliveryEnabled===true&&
+    o.pricingV162Enabled!==true;
+  const stageDeliveryCash=!live&&o.stagingDeliveryCashEnabled===true;
   const mode=live?'live-pickup-only':'test-pickup-only';
   const key=enabled?o.publishableKey??null:null;
   return {
     methods:{
-      // Informacion comercial informativa. SOLO pickup es cobrable en Node RC8:
-      // no se expone una cotizacion de delivery sin coordenadas y un motor
-      // servidor de distancias. La creación del pedido recalcula y valida.
+      // Server-computed delivery quote is cash-only in LIVE when its separate
+      // runtime/driver/finance release gate is approved. Stripe LIVE delivery
+      // remains hard-locked until signed capture and reconciliation are built.
       commercial_pricing_version:o.pricingV162Enabled?'1.6.2':'1.5.2',
       service_fee_rate:'0.07',
       ...(o.pricingV162Enabled?{
@@ -47,11 +52,11 @@ export function buildPublicPaymentContracts(o:PublicPaymentOptions){
       }:{
         delivery_base_fee:'39.00',
       }),
-      delivery_checkout_supported:!live&&o.stagingDeliveryCashEnabled===true,
-      delivery_cash_supported:!live&&o.stagingDeliveryCashEnabled===true,
+      delivery_checkout_supported:stageDeliveryCash||liveDeliveryCash,
+      delivery_cash_supported:stageDeliveryCash||liveDeliveryCash,
       delivery_stripe_supported:!live&&o.stagingDeliveryCashEnabled===true&&
         o.stagingDeliveryStripeTestEnabled===true&&enabled,
-      delivery_quote_supported:!live&&o.stagingDeliveryCashEnabled===true,
+      delivery_quote_supported:stageDeliveryCash||liveDeliveryCash,
       pickup_checkout_supported:true,
       pickup_quote_supported:true, // POST /orders/quote, non-binding server-side price preview
       digital_provider:'stripe',
