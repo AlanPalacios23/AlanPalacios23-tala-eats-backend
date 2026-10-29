@@ -50,7 +50,7 @@ try{
  const replay=await send(payload,sign(payload));
  assert.equal(replay.status,200,'Stripe retry should ACK durable existing event');
  const rows=await client.query(
-  'SELECT id,type,delivery_count::int,object_id FROM stripe_webhook_events WHERE id=$1',
+  'SELECT id,type,"deliveryCount"::int AS delivery_count,"objectId" AS object_id FROM stripe_webhook_events WHERE id=$1',
   [id]);
  assert.equal(rows.rows.length,1,'Exactly one durable provider event');
  assert.equal(rows.rows[0].id,id);
