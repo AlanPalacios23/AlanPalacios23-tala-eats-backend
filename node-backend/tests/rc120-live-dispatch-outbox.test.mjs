@@ -42,7 +42,7 @@ test('RC12 LIVE cash READY dispatch checks independent release + real tender',()
  assert.ok(driver.includes('await liveCashDeliveryTenderAllowed(tx,row)'));
  assert.ok(driver.includes('FOR UPDATE SKIP LOCKED'));
  assert.ok(worker.includes('liveCashDeliveryReleased()'));
- assert.ok(worker.includes('sweepLiveDeliveryReady()')===false);
+ assert.ok(worker.includes('dispatchStageDeliveryReady(row.id)'));
  const liveWorker=read('live/production-worker.ts');
  assert.ok(liveWorker.includes('await sweepLiveDeliveryReady()'));
 });
