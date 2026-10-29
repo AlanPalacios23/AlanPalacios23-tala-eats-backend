@@ -94,6 +94,7 @@ jobs:
       - name: Synthetic driver lifecycle integration (separate feature-flagged process)
         env:
           STAGE_DRIVER_DELIVERY_ENABLED: 'true'
+          STAGE_DELIVERY_CASH_CHECKOUT_ENABLED: 'true'
         run: |
           set -euo pipefail
           node dist/server.js > /tmp/tala-node-driver-d2.log 2>&1 &
