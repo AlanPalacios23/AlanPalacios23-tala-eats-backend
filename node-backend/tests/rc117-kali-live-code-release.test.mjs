@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
+const shell=new URL('../scripts/rc117-kali-live-code-release.sh',import.meta.url);
+test('RC11.7 release script passes bash syntax before server deployment',()=>{
+ const result=spawnSync('bash',['-n',shell.pathname],{encoding:'utf8'});
+ assert.equal(result.status,0,result.stderr);
+});
 const src=readFileSync(new URL('../scripts/rc117-kali-live-code-release.sh',import.meta.url),'utf8');
 test('RC11.7 code deploy is SHA-pinned, guarded and never toggles LIVE money',()=>{
  for(const v of ['--(plan|apply|verify)','I_APPROVE_RC117_LIVE_CODE_ONLY',
