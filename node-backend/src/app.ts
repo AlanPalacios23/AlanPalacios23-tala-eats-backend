@@ -5,6 +5,7 @@ import {buildLiveRuntimeDependencies} from './live/runtime-dependencies.js';
 import {buildIsolatedWebhookRouter} from './live/webhook-router.js';
 import {buildIsolatedCheckoutRouter} from './live/checkout-router.js';
 import {pickupCapability,type PickupMerchant} from './live/pickup-readiness.js';
+import {liveDispatchReleased} from './marketplace/live-delivery-payment.js';
 import {cashPickupReleased} from './marketplace/live-cash-delivery.js';
 import {buildLiveMerchantFinanceRouter} from './live/merchant-finance-router.js';
 import {buildPayeeFinanceRouter} from './live/payee-finance-router.js';
@@ -161,7 +162,8 @@ if(live){
     }
   });
   app.use('/api/v1',buildIsolatedCheckoutRouter({
-    enabled:liveChargeApproved,authSecret:config.AUTH_JWT_SECRET!,pool:live.pool,
+    enabled:liveChargeApproved,deliveryReleased:liveDispatchReleased(),
+    authSecret:config.AUTH_JWT_SECRET!,pool:live.pool,
     redis:live.redis,stripe:live.stripe,settings:live.settings,
   }));
   // The pilot currently contains a disposable test restaurant. Standby
