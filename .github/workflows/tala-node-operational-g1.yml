@@ -54,7 +54,7 @@ jobs:
           python3 scripts/python_route_inventory.py --check
           python3 scripts/node_route_coverage.py --check
           python3 scripts/node_route_coverage.py --json > /tmp/tala-node-first100.json
-          python3 -c 'import json; p=json.load(open("/tmp/tala-node-first100.json")); assert p["structural_matches"]==126, p["structural_matches"]; assert p["python_routes_without_node_declaration"]==126, p["python_routes_without_node_declaration"]'
+          python3 -c 'import json; p=json.load(open("/tmp/tala-node-first100.json")); assert p["structural_matches"]>=126, p["structural_matches"]; assert p["python_routes_without_node_declaration"]<=126, p["python_routes_without_node_declaration"]; assert p["python_http_routes"]==p["structural_matches"]+p["python_routes_without_node_declaration"], p'
       - name: Frozen dependencies and disposable PG15 migrations
         run: |
           npm ci --no-audit --no-fund
