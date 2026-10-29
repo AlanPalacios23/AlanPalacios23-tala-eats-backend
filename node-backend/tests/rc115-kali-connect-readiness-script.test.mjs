@@ -29,6 +29,8 @@ test('RC11.5 uses actual LIVE merchant and driver tables, never legacy mirror',(
  assert.doesNotMatch(sql,/\b(INSERT|UPDATE|DELETE|ALTER|DROP|CREATE)\b/i);
  assert.ok(src.includes('assessMappedLiveBeneficiary('));
  assert.ok(src.includes('db.$queryRawUnsafe(sql)'));
+ assert.ok(src.includes('stripe.balance.retrieve({}, {stripeAccount:m.stripe_account_id})'));
+ assert.doesNotMatch(src,/stripe\.balance\.retrieve\(\{stripeAccount:/);
  assert.ok(src.includes('RC115_RESTAURANT_PAYEES='));
  assert.ok(src.includes('RC115_DRIVER_PAYEES='));
  assert.ok(!src.includes('db.merchantConnectAccount.'));
