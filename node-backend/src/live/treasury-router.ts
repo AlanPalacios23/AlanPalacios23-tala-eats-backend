@@ -50,9 +50,13 @@ async function identity(req:Request,pool:Pool,kind:TreasuryPayee,payeeId:number)
 }
 type ConnectedReads=Pick<Stripe,'accounts'|'balance'|'transfers'|'charges'|'payouts'|'paymentIntents'>;
 export async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIdentity,
- expectedLivemode=true){
+ expectedLivemode=true,excludeWithdrawalId:string|null=null){
  if(!expectedLivemode&&config.NODE_ENV!=='staging')
   throw Error('TREASURY_TEST_SNAPSHOT_REQUIRES_STAGING');
+ if(excludeWithdrawalId!==null&&(
+   expectedLivemode||config.NODE_ENV!=='staging'||
+   !/^[1-9][0-9]{0,15}$/.test(excludeWithdrawalId)))
+  throw Error('TREASURY_EXCLUSION_ONLY_FOR_TEST_RESERVED_WITHDRAWAL');
  if(!/^acct_[A-Za-z0-9]+$/.test(x.account)||x.account===config.STRIPE_PLATFORM_ACCOUNT_ID)
   throw Error('INVALID_CONNECT_RECIPIENT');
  const acct=await stripe.accounts.retrieve(x.account);
@@ -73,8 +77,8 @@ export async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIden
  const total=await auditCompletedTreasuryTransfers(pool,stripe,x.kind,x.id,x.account,expectedLivemode);
  const [withdrawals,holds,cases,daily]=await Promise.all([
   pool.query<{total:string;pending:string}>(
-    "SELECT COALESCE(SUM(amount_minor),0)::text AS total, COALESCE(SUM(CASE WHEN state IN ('reserved','submitted','unknown','review_required') THEN 1 ELSE 0 END),0)::text AS pending FROM tala_live_treasury_withdrawals WHERE payee_kind=$1 AND payee_id=$2 AND state IN ('reserved','submitted','unknown','review_required','paid')",
-    [x.kind,x.id]),
+    "SELECT COALESCE(SUM(amount_minor),0)::text AS total, COALESCE(SUM(CASE WHEN state IN ('reserved','submitted','unknown','review_required') THEN 1 ELSE 0 END),0)::text AS pending FROM tala_live_treasury_withdrawals WHERE payee_kind=$1 AND payee_id=$2 AND state IN ('reserved','submitted','unknown','review_required','paid') AND ($3::bigint IS NULL OR id<>$3::bigint)",
+    [x.kind,x.id,excludeWithdrawalId]),
   pool.query<{n:string}>(
     "SELECT count(*)::text AS n FROM tala_live_treasury_transfers WHERE payee_kind=$1 AND payee_id=$2 AND state IN ('reserved','submitted','unknown','manual_hold')",
     [x.kind,x.id]),
@@ -82,8 +86,8 @@ export async function auditedSnapshot(pool:Pool,stripe:ConnectedReads,x:RoleIden
     "SELECT count(*)::text AS n FROM tala_live_payee_allocations a JOIN tala_live_financial_cases f ON f.order_id=a.order_id WHERE a.payee_kind=$1 AND a.payee_id=$2 AND f.status<>'resolved'",
     [x.kind,x.id]),
   pool.query<{daily_minor:string}>(
-    "SELECT COALESCE(SUM(amount_minor),0)::text AS daily_minor FROM tala_live_treasury_withdrawals WHERE payee_kind=$1 AND payee_id=$2 AND created_at >= DATE_TRUNC('day', NOW() AT TIME ZONE 'America/Mexico_City') AT TIME ZONE 'America/Mexico_City' AND state <> 'canceled'",
-    [x.kind,x.id])
+    "SELECT COALESCE(SUM(amount_minor),0)::text AS daily_minor FROM tala_live_treasury_withdrawals WHERE payee_kind=$1 AND payee_id=$2 AND created_at >= DATE_TRUNC('day', NOW() AT TIME ZONE 'America/Mexico_City') AT TIME ZONE 'America/Mexico_City' AND state <> 'canceled' AND ($3::bigint IS NULL OR id<>$3::bigint)",
+    [x.kind,x.id,excludeWithdrawalId])
  ]);
  const reserved=minor(withdrawals.rows[0]?.total??'0');
  const pending=Number(withdrawals.rows[0]?.pending??'0');
