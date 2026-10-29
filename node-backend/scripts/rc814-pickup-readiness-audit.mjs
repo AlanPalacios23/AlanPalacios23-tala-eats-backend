@@ -38,7 +38,11 @@ try{
  const mapped=res.rows.filter(x=>x.connect_owner_approved);
  console.log('PICKUP_LIVE_READ_ONLY_AUDIT=PASS');
  console.log('PICKUP_LIVE_STRIPE_FINANCIAL_WRITES='+env.STRIPE_FINANCIAL_WRITES_ENABLED);
- console.log('PICKUP_LIVE_CASH_FLAG='+env.STAGE_PICKUP_CASH_CHECKOUT_ENABLED);
+ console.log('PICKUP_LEGACY_STAGE_FLAG_IGNORED_IN_LIVE='+env.STAGE_PICKUP_CASH_CHECKOUT_ENABLED);
+ console.log('PICKUP_LIVE_CASH_CHECKOUT_FLAG='+(env.LIVE_PICKUP_CASH_CHECKOUT_ENABLED??'false'));
+ console.log('PICKUP_LIVE_CASH_RELEASE_FLAG='+(env.LIVE_PICKUP_CASH_RELEASE_APPROVED??'false'));
+ console.log('PICKUP_LIVE_CASH_RELEASE_PAIRED='+
+  String(env.LIVE_PICKUP_CASH_CHECKOUT_ENABLED==='true'&&env.LIVE_PICKUP_CASH_RELEASE_APPROVED==='true'));
  console.log('PICKUP_RESTAURANT_ROWS='+res.rows.length);
  console.log('PICKUP_OWNER_APPROVED_MAPPINGS='+mapped.length);
  for(const x of res.rows){
