@@ -18,7 +18,9 @@ export async function hasReachableLiveDriver(origin:{lat:number;lng:number}):Pro
  if(!Number.isFinite(origin.lat)||!Number.isFinite(origin.lng)||
     Math.abs(origin.lat)>90||Math.abs(origin.lng)>180)return false;
  const profiles=await db.marketplaceDriverProfile.findMany({
-  where:{isVerified:true,isOnline:true,user:{is:{role:'driver',isActive:true}}},
+  where:{isVerified:true,isOnline:true,
+    userId:config.LIVE_DELIVERY_PILOT_DRIVER_ID??-1,
+    user:{is:{role:'driver',isActive:true}}},
   select:{userId:true},take:MAX_CANDIDATES,orderBy:{userId:'asc'},
  });
  if(!profiles.length)return false;
