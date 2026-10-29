@@ -140,7 +140,9 @@ export async function driverPresenceReadiness(actor:AuthUser){
     fresh_gps:freshGps,
     ready_for_dispatch:enabled&&verified&&online&&freshGps&&
       // RC9.5 does NOT authorize assignment or LIVE checkout.
-      config.NODE_ENV==='staging'&&config.STAGE_DRIVER_DELIVERY_ENABLED==='true',
+      ((config.NODE_ENV==='staging'&&config.STAGE_DRIVER_DELIVERY_ENABLED==='true')||
+       (config.NODE_ENV==='production'&&
+         (liveCashDeliveryReleased()||liveDispatchReleased()))),
     live_delivery_checkout_enabled:false,
     live_stripe_delivery_enabled:false,
   };
@@ -157,8 +159,10 @@ async function redisLocation(driverId:number):Promise<{lat:number;lng:number}|nu
   const redis=redisClient();
   try{
     await redis.connect();
-    const str=await redis.get(driverLocationKey(config.NODE_ENV,driverId));
-    if(!str)return null;
+    const key=driverLocationKey(config.NODE_ENV,driverId);
+    const [str,ttl]=await Promise.all([redis.get(key),redis.ttl(key)]);
+    if(!str||config.NODE_ENV==='production'&&
+       !hasFreshVerifiedDriverGps(str,ttl,Date.now()))return null;
     const p=JSON.parse(str) as {lat:number;lng:number};
     return typeof p.lat==='number'&&Number.isFinite(p.lat)&&Math.abs(p.lat)<=90&&
       typeof p.lng==='number'&&Number.isFinite(p.lng)&&Math.abs(p.lng)<=180?p:null;
