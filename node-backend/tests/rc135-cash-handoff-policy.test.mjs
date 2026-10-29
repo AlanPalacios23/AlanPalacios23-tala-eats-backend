@@ -8,7 +8,7 @@ test('RC13.5 cash collected by courier is full custody, NOT courier wage',()=>{
  const x=buildMoneyPlan({
   orderId:18,restaurantId:5,driverUserId:9,
   orderType:'delivery',merchantManagedDelivery:false,tender:'cash',
-  totalMinor:25300,restaurantPayableMinor:17000,driverBaseMinor:3200,
+  totalMinor:25300,cashCollectedMinor:25300,restaurantPayableMinor:17000,driverBaseMinor:3200,
   tipMinor:0,status:'delivered',paymentStatus:'paid',
   deliveryProven:true,captured:false,openCases:0
  });
