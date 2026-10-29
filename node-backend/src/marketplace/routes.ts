@@ -10,6 +10,8 @@ import { createStagePickupOrder, isCashPickupIntent, isStripePickupIntent,
   isStageCashDeliveryIntent,isStageStripeDeliveryIntent } from './checkout.js';
 import {deliveryDistance,assertRestaurantDeliveryOrigin,DeliveryGeoError} from './delivery-geography.js';
 import {hasReachableLiveDriver} from './live-delivery-capacity.js';
+import {liveCashDeliveryReleased,isLiveCashCheckoutProvenance} from './live-cash-delivery.js';
+import {freshDriverNearPickup,driverLocationKey} from './delivery-runtime.js';
 import {calculateDefaultCommercial,fmtCents} from '../finance/pricing.js';
 import {calculatePickupQuoteFromCatalog,assertDefaultPickupRates,PickupQuoteError} from './quote.js';
 import { previewCancelStage, cancelCashPickupStage, moveCashPickupOwnerStage } from './lifecycle.js';
@@ -471,7 +473,7 @@ stageOrdersRouter.post('/delivery-quote',async(req,res)=>{
       driver_earning:fmtCents(economics.driverEarning),
       quote_is_binding:false,inventory_reserved:false,
       requires_revalidation_on_order:true,
-      delivery_checkout_supported:stagePreview,
+      delivery_checkout_supported:stagePreview||(livePreview&&liveCashDeliveryReleased()),
       ...(livePreview?{live_driver_capacity_verified:true,
         preview_only:true,
         checkout_blocker:'LIVE_DELIVERY_CHECKOUT_NOT_RELEASED'}:{}),
@@ -620,8 +622,9 @@ stageOrdersRouter.post('/',async(req,res)=>{
   const cash=(isCashPickupIntent(req.body)&&
     config.STAGE_PICKUP_CASH_CHECKOUT_ENABLED==='true')||
     (isStageCashDeliveryIntent(req.body)&&
-     config.NODE_ENV==='staging'&&
-     config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true');
+     ((config.NODE_ENV==='staging'&&
+       config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true')||
+      liveCashDeliveryReleased()));
   const stageCard=(isStripePickupIntent(req.body)||
     (isStageStripeDeliveryIntent(req.body)&&
      config.STAGE_DELIVERY_CASH_CHECKOUT_ENABLED==='true'&&
