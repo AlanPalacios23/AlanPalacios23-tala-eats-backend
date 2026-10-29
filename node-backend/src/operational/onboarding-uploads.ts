@@ -69,9 +69,10 @@ onboardingUploadRouter.post('/onboarding-document',async(req,res,next)=>{
    const directory=await ensurePrivateDir();
    const name='u'+user.id+'-'+randomBytes(24).toString('base64url')+'.'+
      ({'image/jpeg':'jpg','image/png':'png','image/webp':'webp','application/pdf':'pdf'} as Record<string,string>)[file.mime];
-   saved=join(directory,name);
-   const handle=await open(saved,constants.O_WRONLY|constants.O_CREAT|
+   const target=join(directory,name);
+   const handle=await open(target,constants.O_WRONLY|constants.O_CREAT|
      constants.O_EXCL|constants.O_NOFOLLOW,0o600);
+   saved=target; // Only delete files successfully created by this request.
    try{await handle.writeFile(file.content);}finally{await handle.close();}
    await db.stageMediaAsset.create({data:{
      filename:name,category:'onboarding',userId:user.id,mime:file.mime,
