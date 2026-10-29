@@ -87,6 +87,11 @@ jobs:
         run: |
           npm run build
           npm test
+      - name: RC13.3 finance journal PG15 isolation and balancing
+        env:
+          RC133_FINANCE_DB_TEST: 'true'
+        run: |
+          node --test tests/rc133-journal-pg15.test.mjs
       - name: Protect disposable Redis with password
         run: |
           node --input-type=module -e '
