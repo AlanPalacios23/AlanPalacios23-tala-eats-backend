@@ -11,8 +11,11 @@ export type BankAudit={verified:boolean;bankId:string|null;
 export async function inspectConnectedBankAndPayouts(
  provider:Pick<Stripe,'accounts'|'payouts'>,account:string,
  local:readonly {id:string;withdrawalId:string;payeeKind:'restaurant'|'driver';
-  payeeId:number;amountMinor:string;bankId:string;state:string}[]
+  payeeId:number;amountMinor:string;bankId:string;state:string}[],
+ expectedLivemode=true
 ):Promise<BankAudit>{
+ if(!expectedLivemode&&process.env.NODE_ENV!=='staging')
+  throw Error('TREASURY_TEST_BANK_AUDIT_REQUIRES_STAGING');
  if(!/^acct_[A-Za-z0-9]+$/.test(account))throw Error('CONNECT_ACCOUNT_INVALID');
  const acct=await provider.accounts.retrieve(account);
  // Stripe may leave a valid MX bank in status 'new'. Eligibility depends
@@ -59,7 +62,7 @@ export async function inspectConnectedBankAndPayouts(
    const recorded=known.get(payout.id);
    if(!recorded||seen.has(payout.id)||payout.automatic!==false||
       payout.destination!==chosen.id||payout.currency!=='mxn'||
-      !payout.livemode||!Number.isSafeInteger(payout.amount)||
+      payout.livemode!==expectedLivemode||!Number.isSafeInteger(payout.amount)||
       BigInt(payout.amount)!==BigInt(recorded.amountMinor)||
       payout.metadata?.tala_treasury_withdrawal!==recorded.withdrawalId||
       payout.metadata?.tala_payee_kind!==recorded.payeeKind||

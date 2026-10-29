@@ -1,0 +1,110 @@
+name: RC12.8 | Stripe TEST Connect signed reconciliation (isolated PG15)
+on:
+  push:
+    branches:
+      - fix/rc128-connect-test-webhook-reconciliation-20261029
+permissions:
+  contents: read
+jobs:
+  signed-connect-test:
+    name: TEST signed payout -> PostgreSQL ledger for merchant and driver
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: rc9_ci
+          POSTGRES_PASSWORD: rc9-only-ci
+          POSTGRES_DB: rc9_ci
+        ports: ['15445:5432']
+        options: >-
+          --health-cmd "pg_isready -U rc9_ci -d rc9_ci"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      NODE_ENV: staging
+      DATABASE_URL: postgresql://rc9_ci:rc9-only-ci@127.0.0.1:15445/rc9_ci
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+      STRIPE_LIVE_ENABLED: 'false'
+      STRIPE_CONNECT_TRANSFERS_ENABLED: 'false'
+      STRIPE_MANUAL_SETTLEMENT_APPROVED: 'false'
+      STRIPE_REFUNDS_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Freeze packages and migrate an ephemeral database
+        run: |
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:migrate:deploy
+          npm run build
+      - name: Existing Connect LIVE-default signing regression (mock provider)
+        run: node scripts/ci-rc9-treasury-signed-webhooks-pg15.mjs
+      - name: TEST-mode signed Connect reconciliation for BOTH payee types
+        run: node scripts/ci-rc128-stripe-test-connect-webhook-pg15.mjs
+      - name: Existing dual-ADMIN test transfer dispatch in disposable PostgreSQL
+        run: |
+          node scripts/ci-rc9-treasury-transfers-pg15.mjs
+          node scripts/ci-rc9-treasury-transactions-pg15.mjs
+      - name: LIVE execution remains hard locked
+        run: |
+          grep -q "NODE_TREASURY_LIVE_EXECUTION_ENABLED=false" src/live/treasury-policy.ts
+          ! grep -E 'transfers.create|payouts.create' src/live/treasury-connect-webhook.ts
+          ! grep -E 'transfers.create|payouts.create' src/live/treasury-webhook-policy.ts
+
+  compile-and-guards:
+    name: All Node tests and TEST-only script refusal gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      NODE_ENV: staging
+      HOST: 127.0.0.1
+      PORT: '18190'
+      DATABASE_URL: postgresql://tala_node_stage:non-live-ci@127.0.0.1:15435/tala_node_stage
+      REDIS_URL: redis://:non-live-ci@127.0.0.1:16379/0
+      STRIPE_FINANCIAL_WRITES_ENABLED: 'false'
+      STRIPE_LIVE_ENABLED: 'false'
+      STRIPE_LIVE_RELEASE_APPROVED: 'false'
+      STRIPE_CONNECT_TRANSFERS_ENABLED: 'false'
+      STRIPE_MANUAL_SETTLEMENT_APPROVED: 'false'
+      STRIPE_REFUNDS_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Frozen deps and compile
+        run: |
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:validate
+          npm run build
+      - name: Full Node regression suite
+        run: npm test
+      - name: Strictly refuse unsigned or unauthorized REAL provider test operations
+        run: |
+          node --check scripts/rc128-stripe-test-treasury-execution.mjs
+          node --check scripts/rc128-stripe-test-connect-webhook-listener.mjs
+          if node scripts/rc128-stripe-test-treasury-execution.mjs --execute-test transfer 1 NOT_APPROVED; then
+            echo 'RC128_UNAUTHORIZED_TEST_PROVIDER_CALL_NOT_BLOCKED'; exit 1
+          fi
+          if node scripts/rc128-stripe-test-connect-webhook-listener.mjs --listen-test NOT_APPROVED; then
+            echo 'RC128_UNAUTHORIZED_TEST_WEBHOOK_NOT_BLOCKED'; exit 1
+          fi
+          grep -q "NODE_TREASURY_LIVE_EXECUTION_ENABLED=false" src/live/treasury-policy.ts
