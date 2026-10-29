@@ -7,6 +7,7 @@ on:
       - "node-backend/src/**"
       - "node-backend/scripts/ci-rc87-cash-delivery-e2e.mjs"
       - "node-backend/scripts/ci-rc810-synthetic-paid-delivery-e2e.mjs"
+      - "node-backend/scripts/ci-rc137-stripe-signed-ingress.mjs"
       - "node-backend/scripts/ci-rc128-stripe-test-connect-webhook-pg15.mjs"
       - "node-backend/prisma/**"
   pull_request:
@@ -173,6 +174,10 @@ jobs:
           node dist/worker.js > /tmp/rc137-card-worker.log 2>&1 &
           worker_pid=$!
           trap 'kill "$api_pid" "$worker_pid" 2>/dev/null || true' EXIT
+          node scripts/ci-rc137-stripe-signed-ingress.mjs || {
+            tail -n 110 /tmp/rc137-card-api.log
+            exit 1
+          }
           node scripts/ci-rc810-synthetic-paid-delivery-e2e.mjs || {
             tail -n 110 /tmp/rc137-card-api.log
             tail -n 110 /tmp/rc137-card-worker.log
