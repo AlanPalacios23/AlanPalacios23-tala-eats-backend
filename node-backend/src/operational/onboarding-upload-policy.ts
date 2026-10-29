@@ -28,7 +28,7 @@ export async function parsePrivateOnboardingEvidence(contentType:string,raw:Uint
  let data:FormData;
  try{
    const req=new Request('http://localhost/private-upload',{method:'POST',
-     headers:{'content-type':contentType},body:raw});
+     headers:{'content-type':contentType},body:new Uint8Array(raw)});
    data=await req.formData();
  }catch{
    throw new UploadFailure(400,'El contenido multipart no se pudo interpretar.');
