@@ -57,7 +57,7 @@ jobs:
       STRIPE_CONNECT_TRANSFERS_ENABLED: "false"
       AUTH_V02_ENABLED: "true"
       MARKETPLACE_B_ENABLED: "true"
-      REDIS_URL: "redis://127.0.0.1:16379/0"
+      REDIS_URL: "redis://:stage-ci-redis@127.0.0.1:16379/0"
     steps:
       - uses: actions/checkout@v4
         with:
