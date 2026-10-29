@@ -45,6 +45,9 @@ const schema = z.object({
   LIVE_DELIVERY_DISPATCH_ENABLED: z.enum(['false','true']).default('false'),
   LIVE_DELIVERY_CARD_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
   LIVE_DELIVERY_RELEASE_APPROVED: z.enum(['false','true']).default('false'),
+  // RC12.2: cash at merchant pickup has independent LIVE release; staging flag is never authority in production.
+  LIVE_PICKUP_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
+  LIVE_PICKUP_CASH_RELEASE_APPROVED: z.enum(['false','true']).default('false'),
   // RC11.2/11.3: independent CASH-at-door LIVE admission, NO Stripe charge.
   // All switches must be simultaneously released after an audited rollout.
   LIVE_DELIVERY_CASH_CHECKOUT_ENABLED: z.enum(['false','true']).default('false'),
@@ -71,6 +74,19 @@ const schema = z.object({
 if(['LIVE_DELIVERY_DISPATCH_ENABLED','LIVE_DELIVERY_CARD_CHECKOUT_ENABLED',
     'LIVE_DELIVERY_RELEASE_APPROVED'].some(k=>process.env[k]==='true'))
  throw new Error('RC96_LIVE_DELIVERY_NOT_RELEASED_STRIPE_TEST_REQUIRED');
+
+// LIVE cash pickup is a distinct release. A staging cash pickup flag cannot release it.
+const liveCashPickupKeys=['LIVE_PICKUP_CASH_CHECKOUT_ENABLED','LIVE_PICKUP_CASH_RELEASE_APPROVED'] as const;
+const liveCashPickupValues=liveCashPickupKeys.map(k=>process.env[k]==='true');
+if(liveCashPickupValues.some(Boolean)&&!liveCashPickupValues.every(Boolean))
+ throw Error('RC122_PARTIAL_LIVE_CASH_PICKUP_RELEASE_FORBIDDEN');
+if(liveCashPickupValues.every(Boolean)&&(
+ process.env.NODE_ENV!=='production'||process.env.MARKETPLACE_B_ENABLED!=='true'||
+ process.env.AUTH_V02_ENABLED!=='true'||process.env.MERCHANT_MANAGED_DELIVERY==='true'||
+ ['STRIPE_LIVE_ENABLED','STRIPE_LIVE_RELEASE_APPROVED',
+  'STRIPE_FINANCIAL_WRITES_ENABLED','STRIPE_MANUAL_SETTLEMENT_APPROVED']
+ .some(k=>process.env[k]!=='true')))
+ throw Error('RC122_LIVE_CASH_PICKUP_REQUIRES_APPROVED_PRODUCTION_SETTLEMENT');
 
 // Production cash delivery is independent of the Stripe card-delivery lock.
 const liveCashKeys=['LIVE_DELIVERY_CASH_CHECKOUT_ENABLED',
