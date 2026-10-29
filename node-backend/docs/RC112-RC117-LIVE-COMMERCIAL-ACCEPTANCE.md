@@ -19,6 +19,7 @@ El PR #170 llamado "RC11.4 LIVE — capacidades PWA" resuelve solo un prerrequis
 - `node --test tests/rc114-cash-order-ledger-audit.test.mjs tests/rc114-kali-code-cutover.test.mjs` desde `node-backend`.
 - Auditor de disponibilidad `scripts/rc114-kali-live-cash-readiness.mjs`: detecta al menos una pareja comercio verificado/abierto y driver aprobado/disponible con GPS vigente, y comprueba banderas financieras.
 - Auditor de ledger `scripts/rc114-kali-live-cash-ledger-audit.mjs`: **solo** tras existir pedidos reales cash **completados**, comprueba PIN, cobro y conservación del split. No autoriza retiros y devuelve HOLD con cero pedidos. No exponer PII en logs.
+- Auditor de tarjeta para **pickup LIVE exclusivamente**: `scripts/rc114-kali-live-stripe-pickup-audit.mjs`; exige registro local firmado, ledger y consulta GET real a PaymentIntent y evento Stripe. Devuelve HOLD con cero cobros, reembolsos abiertos, captura discrepante, falta de permisos Stripe o histórico excesivo. No crea cargos, reembolsos ni transfers y no certifica saldos bancarios.
 - Para tarjeta Stripe LIVE, auditor propio contra confirmación firmada e información verificada del proveedor; cash audit no aplica a la tarjeta.
 
 ## Operación de RC11.4 en Kali — solo código, no liberar pagos
@@ -35,3 +36,7 @@ El PR #170 llamado "RC11.4 LIVE — capacidades PWA" resuelve solo un prerrequis
 - **NO-GO** si wallet muestra cash recaudado por el driver o ventas brutas como dinero bancario retirable.
 - **NO-GO** para lanzamientos con retiros mientras `STRIPE_CONNECT_TRANSFERS_ENABLED=false` o no exista adaptador probado de balance disponible, ejecución y reconciliación.
 - **GO** solo con acta de aprobación fechada, SHA de todos los componentes PWA/backend, evidencias contables y encargado de operación de incidentes.
+
+## Brecha PWA y disponibilidad Stripe observadas (28/oct/2026)
+- La rama moderna `feat/rc112-live-driver-admin-approvals-20261028` de `tala-eats-version-web` mantiene `checkoutAllowed` con tarjeta deshabilitada incluso para pickup. Integración de cliente pendiente: [PWA #12](https://github.com/AlanPalacios23/tala-eats-version-web/issues/12). No habilitar método hasta implementar UI de pago, recuperación y conciliación.
+- Las capacidades de Stripe LIVE y el saldo de plataforma no acreditan saldo **de cada beneficiario** ni la llegada a una cuenta bancaria. Se requiere conciliación por comercio y driver. No guardar montos ni números de cuenta de Stripe en el repositorio público.
