@@ -183,6 +183,60 @@ try{
   [o.id])).rows[0].n,1);
  assert.equal((await call('/driver/orders/'+o.id+'/complete',{method:'POST',
     token:courier.token,body:{pin:wrong}})).code,409);
+ // RC13.7: full-amount CASH custody moves to merchant through two REAL
+ // authenticated HTTP users in disposable CI. No cash/bank/Stripe transfer.
+ if(process.env.STAGE_CASH_HANDOFF_V2_ENABLED==='true'){
+  const cents=String(Math.round(Number(actual.total)*100));
+  await db.query(
+   'INSERT INTO tala_live_cash_custody(order_id,collector_kind,collector_id,'+
+   'collected_minor,retained_minor,due_platform_minor) '+
+   "VALUES($1,'driver',$2,$3,0,$3)",
+   [o.id,courier.id,cents]);
+  const startPath='/driver/finance/cash-handoff/'+o.id+'/start';
+  const confirmPath='/owner/finance/cash-handoff/'+o.id+'/confirm';
+  const denied=await call(startPath,{method:'POST',token:customer.token,body:{}});
+  assert.equal(denied.code,403,'Only authenticated driver can initiate');
+  const initiate=await call(startPath,{method:'POST',token:courier.token,body:{}});
+  assert.equal(initiate.code,201,JSON.stringify(initiate.data));
+  assert.equal(initiate.data.amount_cents,cents);
+  assert.match(initiate.data.code,/^[a-f0-9]{20}$/);
+  assert.equal(initiate.data.driver_pay_executed,false);
+  assert.equal(initiate.data.bank_settlement_verified,false);
+  assert.equal((await call(startPath,{method:'POST',token:courier.token,body:{}})).code,409);
+  const payload={amount_cents:cents,code:initiate.data.code};
+  assert.equal((await call(confirmPath,{method:'POST',token:customer.token,body:payload})).code,403);
+  assert.equal((await call(confirmPath,{method:'POST',token:owner.token,body:{
+    ...payload,code:'a'.repeat(20)}})).code,409);
+  assert.equal((await call(confirmPath,{method:'POST',token:owner.token,body:{
+    ...payload,amount_cents:String(Number(cents)-1)}})).code,409);
+  const attempts=await Promise.all([
+   call(confirmPath,{method:'POST',token:owner.token,body:payload}),
+   call(confirmPath,{method:'POST',token:owner.token,body:payload})
+  ]);
+  assert.deepEqual(attempts.map(x=>x.code).sort(),[200,409],
+    'Exactly one confirmation allowed with concurrent attempts');
+  const ok=attempts.find(x=>x.code===200).data;
+  assert.equal(ok.state,'confirmed_merchant_physical_receipt');
+  assert.equal(ok.amount_cents,cents);
+  assert.equal(ok.bank_settlement_verified,false);
+  assert.equal(ok.stripe_transfer_executed,false);
+  assert.equal(ok.driver_pay_executed,false);
+  const custody=await db.query(
+    'SELECT status,expected_minor::text,acknowledged_by_owner_id FROM '+
+    'finance_cash_handoffs_v2 WHERE order_id=$1',[o.id]);
+  assert.deepEqual(custody.rows,[{status:'confirmed',expected_minor:cents,
+    acknowledged_by_owner_id:owner.id}]);
+  const events=await db.query(
+   'SELECT action,amount_minor::text FROM finance_cash_handoff_events_v2 '+
+   'WHERE order_id=$1 ORDER BY id',[o.id]);
+  assert.deepEqual(events.rows,[
+   {action:'initiated',amount_minor:cents},
+   {action:'confirmed',amount_minor:cents}
+  ]);
+  console.log('RC137_CASH_DRIVER_MERCHANT_DUAL_ACTOR_HTTP=PASS');
+  console.log('RC137_CASH_DUPLICATE_WRONG_CODE_WRONG_AMOUNT_DENIED=PASS');
+  console.log('RC137_CASH_IS_NOT_BANK_SETTLEMENT=PASS');
+ }
  // Crash-window/driver-busy recovery: REST READY commit without online
  // courier remains READY; PM2 worker assigns it on a bounded retry.
  const nextBody={...orderBody,client_reference:'rc88-retry-'+process.pid};

@@ -1,0 +1,193 @@
+name: "TALA EATS RC13.6 | Predeploy 500 Orders + Finance Stress"
+on:
+  push:
+    branches: [feat/rc136-predeploy-stress-20261029]
+    paths:
+      - ".github/workflows/rc136-predeploy-stress.yml"
+      - "node-backend/scripts/ci-rc136-finance-ledger-stress.mjs"
+      - "node-backend/scripts/ci-500-purchases-load-e2e.mjs"
+      - "node-backend/scripts/ci-order-races-qa.mjs"
+      - "node-backend/src/**"
+      - "node-backend/prisma/**"
+  pull_request:
+    branches: [release/rc135-finance-pilot-candidate-20261029]
+    paths:
+      - ".github/workflows/rc136-predeploy-stress.yml"
+      - "node-backend/scripts/ci-rc136-finance-ledger-stress.mjs"
+      - "node-backend/scripts/ci-500-purchases-load-e2e.mjs"
+      - "node-backend/scripts/ci-order-races-qa.mjs"
+      - "node-backend/src/**"
+      - "node-backend/prisma/**"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rc136-predeploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  finance:
+    name: "Finance 400 journals / 160 replays / 20 conflicts PG15"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: tala_node_stage
+          POSTGRES_PASSWORD: stage-ci-pass
+          POSTGRES_DB: tala_node_stage
+        ports: ["15435:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tala_node_stage -d tala_node_stage"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      GITHUB_ACTIONS: "true"
+      RC136_FINANCE_STRESS: "true"
+      RC133_FINANCE_DB_TEST: "true"
+      AUTH_JWT_SECRET: "ci-finance-only-a93f0b6ac7e54dcb8fbe2795c30188d6d71b"
+      NODE_ENV: staging
+      HOST: "127.0.0.1"
+      PORT: "18190"
+      DATABASE_URL: "postgresql://tala_node_stage:stage-ci-pass@127.0.0.1:15435/tala_node_stage"
+      STRIPE_FINANCIAL_WRITES_ENABLED: "false"
+      STRIPE_LIVE_ENABLED: "false"
+      STRIPE_CONNECT_TRANSFERS_ENABLED: "false"
+      AUTH_V02_ENABLED: "true"
+      MARKETPLACE_B_ENABLED: "true"
+      REDIS_URL: "redis://:stage-ci-redis@127.0.0.1:16379/0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Frozen dependencies, migrations and compiler
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:validate
+          npm run db:migrate:deploy
+          npm run build
+      - name: Functional finance tests (PG15, wallet, receipts)
+        run: |
+          set -euo pipefail
+          node --test tests/rc133-journal-pg15.test.mjs
+          node --test tests/rc135-cash-handoff-pg15.test.mjs
+          node --test tests/rc133-journal-invariants.test.mjs
+          node --test tests/rc134-finance-wallet-weekly.test.mjs
+          node --test tests/rc135-cash-handoff-policy.test.mjs
+      - name: Load 400 journals and verify 160 concurrent replay requests
+        run: |
+          set -euo pipefail
+          node scripts/ci-rc136-finance-ledger-stress.mjs
+      - name: Publish nonfinancial stress report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rc136-financial-journal-stress
+          path: /tmp/rc136-finance-stress.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  commerce:
+    name: "500 synthetic orders + inventory/cancel/refund races PG15 Redis8"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: tala_node_stage
+          POSTGRES_PASSWORD: stage-ci-pass
+          POSTGRES_DB: tala_node_stage
+        ports: ["15435:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tala_node_stage -d tala_node_stage"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+      redis:
+        image: redis:8
+        ports: ["16379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      GITHUB_ACTIONS: "true"
+      NODE_ENV: staging
+      HOST: "127.0.0.1"
+      PORT: "18190"
+      DATABASE_URL: "postgresql://tala_node_stage:stage-ci-pass@127.0.0.1:15435/tala_node_stage"
+      REDIS_URL: "redis://:stage-ci-redis@127.0.0.1:16379/0"
+      AUTH_V02_ENABLED: "true"
+      MARKETPLACE_B_ENABLED: "true"
+      STAGE_PICKUP_CASH_CHECKOUT_ENABLED: "true"
+      COMMERCIAL_PRICING_V162_ENABLED: "false"
+      STRIPE_FINANCIAL_WRITES_ENABLED: "false"
+      STRIPE_LIVE_ENABLED: "false"
+      STRIPE_CONNECT_TRANSFERS_ENABLED: "false"
+      AUTH_JWT_SECRET: "ci-only-500-orders-auth-secret-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Isolated backend runtime and PG15 migrations
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run generate
+          npm run db:validate
+          npm run db:migrate:deploy
+          npm run build
+          node --check scripts/ci-500-purchases-load-e2e.mjs
+          node --check scripts/ci-order-races-qa.mjs
+          node scripts/rc6-schema-gate.mjs --check
+      - name: Protect disposable Redis using CI-only password
+        run: |
+          node --input-type=module -e '
+            import {Redis} from "ioredis";
+            const r=new Redis("redis://127.0.0.1:16379");
+            await r.config("SET","requirepass","stage-ci-redis");
+            r.disconnect();
+            const s=new Redis(process.env.REDIS_URL);
+            if(await s.ping()!=="PONG")process.exitCode=1;
+            s.disconnect();
+          '
+      - name: Simulate 500 purchases plus inventory and cancellation races
+        run: |
+          set -euo pipefail
+          node dist/server.js > /tmp/rc136-commerce-server.log 2>&1 &
+          api_pid=$!
+          node dist/worker.js > /tmp/rc136-commerce-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'kill "$api_pid" "$worker_pid" 2>/dev/null || true' EXIT
+          STRESS_SERVER_PID="$api_pid" node scripts/ci-500-purchases-load-e2e.mjs || {
+            tail -n 90 /tmp/rc136-commerce-server.log | sed -E 's/(sk|rk|pk)_(test|live)_[A-Za-z0-9]+/[KEY REDACTED]/g'
+            exit 1
+          }
+          node scripts/ci-order-races-qa.mjs
+          echo "RC136_COMMERCE_500_ORDERS_PASS"
+      - name: Upload synthetic load metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rc136-500-orders-and-inventory-races
+          path: |
+            /tmp/talaeats-500-orders-load-report.json
+            /tmp/tala-rc5-order-races.json
+          if-no-files-found: warn
+          retention-days: 7
