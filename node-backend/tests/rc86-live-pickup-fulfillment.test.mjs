@@ -26,7 +26,7 @@ test('LIVE PaymentIntent offers cards without mutually conflicting Stripe paymen
  assert.doesNotMatch(pi,/^\s*payment_method_types:/m);
  assert.doesNotMatch(pi,/automatic_payment_methods:\{enabled:true/);
  assert.match(pi,/capture_method:'automatic'/);
- assert.match(pi,/idempotencyKey:'tala-live-v1-pickup-order-'/);
+ assert.match(pi,/idempotencyKey:'tala-live-v1-'\+mode\+'-order-'/);
  assert.match(pi,/intent\.livemode/);
 });
 test('source routes still reject LIVE driver fulfillment and do not reinterpret a test Stripe payment',()=>{
