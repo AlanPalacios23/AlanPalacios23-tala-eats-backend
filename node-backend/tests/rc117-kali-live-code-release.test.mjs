@@ -23,6 +23,12 @@ test('RC11.7 code deploy is SHA-pinned, guarded and never toggles LIVE money',()
   assert.ok(!src.includes(bad),bad);
  }
 });
+test('RC11.7 attempts rollback on failed post-switch public checks',()=>{
+ assert.ok(src.includes('RC117_POST_SWITCH_GATE=HOLD_TRY_ROLLBACK'));
+ assert.ok(src.includes('rc114-kali-live-code-cutover.sh --rollback'));
+ assert.ok(src.includes('I_APPROVE_RC114_ROLLBACK_PREVIOUS_TWO_PM2'));
+ assert.ok(src.includes('RC117_ROLLBACK=FAILED_MANUAL_INTERVENTION_REQUIRED'));
+});
 test('RC11.7 only delegates state changes to the existing protected PM2 installer',()=>{
  assert.doesNotMatch(src,/pm2\s+(?:delete|start|restart|reload)/);
  assert.doesNotMatch(src,/ALTER TABLE|UPDATE orders|INSERT INTO|DELETE FROM/i);
