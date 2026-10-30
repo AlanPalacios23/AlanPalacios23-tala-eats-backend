@@ -39,6 +39,10 @@ const schema = z.object({
   LIVE_AUTH_EMAIL_RESEND_API_KEY: z.string().min(12).optional(),
   LIVE_AUTH_EMAIL_FROM: z.email().max(220).optional(),
 
+  // RC144: explicit, off-by-default persistent profile photo storage.
+  // Directory must be provisioned outside immutable releases and backed up.
+  DRIVER_AVATAR_UPLOAD_ENABLED: z.enum(['false','true']).default('false'),
+  DRIVER_AVATAR_MEDIA_DIR: z.string().min(12).max(400).optional(),
   // RC9.5: separate LIVE driver presence pilot; never enables checkout or dispatch.
   LIVE_DRIVER_PRESENCE_ENABLED: z.enum(['false','true']).default('false'),
   // RC9.6: future independent delivery release, all OFF; never reuse stage flags.
