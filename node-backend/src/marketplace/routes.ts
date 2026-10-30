@@ -105,7 +105,9 @@ function orderView(order:LoadedOrder, customer:boolean) {
   const profile=order.driver?.driverProfile;
   const driver=order.driver ? {
     id:order.driver.id,name:order.driver.name,phone:order.driver.phone,
-    avatar_url:order.driver.avatarUrl,vehicle:profile?.vehicle??'Motocicleta',
+    avatar_url:typeof order.driver.avatarUrl==='string'&&
+      /^\/api\/v1\/driver\/avatar\/[a-f0-9]{40}\.webp$/.test(order.driver.avatarUrl)?
+      order.driver.avatarUrl:null,vehicle:profile?.vehicle??'Motocicleta',
     rating:(profile?.rating??'5').toString(),current_lat:profile?.currentLat??null,
     current_lng:profile?.currentLng??null,
   }:null;
