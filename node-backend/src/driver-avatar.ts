@@ -4,7 +4,7 @@
  * only random, opaque names; identity/ownership cannot be enumerated by ID.
  * No photos of official documents are ever returned by this route.
  */
-import {Router,express, type Request} from 'express';
+import express,{Router, type Request, type Response, type NextFunction} from 'express';
 import {randomBytes} from 'node:crypto';
 import {readFile,writeFile,unlink,stat} from 'node:fs/promises';
 import {isAbsolute,join} from 'node:path';
@@ -44,11 +44,6 @@ function expectedFormat(type:string):'jpeg'|'png'|'webp'|null{
  if(type==='image/png')return 'png';
  if(type==='image/webp')return 'webp';
  return null;
-}
-function avatarNameFromUrl(url:string|null):string|null{
- if(!url?.startsWith(AVATAR_ROUTE))return null;
- const file=url.slice(AVATAR_ROUTE.length);
- return FILENAME.test(file)?file:null;
 }
 export function buildDriverAvatarRouter(){
  // Public immutable bytes are only accessible by their unguessable path.
@@ -139,7 +134,7 @@ export function buildDriverAvatarRouter(){
   }
  });
  // Fail closed on large payloads and unsupported content-types.
- avatars.use((error:unknown,_req:Request,res:{headersSent:boolean;status:(c:number)=>{json:(b:unknown)=>void}},_next:unknown)=>{
+ avatars.use((error:unknown,_req:Request,res:Response,_next:NextFunction)=>{
   if(res.headersSent)return;
   const status=typeof error==='object'&&error!==null&&'status' in error?
     Number((error as {status?:number}).status):500;
