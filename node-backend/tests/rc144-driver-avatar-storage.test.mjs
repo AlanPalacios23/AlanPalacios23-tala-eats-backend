@@ -44,7 +44,8 @@ test('media routes mounted ahead of global 128kb parser; webhooks remain raw',()
 test('shared field exists in PostgreSQL, dashboard, assigned order projections',()=>{
  assert.match(schema,/avatarUrl\s+String\?\s+@map\("avatar_url"\)/);
  assert.match(driver,/avatar_url:actor\.avatarUrl/);
- assert.match(market,/avatar_url:order\.driver\.avatarUrl/);
+ assert.match(market,/avatar_url:typeof order\.driver\.avatarUrl==='string'/);
+ assert.match(market,/driver\\/avatar/);
  assert.match(market,/orderInclude=\{items:true,driver:\{include:\{driverProfile:true\}\}\}/);
 });
 test('does not alter dispatch, Stripe, migrations or treasury',()=>{
