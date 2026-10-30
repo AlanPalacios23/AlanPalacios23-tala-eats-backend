@@ -43,7 +43,7 @@ test('candidate compilation never inherits live payment secrets and does not swi
  const s=read('scripts/rc144-kali-avatar-candidate-build.sh');
  assert.match(s,/env -i HOME=/);
  assert.match(s,/NODE_ENV=staging/);
- assert.match(s,/postgresql:\/\/tala_node_stage:NoRealAccess@127\\.0\\.0\\.1:15435\/tala_node_stage/);
+ assert.match(s,/postgresql:\/\/tala_node_stage:NoRealAccess@127\.0\.0\.1:15435\/tala_node_stage/);
  assert.doesNotMatch(s,/postgresql:\/\/synthetic:/);
  assert.match(s,/npm ci --no-audit --no-fund/);
  assert.match(s,/npm audit --omit=dev --audit-level=high/);
