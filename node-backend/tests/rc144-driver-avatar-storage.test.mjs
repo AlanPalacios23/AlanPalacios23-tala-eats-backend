@@ -13,7 +13,8 @@ test('driver profile media is disabled unless provisioned outside release',()=>{
  assert.match(config,/DRIVER_AVATAR_UPLOAD_ENABLED: z\.enum\(\['false','true'\]\)\.default\('false'\)/);
  assert.match(config,/DRIVER_AVATAR_MEDIA_DIR: z\.string/);
  assert.match(media,/config\.DRIVER_AVATAR_UPLOAD_ENABLED!=='true'/);
- assert.match(media,/if\(!meta\.isDirectory\(\)\)/);
+ assert.match(media,/if\(!meta\.isDirectory\(\)\|\|meta\.isSymbolicLink\(\)\)/);
+ assert.match(media,/startsWith\('\/srv\/talaeats-media\/'\)/);
  assert.doesNotMatch(media,/mkdir\(/);
 });
 test('only owner may POST and no user ID or destination is accepted',()=>{
