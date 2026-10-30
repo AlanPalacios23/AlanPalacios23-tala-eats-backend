@@ -22,6 +22,7 @@ import { config } from './config.js';
 import {computeRuntimeReadiness} from './runtime-readiness.js';
 import { stripeWebhook } from './webhook.js';
 import { authRouter,current } from './auth/routes.js';
+import {buildDriverAvatarRouter} from './driver-avatar.js';
 import { platformRouter, platformErrors } from './platform/routes.js';
 import { adminRouter, operationsRouter, opsErrors } from './operational/routes.js';
 import { v9Router, v10Router, v11Router } from './versions/routes.js';
@@ -66,6 +67,10 @@ if(live){
   app.post('/api/v1/webhooks/stripe',
     express.raw({type:'application/json',limit:'1mb'}),stripeWebhook);
 }
+// Uploads use their own 4MB raw image parser BEFORE the global 128KB JSON parser.
+// This router never interprets documents or accepts user-supplied paths.
+if (config.AUTH_V02_ENABLED==='true'&&config.MARKETPLACE_B_ENABLED==='true')
+ app.use('/api/v1/driver/avatar',buildDriverAvatarRouter());
 app.use(express.json({ limit: '128kb' }));
 if(stageCashHandoffPool)
  app.use('/api/v1',buildCashHandoffV2Router(stageCashHandoffPool));

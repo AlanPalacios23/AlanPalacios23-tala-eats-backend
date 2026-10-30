@@ -261,6 +261,10 @@ authRouter.patch('/me', async (req,res) => {
   const s = await current(req);
   const parsed = profileSchema.safeParse(req.body);
   if (!parsed.success) throw new HttpFailure(422, 'Perfil inválido');
+  // Driver avatars must be uploaded, decoded and stripped by the dedicated
+  // server endpoint. Never accept arbitrary remote URLs into customer orders.
+  if (s.user.role==='driver'&&parsed.data.avatar_url!==undefined)
+    throw new HttpFailure(422,'Utiliza la opción segura Cambiar foto en Repartidores.');
   const u = await db.authUser.update({
     where:{id:s.userId},
     data:{
