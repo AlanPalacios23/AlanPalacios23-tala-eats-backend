@@ -6,8 +6,8 @@
  */
 import express,{Router, type Request, type Response, type NextFunction} from 'express';
 import {randomBytes} from 'node:crypto';
-import {readFile,writeFile,unlink,stat} from 'node:fs/promises';
-import {isAbsolute,join} from 'node:path';
+import {readFile,writeFile,unlink,lstat} from 'node:fs/promises';
+import {isAbsolute,join,resolve} from 'node:path';
 import sharp from 'sharp';
 import {Redis} from 'ioredis';
 import {current} from './auth/routes.js';
@@ -24,7 +24,7 @@ const mediaRoot=()=>config.DRIVER_AVATAR_MEDIA_DIR;
 function storage():string{
  const dir=mediaRoot();
  if(config.DRIVER_AVATAR_UPLOAD_ENABLED!=='true'||!dir||!isAbsolute(dir)||
-    dir==='/'||dir.includes('\0'))throw Error('AVATAR_STORAGE_DISABLED');
+    dir==='/'||!resolve(dir).startsWith('/srv/talaeats-media/')||dir.includes('\0'))throw Error('AVATAR_STORAGE_DISABLED');
  return dir;
 }
 async function uploadBudget(userId:number):Promise<boolean>{
@@ -86,8 +86,8 @@ export function buildDriverAvatarRouter(){
   let dir:string;
   try{
    dir=storage();
-   const meta=await stat(dir);
-   if(!meta.isDirectory())throw Error('NOT_A_DIRECTORY');
+   const meta=await lstat(dir);
+   if(!meta.isDirectory()||meta.isSymbolicLink())throw Error('NOT_A_DIRECTORY');
   }catch{res.status(503).json({detail:'Almacenamiento de fotos no disponible.'});return;}
   try{
    if(!await uploadBudget(userId)){
