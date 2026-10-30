@@ -48,7 +48,9 @@ DIFF="$(git -C "$ROOT" diff --name-only "$OLD_SHA" "$NEW_SHA")" || {
 [[ -n "$DIFF" ]] || { echo 'RC144_AVATAR_GATE=HOLD_EMPTY_DIFF';exit 2; }
 while IFS= read -r item;do
  case "$item" in
-  node-backend/package.json|node-backend/package-lock.json|  node-backend/src/app.ts|node-backend/src/auth/routes.ts|  node-backend/src/config.ts|node-backend/src/driver-avatar.ts|  node-backend/src/marketplace/routes.ts|  node-backend/tests/rc144-driver-avatar-storage.test.mjs|  node-backend/docs/RC144-DRIVER-AVATAR-ROLLOUT.md|  node-backend/scripts/rc144-kali-avatar-live-preflight.sh|  node-backend/scripts/rc144-kali-avatar-storage.sh)
+  node-backend/package.json|node-backend/package-lock.json|  node-backend/src/app.ts|node-backend/src/auth/routes.ts|  node-backend/src/config.ts|node-backend/src/driver-avatar.ts|  node-backend/src/marketplace/routes.ts|  node-backend/tests/rc144-driver-avatar-storage.test.mjs|  node-backend/docs/RC144-DRIVER-AVATAR-ROLLOUT.md|  node-backend/scripts/rc144-kali-avatar-live-preflight.sh|  node-backend/scripts/rc144-kali-avatar-storage.sh|\
+  node-backend/scripts/rc144-kali-avatar-candidate-build.sh|\
+  node-backend/tests/rc144-avatar-deploy.test.mjs)
    :;;
   *) echo "RC144_AVATAR_GATE=HOLD_UNRELATED_FILE:$item";exit 2;;
  esac
