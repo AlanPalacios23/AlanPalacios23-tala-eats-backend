@@ -47,8 +47,7 @@ fi
 if [[ ! -e "$DIR" ]];then
  install -d -m 0700 -o tala-node-stage -g tala-node-stage "$DIR"
 fi
-[[ ! -L "$DIR" && "$(stat -c '%a %U:%G' "$DIR")" ==
- '700 tala-node-stage:tala-node-stage' ]] || {
+[[ ! -L "$DIR" && "$(stat -c '%a %U:%G' "$DIR")" == '700 tala-node-stage:tala-node-stage' ]] || {
  echo 'RC144_STORAGE=HOLD_POSTCHECK';exit 2;
 }
 echo 'RC144_STORAGE_PROVISION=PASS_AVATAR_DIRECTORY_ONLY'
