@@ -20,7 +20,7 @@ test('only owner may POST and no user ID or destination is accepted',()=>{
  assert.match(media,/const s=await current\(req\)/);
  assert.match(media,/s\.user\.role!=='driver'/);
  assert.match(media,/userId=s\.user\.id/);
- assert.match(media,/db\.authUser\.update\(\{where:\{id:userId\}/);
+ assert.match(media,/tx\.authUser\.update\(\{where:\{id:userId\}/);
  assert.doesNotMatch(media,/req\.body\.user_id|req\.query\.user_id|req\.params\.userId/);
  assert.match(auth,/s\.user\.role==='driver'&&parsed\.data\.avatar_url!==undefined/);
 });
