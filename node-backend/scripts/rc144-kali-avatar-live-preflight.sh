@@ -68,8 +68,7 @@ if(p.dependencies.sharp!=="0.35.5"||
 ' "$WORK/package.json" "$WORK/package-lock.json" || {
  echo 'RC144_AVATAR_GATE=HOLD_SHARP_LOCK_NOT_PATCHED';exit 2;
 }
-[[ -f "$ENV" && ! -L "$ENV" && "$(stat -c '%a %U' "$ENV")" ==
-  "600 tala-node-stage" ]] || {
+[[ -f "$ENV" && ! -L "$ENV" && "$(stat -c '%a %U' "$ENV")" == "600 tala-node-stage" ]] || {
  echo 'RC144_AVATAR_GATE=HOLD_LIVE_ENV';exit 2;
 }
 # No pm2 env dumped or logged; only exact cwd, path and online status are read.
@@ -104,8 +103,7 @@ let s="";process.stdin.on("data",v=>s+=v);process.stdin.on("end",()=>{
  }catch{console.log("RC144_AVATAR_GATE=HOLD_LIVE_READY");process.exitCode=2;}
 });' || exit 2
 [[ -d "$STORAGE" && ! -L "$STORAGE" &&
-   "$(stat -c '%a %U:%G' "$STORAGE")" ==
-   '700 tala-node-stage:tala-node-stage' ]] || {
+   "$(stat -c '%a %U:%G' "$STORAGE")" == '700 tala-node-stage:tala-node-stage' ]] || {
  echo 'RC144_AVATAR_GATE=HOLD_PERSISTENT_MEDIA_NOT_PROVISIONED';exit 2;
 }
 [[ -w "$STORAGE" && -x "$STORAGE" ]] || {
