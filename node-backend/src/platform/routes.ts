@@ -413,9 +413,9 @@ platformRouter.post('/support',async(req,res)=>{
     // serialize against the same driver; no new schema/unique index needed.
     const outcome=await withUserLock(account.id,async tx=>{
       if(p.order_id!==null){
-        const lock=await tx.$queryRawUnsafe<{id:number}[]>(
+        const lock=await tx.$queryRawUnsafe(
           'SELECT id FROM orders WHERE id=$1 FOR UPDATE',p.order_id
-        );
+        ) as {id:number}[];
         if(lock.length!==1)return fail(404,'Pedido no encontrado');
         const order=await tx.marketOrder.findUnique({
           where:{id:p.order_id},select:{userId:true,driverId:true,orderType:true},
