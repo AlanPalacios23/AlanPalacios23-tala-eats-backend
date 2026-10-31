@@ -6,6 +6,7 @@ import { db } from '../db.js';
 import { config } from '../config.js';
 import { current } from '../auth/routes.js';
 import {mayLinkSupportOrder} from './support-order-access.js';
+import {validDriverSupportPayload,driverSupportQuotaExceeded,DRIVER_SUPPORT_WINDOW_MS,DRIVER_SUPPORT_DEDUP_MS} from './driver-support-guard.js';
 import { restaurantPublic } from '../marketplace/routes.js';
 
 export const platformRouter=Router();
@@ -400,11 +401,55 @@ platformRouter.get('/support',async(req,res)=>{
 platformRouter.post('/support',async(req,res)=>{
   const account=await user(req);
   const p=validate(supportCreate,req.body);
+  // RC154: the driver support OFF switch covers EVERY driver support write,
+  // including unlinked tickets. Do not permit raw HTTP requests to bypass
+  // the PWA's disabled form.
+  if(account.role==='driver'){
+    if(config.DRIVER_ORDER_SUPPORT_ENABLED!=='true')
+      return fail(403,'Soporte de repartidor no habilitado');
+    if(!validDriverSupportPayload(p.category,p.message))
+      return fail(422,'Categoría o descripción de incidencia inválida');
+    // Reuse the existing user row lock. Concurrent retries from two devices
+    // serialize against the same driver; no new schema/unique index needed.
+    const outcome=await withUserLock(account.id,async tx=>{
+      if(p.order_id!==null){
+        const lock=await tx.$queryRawUnsafe<{id:number}[]>(
+          'SELECT id FROM orders WHERE id=$1 FOR UPDATE',p.order_id
+        );
+        if(lock.length!==1)return fail(404,'Pedido no encontrado');
+        const order=await tx.marketOrder.findUnique({
+          where:{id:p.order_id},select:{userId:true,driverId:true,orderType:true},
+        });
+        if(!mayLinkSupportOrder(account,order,true))
+          return fail(404,'Pedido no encontrado');
+      }
+      // Exact idempotent replay (up to 2 min) prevents double taps/retries
+      // from spawning multiple support tickets or draining the quota.
+      const previous=await tx.platformSupportTicket.findFirst({
+        where:{userId:account.id,orderId:p.order_id,category:p.category,
+          message:p.message,createdAt:{gte:new Date(Date.now()-DRIVER_SUPPORT_DEDUP_MS)}},
+        orderBy:{createdAt:'desc'},
+      });
+      if(previous)return {row:previous,replayed:true};
+      const count=await tx.platformSupportTicket.count({
+        where:{userId:account.id,createdAt:{gte:new Date(Date.now()-DRIVER_SUPPORT_WINDOW_MS)}},
+      });
+      if(driverSupportQuotaExceeded(count))
+        return fail(429,'Demasiados reportes recientes; contacta con soporte por el canal habitual');
+      const row=await tx.platformSupportTicket.create({data:{
+        userId:account.id,orderId:p.order_id,category:p.category,message:p.message,
+      }});
+      return {row,replayed:false};
+    });
+    res.setHeader('Cache-Control','private, no-store');
+    return res.status(outcome.replayed?200:201).json(supportPublic(outcome.row));
+  }
+  // Preserve the customer / ADMIN behaviour and MFA enforcement.
   if(p.order_id!==null){
     const order=await db.marketOrder.findUnique({
       where:{id:p.order_id},select:{userId:true,driverId:true,orderType:true},
     });
-    if(!mayLinkSupportOrder(account,order,config.DRIVER_ORDER_SUPPORT_ENABLED==='true'))
+    if(!mayLinkSupportOrder(account,order,false))
       return fail(404,'Pedido no encontrado');
   }
   const row=await db.platformSupportTicket.create({data:{
