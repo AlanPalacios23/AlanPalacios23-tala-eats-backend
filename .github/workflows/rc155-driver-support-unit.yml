@@ -1,0 +1,55 @@
+name: "RC155 Driver Support — RBAC and Idempotency Unit Gate"
+
+on:
+  pull_request:
+    paths:
+      - "node-backend/src/platform/**"
+      - "node-backend/tests/rc15*-driver-*.test.mjs"
+      - "node-backend/package*.json"
+      - ".github/workflows/rc155-driver-support-unit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: driver-support-unit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  driver-support-unit:
+    name: "Driver support RBAC, quota and replay (no DB writes)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: node-backend
+    env:
+      CI: "true"
+      NODE_ENV: "staging"
+      DRIVER_ORDER_SUPPORT_ENABLED: "false"
+      STRIPE_LIVE_ENABLED: "false"
+      STRIPE_FINANCIAL_WRITES_ENABLED: "false"
+      STRIPE_CONNECT_TRANSFERS_ENABLED: "false"
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+      - name: Node 24 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: node-backend/package-lock.json
+      - name: Install frozen dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Generate Prisma client from schema (no database)
+        run: npm run generate
+      - name: Compile all Node source
+        run: npm run build
+      - name: Driver support authorisation and quota test suite
+        run: node --test tests/rc153-driver-support-authorization.test.mjs tests/rc154-driver-support-idempotency.test.mjs tests/rc155-driver-support-ownership-matrix.test.mjs
+      - name: Confirm no production secret or staging writes
+        run: |
+          echo "RC155_DRIVER_SUPPORT_UNIT=PASS"
+          echo "POSTGRES_WRITE_TESTS=NOT_RUN"
+          echo "LIVE_PAYMENTS=DISABLED"
