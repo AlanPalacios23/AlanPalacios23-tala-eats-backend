@@ -11,9 +11,11 @@ export function mayLinkSupportOrder(
 ):boolean{
  if(!order||!Number.isSafeInteger(actor.id)||actor.id<=0)return false;
  if(actor.role==='admin')return true; // ADMIN MFA is enforced by current(req).
- if(order.userId===actor.id)return true; // Preserve historical buyer permission.
- return actor.role==='driver'&&driverOrderSupportEnabled&&
+ // Role-specific first: a driver cannot use an incidental buyer match to bypass
+ // the assignment or the OFF switch.
+ if(actor.role==='driver')return driverOrderSupportEnabled&&
    order.orderType==='delivery'&&
    Number.isSafeInteger(order.driverId)&&
    order.driverId===actor.id;
+ return order.userId===actor.id; // Preserve historical non-driver buyer permission.
 }

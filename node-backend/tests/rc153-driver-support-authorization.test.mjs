@@ -27,7 +27,8 @@ test('RC153 driver access is scoped to actual assigned delivery',()=>{
 });
 
 test('RC153 no role can link an unrelated customer order or elevate from guest',()=>{
- assert.equal(mayLinkSupportOrder({id:41,role:'driver'},{...order,driverId:99},false),true);
+ assert.equal(mayLinkSupportOrder({id:41,role:'driver'},{...order,driverId:99},false),false);
+ assert.equal(mayLinkSupportOrder({id:41,role:'driver'},{...order,driverId:99},true),false);
  assert.equal(mayLinkSupportOrder({id:41,role:'customer'},{...order,userId:100},true),false);
  assert.equal(mayLinkSupportOrder({id:41,role:'merchant'},{...order,userId:100},true),false);
  assert.equal(mayLinkSupportOrder({id:-1,role:'admin'},order,true),false);
@@ -40,7 +41,7 @@ test('RC153 capability is authenticated, no-store and gated on the backend',()=>
  assert.match(routes,/platformRouter.get\('\/support\/capabilities',async\(req,res\)=>\{/);
  assert.match(routes,/account\.role==='driver'&&config\.DRIVER_ORDER_SUPPORT_ENABLED==='true'/);
  assert.match(routes,/select:\{userId:true,driverId:true,orderType:true\}/);
- assert.match(routes,/mayLinkSupportOrder\(account,order,config\.DRIVER_ORDER_SUPPORT_ENABLED==='true'\)/);
+ assert.match(routes,/mayLinkSupportOrder\(account,order,true\)/);
  assert.match(routes,/res\.setHeader\('Cache-Control','private, no-store'\)/);
  assert.match(routes,/user_id:row\.userId/);
  assert.match(config,/DRIVER_ORDER_SUPPORT_ENABLED: z\.enum\(\['false','true'\]\)\.default\('false'\)/);
