@@ -40,7 +40,7 @@ test('RC153 capability is authenticated, no-store and gated on the backend',()=>
  assert.match(routes,/platformRouter.get\('\/support\/capabilities',async\(req,res\)=>\{/);
  assert.match(routes,/account\.role==='driver'&&config\.DRIVER_ORDER_SUPPORT_ENABLED==='true'/);
  assert.match(routes,/select:\{userId:true,driverId:true,orderType:true\}/);
- assert.match(routes,/mayLinkSupportOrder\\(account,order,true\\)/);
+ assert.match(routes,/mayLinkSupportOrder\(account,order,true\)/);
  assert.match(routes,/res\.setHeader\('Cache-Control','private, no-store'\)/);
  assert.match(routes,/user_id:row\.userId/);
  assert.match(config,/DRIVER_ORDER_SUPPORT_ENABLED: z\.enum\(\['false','true'\]\)\.default\('false'\)/);
