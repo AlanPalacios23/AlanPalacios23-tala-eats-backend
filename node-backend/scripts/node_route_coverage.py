@@ -140,6 +140,12 @@ RC95_DRIVER_READINESS_NODE_ONLY = {
     ("GET", "/api/v1/driver/presence-readiness"),
 }
 
+# RC153: authenticated capability, read-only, OFF by default. This endpoint
+# authorizes NO order mutation, delivery status, funds, or emergency response.
+RC153_DRIVER_SUPPORT_CAPABILITIES_NODE_ONLY = {
+    ("GET", "/api/v1/platform/support/capabilities"),
+}
+
 # RC11.0: production driver registration READ-ONLY compatibility handshake.
 # The endpoint checks the real LIVE DB schema before claiming support; it
 # returns 503 when the migration is missing. It cannot approve a driver or
@@ -161,7 +167,8 @@ def main() -> None:
                         PICKUP_PRICE_PREVIEW_NODE_ONLY | STAGE_DELIVERY_QUOTE_NODE_ONLY |
                         PASSWORD_RESET_BROWSER_NODE_ONLY |
                         RC95_DRIVER_READINESS_NODE_ONLY |
-                         RC110_ONBOARDING_CAPABILITIES_NODE_ONLY):
+                         RC110_ONBOARDING_CAPABILITIES_NODE_ONLY |
+                         RC153_DRIVER_SUPPORT_CAPABILITIES_NODE_ONLY):
             raise ValueError("Unapproved Node-only route delta: "+
                              json.dumps(data["node_routes_without_python_match"]))
     if args.json:
