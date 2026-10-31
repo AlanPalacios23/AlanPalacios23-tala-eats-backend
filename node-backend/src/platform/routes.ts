@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { db } from '../db.js';
 import { config } from '../config.js';
 import { current } from '../auth/routes.js';
+import {mayLinkSupportOrder} from './support-order-access.js';
 import { restaurantPublic } from '../marketplace/routes.js';
 
 export const platformRouter=Router();
@@ -370,14 +371,21 @@ const supportCreate=z.strictObject({
   message:z.string().min(5).max(3000),
 });
 function supportPublic(row:{
-  id:number;orderId:number|null;category:string;message:string;
+  id:number;userId:number;orderId:number|null;category:string;message:string;
   status:string;adminReply:string;respondedAt:Date|null;createdAt:Date;
 }){
-  return {id:row.id,order_id:row.orderId,category:row.category,
+  return {id:row.id,user_id:row.userId,order_id:row.orderId,category:row.category,
     message:row.message,status:row.status,admin_reply:row.adminReply,
     responded_at:row.respondedAt?.toISOString()??null,
     created_at:row.createdAt.toISOString()};
 }
+// Clients must not infer that a release flag authorizes an order-linked ticket.
+platformRouter.get('/support/capabilities',async(req,res)=>{
+  const account=await user(req);
+  res.setHeader('Cache-Control','private, no-store');
+  const enabled=account.role==='driver'&&config.DRIVER_ORDER_SUPPORT_ENABLED==='true';
+  res.json({driver_ticket_enabled:enabled,driver_order_link_supported:enabled});
+});
 platformRouter.get('/support',async(req,res)=>{
   const account=await user(req);
   if(account.role==='admin'&&!account.twoFactorEnabled)
@@ -394,9 +402,9 @@ platformRouter.post('/support',async(req,res)=>{
   const p=validate(supportCreate,req.body);
   if(p.order_id!==null){
     const order=await db.marketOrder.findUnique({
-      where:{id:p.order_id},select:{userId:true},
+      where:{id:p.order_id},select:{userId:true,driverId:true,orderType:true},
     });
-    if(!order||(account.role!=='admin'&&order.userId!==account.id))
+    if(!mayLinkSupportOrder(account,order,config.DRIVER_ORDER_SUPPORT_ENABLED==='true'))
       return fail(404,'Pedido no encontrado');
   }
   const row=await db.platformSupportTicket.create({data:{

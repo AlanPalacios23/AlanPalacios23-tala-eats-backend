@@ -26,6 +26,8 @@ const schema = z.object({
   AUTH_V02_ENABLED: z.enum(['false', 'true']).default('false'),
   MARKETPLACE_B_ENABLED: z.enum(['false','true']).default('false'),
   STAGE_SUPPORT_EMAIL: z.email().optional(),
+  // RC153: independent, OFF-by-default authorization for driver order-linked support.
+  DRIVER_ORDER_SUPPORT_ENABLED: z.enum(['false','true']).default('false'),
   // Email sending is opt-in and restricted to an explicit staging recipient allowlist.
   STAGE_EMAIL_DELIVERY_MODE: z.enum(['disabled','resend']).default('disabled'),
   STAGE_EMAIL_RESEND_API_KEY: z.string().min(12).optional(),
